@@ -1,5 +1,5 @@
 schema_version = "1"
-name = "DeterminFlow Official Plugins"
+name = "XS2 DeterminFlow Plugins"
 
 [[plugins]]
 id = "bishu-novel"
@@ -8,3 +8,7 @@ subdirectory = "plugins/bishu-novel"
 [[plugins]]
 id = "public-api"
 subdirectory = "plugins/public-api"
+
+[[plugins]]
+id = "xs2-novel-flywheel"
+subdirectory = "plugins/xs2-novel-flywheel"

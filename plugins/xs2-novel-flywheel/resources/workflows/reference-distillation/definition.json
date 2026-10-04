@@ -1,0 +1,244 @@
+{
+  "workflow_id": "reference-distillation",
+  "name": "参考资料蒸馏",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "script_split_reference",
+      "label": "参考资料分窗",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 100,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "split --input {{reference_path}} --window {{window_size}} --overlap 400",
+        "timeout": 120,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "agent_distill_window",
+      "label": "提取窗口机制",
+      "node_type": "agent",
+      "agent_type": "xs2-reference-distiller",
+      "system_prompt_template": "",
+      "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"source_start\":0,\"source_end\":1,\"excerpt\":\"必须与原文完全一致\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。",
+      "position": {
+        "x": 520,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "learning/cache/{{window_id}}.raw.json",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_validate_window",
+      "label": "校验窗口候选",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 760,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "normalize --input learning/cache/{{window_id}}.raw.json --window-id {{window_id}}",
+        "timeout": 120,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_merge_candidates",
+      "label": "合并候选机制",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 980,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "merge",
+        "timeout": 120,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "output_file_path": "",
+      "save_output_to_file": false,
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-start-split",
+      "source": "__start__",
+      "target": "script_split_reference"
+    },
+    {
+      "id": "edge-split-loop",
+      "source": "script_split_reference",
+      "target": "gw_window_loop"
+    },
+    {
+      "id": "edge-loop-agent",
+      "source": "gw_window_loop",
+      "target": "agent_distill_window",
+      "condition": {
+        "expression": "for window_id in window_ids",
+        "label": "循环体",
+        "is_default": false
+      }
+    },
+    {
+      "id": "edge-agent-validate",
+      "source": "agent_distill_window",
+      "target": "script_validate_window"
+    },
+    {
+      "id": "edge-validate-loop",
+      "source": "script_validate_window",
+      "target": "gw_window_loop"
+    },
+    {
+      "id": "edge-loop-merge",
+      "source": "gw_window_loop",
+      "target": "script_merge_candidates",
+      "condition": {
+        "label": "完成所有窗口",
+        "is_default": true
+      }
+    },
+    {
+      "id": "edge-merge-end",
+      "source": "script_merge_candidates",
+      "target": "__end__"
+    }
+  ],
+  "variables": [
+    {
+      "description": "工作区内相对路径，例如 references/source.txt",
+      "required": true,
+      "key": "reference_path",
+      "default": "references/source.txt",
+      "name": "参考资料路径",
+      "hidden": false,
+      "options": [],
+      "source_node_id": "",
+      "type": "text",
+      "source_type": "input"
+    },
+    {
+      "key": "window_size",
+      "name": "分析窗口长度",
+      "type": "text",
+      "default": "4200",
+      "required": true,
+      "description": "建议 3000 到 5000",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "window_ids",
+      "name": "窗口 ID 列表",
+      "type": "list",
+      "default": "[]",
+      "required": false,
+      "description": "由分窗脚本输出",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "window_id",
+      "name": "当前窗口 ID",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "description": "由循环网关设置",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "window_file",
+      "name": "当前窗口文件",
+      "type": "file",
+      "default": "learning/cache/{{window_id}}.json",
+      "required": false,
+      "description": "",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    }
+  ],
+  "gateways": [
+    {
+      "id": "gw_window_loop",
+      "gateway_type": "loop",
+      "label": "逐窗口蒸馏",
+      "position": {
+        "x": 320,
+        "y": 150
+      },
+      "converge_gateway_id": null
+    }
+  ],
+  "execution_schemes": [],
+  "start_position": {
+    "x": 300,
+    "y": 50
+  },
+  "end_position": {
+    "x": 1100,
+    "y": 220
+  }
+}
