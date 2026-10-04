@@ -60,7 +60,7 @@ XS2 Novel Flywheel 使用 [GNU AGPL v3](LICENSE)（`AGPL-3.0-only`）许可证�
 
 运行 `reference-distillation` 后，脚本会把 UTF-8 TXT 按句子边界拆成窗口；每个窗口由 Agent 提取候选机制，再由本地脚本校验证据位置、来源哈希和输出结构。结果写入 `learning/candidates.json`，并生成 `learning/selection.html`。候选默认不会进入正文流程。
 
-用户把下载的选择结果保存为 `learning/selection.json`，内容必须带有候选集哈希和 `selected_candidate_ids`。再次运行脚本的 `adopt` 命令会创建不可覆盖的 `learning/blueprints/vNNNN.json`，并生成 `learning/active_context.md`。`story-plan`、`outline`、`mvp`、`polish` 和 `post-hoc` 会读取这个文件；没有采用任何机制时，这些流程照常运行。
+用户把下载的选择结果保存为 `learning/selection.json`，内容必须带有候选集哈希和 `selected_candidate_ids`。然后运行 `adopt-reference` Workflow，它会创建不可覆盖的 `learning/blueprints/vNNNN.json`，并生成 `learning/active_context.md`。`story-plan`、`outline`、`mvp`、`polish` 和 `post-hoc` 会读取这个文件；没有采用任何机制时，这些流程照常运行。
 
 生成流程只收到抽象机制、迁移建议和使用边界。参考资料正文、标题、人物、具体事件和原句不会进入创作上下文。
 

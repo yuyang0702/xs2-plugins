@@ -14,6 +14,7 @@ EXPECTED_WORKFLOWS = {
     "post-hoc",
     "story-plan",
     "reference-distillation",
+    "adopt-reference",
 }
 EXPECTED_SCRIPT_LIBRARIES = {
     "cm_post",

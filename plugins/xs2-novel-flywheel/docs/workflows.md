@@ -1,11 +1,12 @@
 # XS2 Novel Flywheel Workflows
 
-本插件交付 8 条生产 Workflow。它们使用包内本地 ID，加载时由 DeterminFlow Core 的
+本插件交付 9 条生产 Workflow。它们使用包内本地 ID，加载时由 DeterminFlow Core 的
 Resource Resolver（资源解析器）映射为最终 ID；插件代码不拼接资源前缀。
 
 | Workflow | 主要阶段 | 主要落盘内容 |
 |---|---|---|
 | `reference-distillation` | 参考资料分窗、机制提取、证据校验 | `learning/` 候选、选择页与来源快照 |
+| `adopt-reference` | 写入用户选择的创作蓝图 | `learning/blueprints/`、`learning/active_context.md` |
 | `build` | 六维世界观并行生成、校验、合并 | `world/` 与 `meta/world_foundation.md` |
 | `character` | 角色骨架、信念、深层维度、声音 | 角色 JSON 与角色档案 |
 | `story-plan` | 故事宏观规划、风格提取 | 故事规划与风格档案 |

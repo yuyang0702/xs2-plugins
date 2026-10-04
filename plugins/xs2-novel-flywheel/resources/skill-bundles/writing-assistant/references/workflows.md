@@ -9,6 +9,7 @@
 | 阶段 | 本地 Workflow ID | 前置 | 主要用户输入 | 主要长期产物 |
 |---|---|---|---|---|
 | 参考学习 | `reference-distillation` | 参考 TXT 与同一工作区 | `reference_path` 路径、窗口长度 | `learning/candidates.json`，待用户选择 |
+| 采用写法 | `adopt-reference` | `learning/selection.json` | 选择文件路径 | `learning/blueprints/vNNNN.json`、`learning/active_context.md` |
 | 世界观 | `build` | 新工作区 | `premise`、`genre`、`language` | `world/*.json`、`meta/world_foundation.md` |
 | 角色 | `character` | 世界观基础 | 同一 `premise`、`genre`、`language` | `meta/character_profiles.md`、`meta/character_voice.md` |
 | 故事规划 | `story-plan` | 世界观与角色档案 | 同一 `premise`、`genre`、`language` | `meta/story_plan.md`、`meta/style_profile.md` |
@@ -95,7 +96,7 @@
 文件存在但为空不算完成。Task completed 但关键长期文件缺失也不算完成。
 ## 参考资料蒸馏
 
-用户要把参考小说中的写法用于新书时，先运行 `reference-distillation`。它只生成候选机制，不自动采用。任务完成后打开工作区的 `learning/selection.html`，用户勾选候选并下载 `selection.json`，保存到工作区 `learning/selection.json`，然后执行 Script Library 的 `adopt --selection learning/selection.json`。
+用户要把参考小说中的写法用于新书时，先运行 `reference-distillation`。它只生成候选机制，不自动采用。任务完成后打开工作区的 `learning/selection.html`，用户勾选候选并下载 `selection.json`，保存到工作区 `learning/selection.json`，然后运行 `adopt-reference` Workflow。
 
 `adopt` 会创建版本化 `learning/blueprints/vNNNN.json` 和 `learning/active_context.md`。只有用户明确选择的抽象机制进入 `story-plan`、`outline`、`mvp`、`polish` 和 `post-hoc` 的 `learning_context` 文件变量。参考原文、原作人物、具体情节和原句不会进入这些工作流。
 
