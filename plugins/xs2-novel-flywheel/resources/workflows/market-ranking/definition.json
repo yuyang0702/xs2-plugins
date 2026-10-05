@@ -1,0 +1,55 @@
+{
+  "workflow_id": "market-ranking",
+  "name": "知乎榜单导入",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "script_refresh_market",
+      "label": "抓取知乎盐选榜单",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {"x": 300, "y": 150},
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "market_rankings",
+        "script_args": "refresh --top-n {{top_n}}",
+        "timeout": 60,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    {"id": "edge-start-refresh", "source": "__start__", "target": "script_refresh_market"},
+    {"id": "edge-refresh-end", "source": "script_refresh_market", "target": "__end__"}
+  ],
+  "variables": [
+    {
+      "key": "top_n",
+      "name": "抓取作品数",
+      "type": "text",
+      "default": "100",
+      "required": true,
+      "description": "按榜单顺序抓取，建议 50 到 200",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    }
+  ],
+  "gateways": [],
+  "execution_schemes": [],
+  "start_position": {"x": 300, "y": 50},
+  "end_position": {"x": 380, "y": 250}
+}
