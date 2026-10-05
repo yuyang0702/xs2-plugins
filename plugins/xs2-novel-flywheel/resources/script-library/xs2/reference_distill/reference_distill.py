@@ -294,6 +294,13 @@ def render(scope):
                           "使用边界：" + "；".join(item["constraints"]), ""])
     if len(lines) <= 4:
         lines.append("本阶段没有已选参考写法，按作者原创设定正常创作。")
+    advisor_file = path("learning/advisor_report.json")
+    if advisor_file.exists():
+        try:
+            advisor = load("learning/advisor_report.json")
+            lines.extend(["", "# 小说顾问建议", "以下建议用于辅助创作决策；如果与作者明确要求冲突，以作者要求为准。", json.dumps(advisor, ensure_ascii=False, indent=2)])
+        except (OSError, ValueError):
+            lines.extend(["", "# 小说顾问建议", "顾问报告存在但暂时无法解析，请以页面展示的报告为准。"])
     lines.extend(["仅使用抽象机制。不得推测或复用参考作品人物、事件、句子和包装。", ""])
     target = "learning/active_context.md" if scope == "all" else f"learning/context/{scope}.md"
     save(target, "\n".join(lines))
