@@ -43,7 +43,7 @@ def test_manifest_is_resource_only() -> None:
         (PLUGIN_ROOT / "extension.toml").read_text(encoding="utf-8")
     )
     assert manifest["extension"]["id"] == "xs2-novel-flywheel"
-    assert manifest["extension"]["version"] == "0.1.1"
+    assert manifest["extension"]["version"] == "0.1.2"
     assert "backend" not in manifest["extension"]
     assert "installation" not in manifest
     assert "lifecycle" not in manifest
@@ -128,7 +128,7 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
     for definition_path in definitions:
         definition = _json(definition_path)
         assert definition["workflow_id"] == definition_path.parent.name
-        assert definition["version"] in {1, 2}
+        assert definition["version"] in {1, 2, 3}
         if definition["workflow_id"] == "mvp":
             assert not definition.get("execution_schemes")
         for node in definition.get("nodes", []):

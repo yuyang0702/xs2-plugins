@@ -1,7 +1,7 @@
 [extension]
 id = "xs2-novel-flywheel"
 name = "XS2 Novel Flywheel"
-version = "0.1.1"
+version = "0.1.2"
 api_version = "1"
 description = "Bishu-compatible novel production workflows with selectable reference learning."
 dependencies = []

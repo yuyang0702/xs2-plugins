@@ -1,7 +1,7 @@
 {
   "workflow_id": "reference-distillation",
   "name": "参考资料蒸馏",
-  "version": 2,
+  "version": 3,
   "nodes": [
     {
       "id": "script_split_reference",
@@ -37,7 +37,6 @@
       "label": "提取窗口机制",
       "node_type": "agent",
       "agent_type": "xs2-reference-distiller",
-      "model_override": "{{distill_model}}",
       "system_prompt_template": "",
       "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"source_start\":0,\"source_end\":1,\"excerpt\":\"必须与原文完全一致\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。",
       "position": {
@@ -181,18 +180,6 @@
       "description": "建议 3000 到 5000",
       "options": [],
       "source_type": "input",
-        "source_node_id": "",
-        "hidden": false
-      },
-      {
-        "key": "distill_model",
-        "name": "蒸馏模型",
-        "type": "text",
-        "default": "happy:gpt-5.5",
-        "required": true,
-        "description": "使用 provider_id:model_name 格式；当前 happy:gpt-5.5 已在本机配置中验证可用",
-        "options": [],
-        "source_type": "input",
         "source_node_id": "",
         "hidden": false
       },
