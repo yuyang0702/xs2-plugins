@@ -1,0 +1,45 @@
+{
+  "workflow_id": "export",
+  "name": "导出成品",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "script_export_manuscript",
+      "label": "合并章节并生成成品",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {"x": 300, "y": 150},
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "manuscript_export",
+        "script_args": "build --output {{output_path}} --manifest {{manifest_path}}",
+        "timeout": 30,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    {"id": "edge-start-export", "source": "__start__", "target": "script_export_manuscript"},
+    {"id": "edge-export-end", "source": "script_export_manuscript", "target": "__end__"}
+  ],
+  "variables": [
+    {"key": "output_path", "name": "成品路径", "type": "text", "default": "export/manuscript.md", "required": true, "description": "工作区内的相对路径", "options": [], "source_type": "input", "source_node_id": "", "hidden": false},
+    {"key": "manifest_path", "name": "导出清单路径", "type": "text", "default": "export/manifest.json", "required": true, "description": "记录章节和字数的清单", "options": [], "source_type": "input", "source_node_id": "", "hidden": false}
+  ],
+  "gateways": [],
+  "execution_schemes": [],
+  "start_position": {"x": 300, "y": 50},
+  "end_position": {"x": 380, "y": 250}
+}
