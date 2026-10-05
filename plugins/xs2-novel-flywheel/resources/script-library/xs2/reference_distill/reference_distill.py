@@ -124,6 +124,29 @@ def split(args):
     print(f"<script_out>已完整分窗：{len(windows)} 个窗口</script_out>")
 
 
+def evidence_position(proof, window, raw):
+    if proof.get("window_id") != window["window_id"]:
+        raise ValueError("证据窗口身份不一致")
+    excerpt = proof.get("excerpt")
+    if not isinstance(excerpt, str) or not excerpt.strip() or len(excerpt) > 300:
+        raise ValueError("excerpt 必须是非空字符串，且不超过 300 字符")
+    start, end = proof.get("source_start"), proof.get("source_end")
+    if (type(start) is int and type(end) is int
+            and window["source_start"] <= start < end <= window["source_end"]
+            and raw[start:end] == excerpt):
+        return start, end, excerpt, False
+    # Models select evidence; exact character counting belongs to the script.
+    # Relocate only a unique literal match within the current verified window.
+    text = raw[window["source_start"]:window["source_end"]]
+    offset = text.find(excerpt)
+    if offset < 0:
+        raise ValueError("证据摘录在当前窗口原文中不存在")
+    if text.find(excerpt, offset + 1) >= 0:
+        raise ValueError("证据摘录在当前窗口有多处匹配，请提供更完整摘录或准确位置")
+    start = window["source_start"] + offset
+    return start, start + len(excerpt), excerpt, True
+
+
 def normalize(args):
     data, raw = manifest()
     window = next((item for item in data["windows"] if item["window_id"] == args.window_id), None)
@@ -137,6 +160,7 @@ def normalize(args):
     if not isinstance(items, list) or len(items) > 12:
         raise ValueError("每个窗口须返回至多 12 条 candidates（允许空数组）")
     candidates = []
+    relocated = 0
     for item in items:
         if not isinstance(item, dict):
             raise ValueError("候选必须是对象")
@@ -156,12 +180,8 @@ def normalize(args):
         for proof in evidence:
             if not isinstance(proof, dict):
                 raise ValueError("证据必须是对象")
-            start, end = proof.get("source_start"), proof.get("source_end")
-            excerpt = text_field(proof, "excerpt", 300)
-            if (proof.get("window_id") != window["window_id"] or type(start) is not int
-                    or type(end) is not int or not window["source_start"] <= start < end <= window["source_end"]
-                    or raw[start:end] != excerpt):
-                raise ValueError("证据位置或摘录与原文不匹配")
+            start, end, excerpt, repaired = evidence_position(proof, window, raw)
+            relocated += int(repaired)
             checked.append({"window_id": window["window_id"], "source_start": start,
                             "source_end": end, "excerpt": excerpt, "reason": text_field(proof, "reason")})
         # Reject literal copying in generation-facing fields; semantic abstraction
@@ -174,7 +194,9 @@ def normalize(args):
         candidates.append({"candidate_id": "mechanism-" + digest(semantic)[:20],
                            **semantic, "confidence": confidence, "evidence": checked})
     save(f"learning/cache/{window['window_id']}.validated.json",
-         {"source_sha256": data["source"]["text_sha256"], "window_id": window["window_id"], "candidates": candidates})
+         {"source_sha256": data["source"]["text_sha256"], "window_id": window["window_id"],
+          "evidence_positions_relocated": relocated, "candidates": candidates})
+    print(f"<script_out>已校验 {window['window_id']}：{len(candidates)} 条候选，精确定位修正 {relocated} 条证据</script_out>")
 
 
 def merge(args):
