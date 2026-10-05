@@ -1648,7 +1648,7 @@
           "order": 1,
           "cache_break": false,
           "cache_break_reason": "",
-          "content": "输出格式：{\"source\":{\"text_sha256\":\"\"},\"candidates\":[{\"candidate_id\":\"mechanism-0001\",\"mechanism\":\"抽象机制名称\",\"transfer_guidance\":\"如何迁移到新作品，不写来源剧情\",\"constraints\":[\"使用边界\"],\"evidence\":[{\"window_id\":\"window-0001\",\"source_start\":0,\"source_end\":1,\"reason\":\"为什么支持该机制\"}],\"confidence\":\"high|medium|low\"}]}。候选必须来自输入窗口；不要输出空泛的风格形容词。"
+          "content": "只返回一个纯 JSON 对象，不要 Markdown 围栏，不要解释文字。格式必须是：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"输入资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制名称\",\"transfer_guidance\":\"如何迁移到新作品，不写来源剧情\",\"constraints\":[\"使用边界\"],\"scopes\":[\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"source_start\":0,\"source_end\":1,\"excerpt\":\"必须与输入窗口完全一致的原文片段\",\"reason\":\"为什么支持该机制\"}]}]}。允许 candidates 为空。source_start 和 source_end 必须是相对于整份参考资料的字符偏移。只提取可迁移的抽象叙事机制，不复述人物、标题、具体剧情、句子或包装。"
         }
       ],
       "preambles": {}

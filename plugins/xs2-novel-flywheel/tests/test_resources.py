@@ -43,7 +43,7 @@ def test_manifest_is_resource_only() -> None:
         (PLUGIN_ROOT / "extension.toml").read_text(encoding="utf-8")
     )
     assert manifest["extension"]["id"] == "xs2-novel-flywheel"
-    assert manifest["extension"]["version"] == "0.1.0"
+    assert manifest["extension"]["version"] == "0.1.1"
     assert "backend" not in manifest["extension"]
     assert "installation" not in manifest
     assert "lifecycle" not in manifest

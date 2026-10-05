@@ -20,6 +20,14 @@ CANDIDATES = "learning/candidates.json"
 ACTIVE = "learning/active.json"
 SCOPES = {"story-plan", "outline", "mvp", "polish", "post-hoc"}
 
+# Workflow captures subprocess stdout as UTF-8.  Windows may otherwise select
+# the active console code page (for example GBK), which turns Chinese status
+# messages into mojibake in the task panel.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def path(raw):
     item = Path(raw)

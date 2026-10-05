@@ -17,7 +17,7 @@ def test_resource_only_manifest_is_portable() -> None:
     )
     extension = manifest["extension"]
     assert extension["id"] == "xs2-novel-flywheel"
-    assert extension["version"] == "0.1.0"
+    assert extension["version"] == "0.1.1"
     assert manifest["resource_namespace"]["prefix"] == "xs2-novel-flywheel"
     assert "backend" not in extension
     assert extension["dependencies"] == []
@@ -33,7 +33,7 @@ def test_manifest_matches_core_resource_only_contract() -> None:
     lifecycle = load_extension_lifecycle(manifest_path)
 
     assert parsed.extension_id == "xs2-novel-flywheel"
-    assert parsed.version == "0.1.0"
+    assert parsed.version == "0.1.1"
     assert parsed.backend == ""
     assert lifecycle is None
 
