@@ -39,7 +39,7 @@
       "node_type": "agent",
       "agent_type": "novel-story-planner",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n{{genre}}\n\n【世界观设定】\n{{world_foundation}}\n\n【角色档案】\n{{character_profiles}}\n\n请基于以上信息，构建三层故事力学引擎。\n\n你的产出是下游卷纲/近纲/导演的力学基础——只定义力的性质和规律，不定义力在哪一章以什么事件落地。\n只在输入信息不足或矛盾时使用 issues 标记，信息够就不需要 issues。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n这些机制只提供抽象结构启发。不得复制来源作品的具体人物、剧情、句子或包装。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "【题材创意】\n{{premise}}\n{{genre}}\n\n【世界观设定】\n{{world_foundation}}\n\n【角色档案】\n{{character_profiles}}\n\n请基于以上信息，构建三层故事力学引擎。\n\n你的产出是下游卷纲/近纲/导演的力学基础——只定义力的性质和规律，不定义力在哪一章以什么事件落地。\n只在输入信息不足或矛盾时使用 issues 标记，信息够就不需要 issues。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n这些机制只提供抽象结构启发。不得复制来源作品的具体人物、剧情、句子或包装。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 140,
         "y": 240
@@ -62,7 +62,7 @@
       "node_type": "agent",
       "agent_type": "novel-style-profiler",
       "system_prompt_template": "",
-      "first_message": "【故事引擎】\n{{story_plan_file}}\n{{genre}}\n\n请基于故事引擎的 tone_reference 和 genre，生成风格档案 JSON。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "【故事引擎】\n{{story_plan_file}}\n{{genre}}\n\n请基于故事引擎的 tone_reference 和 genre，生成风格档案 JSON。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 140,
         "y": 340
@@ -302,6 +302,18 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": true
+    },
+    {
+      "key": "narrative_pov",
+      "name": "叙事视角",
+      "type": "text",
+      "default": "third_person",
+      "required": true,
+      "description": "first_person=第一人称；third_person=第三人称。全流程必须保持一致。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
     },
     {
       "key": "language",

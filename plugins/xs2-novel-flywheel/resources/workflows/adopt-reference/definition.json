@@ -10,13 +10,16 @@
       "agent_type": "default",
       "system_prompt_template": "",
       "first_message": "",
-      "position": {"x": 300, "y": 150},
+      "position": {
+        "x": 300,
+        "y": 150
+      },
       "var_bindings": {},
       "node_params": {
         "script_source": "library",
         "script_type": "python",
         "script_name": "reference_distill",
-        "script_args": "adopt --selection {{selection_path}}",
+        "script_args": "adopt --selection {{selection_path}} --selection-json {{selection_json}}",
         "timeout": 120,
         "script_group": "xs2"
       },
@@ -31,8 +34,16 @@
     }
   ],
   "edges": [
-    {"id": "edge-start-adopt", "source": "__start__", "target": "script_adopt_reference"},
-    {"id": "edge-adopt-end", "source": "script_adopt_reference", "target": "__end__"}
+    {
+      "id": "edge-start-adopt",
+      "source": "__start__",
+      "target": "script_adopt_reference"
+    },
+    {
+      "id": "edge-adopt-end",
+      "source": "script_adopt_reference",
+      "target": "__end__"
+    }
   ],
   "variables": [
     {
@@ -46,10 +57,28 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": false
+    },
+    {
+      "key": "selection_json",
+      "name": "网页选择结果",
+      "type": "textarea",
+      "default": "",
+      "required": false,
+      "description": "小说控制台直接提交的候选选择，不需要手动下载文件",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
     }
   ],
   "gateways": [],
   "execution_schemes": [],
-  "start_position": {"x": 300, "y": 50},
-  "end_position": {"x": 380, "y": 250}
+  "start_position": {
+    "x": 300,
+    "y": 50
+  },
+  "end_position": {
+    "x": 380,
+    "y": 250
+  }
 }

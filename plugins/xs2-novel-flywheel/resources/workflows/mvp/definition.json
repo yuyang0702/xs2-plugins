@@ -39,7 +39,7 @@
       "node_type": "agent",
       "agent_type": "novel-observer",
       "system_prompt_template": "",
-      "first_message": "运行世界状态机。本章：{{chapter_number}}，上一章：{{prev_chapter}}。直接输出纯 JSON，引擎自动保存。\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n==== 世界意图（上帝模式） ====\n{{world_intent}}\n\n\n==== 近纲（世界时间推进） ====\n{{near_term_we_file}}\n\n==== 上一章世界状态 ====\n{{prev_world_state}}\n\n==== 上一章世界事件 ====\n{{prev_world_events}}\n\n==== 上一章后验裁决 ====\n{{prev_diff_world}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "运行世界状态机。本章：{{chapter_number}}，上一章：{{prev_chapter}}。直接输出纯 JSON，引擎自动保存。\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n==== 世界意图（上帝模式） ====\n{{world_intent}}\n\n\n==== 近纲（世界时间推进） ====\n{{near_term_we_file}}\n\n==== 上一章世界状态 ====\n{{prev_world_state}}\n\n==== 上一章世界事件 ====\n{{prev_world_events}}\n\n==== 上一章后验裁决 ====\n{{prev_diff_world}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 160,
         "y": -80
@@ -122,7 +122,7 @@
       "node_type": "agent",
       "agent_type": "novel-intent-distributor",
       "system_prompt_template": "",
-      "first_message": "人类意图如下。将其拆分为 OD 和 SE 两路。输出纯 JSON（不带 markdown 包裹）：\n\n==== 人类意图 ====\n{{human_intent}}\n\nJSON 格式：{\"od_intent\": \"给大纲导演的意图\", \"se_intent\": \"给意图导演的意图\"}。无意图时字段值写（空）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "人类意图如下。将其拆分为 OD 和 SE 两路。输出纯 JSON（不带 markdown 包裹）：\n\n==== 人类意图 ====\n{{human_intent}}\n\nJSON 格式：{\"od_intent\": \"给大纲导演的意图\", \"se_intent\": \"给意图导演的意图\"}。无意图时字段值写（空）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 280,
         "y": -230
@@ -205,7 +205,7 @@
       "node_type": "agent",
       "agent_type": "novel-director",
       "system_prompt_template": "",
-      "first_message": "运行大纲导演。本章：{{chapter_number}}，上一章：{{prev_chapter}}。目标字数：{{target_word_count}}。直接输出纯 JSON，引擎自动保存。\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n==== 故事引擎 ====\n{{story_plan_file}}\n\n==== 风格档案 ====\n{{style_guide_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 角色档案 ====\n{{character_profiles_file}}\n\n==== 长线角色状态 ====\n{{character_state_long_file}}\n\n==== 卷纲 ====\n{{volume_outline_file}}\n\n==== 近纲 ====\n{{near_term_outline_file}}\n\n==== 上一章世界状态 ====\n{{prev_world_state}}\n\n==== 上一章世界事件 ====\n{{prev_world_events}}\n\n==== 上一章后验裁决 ====\n{{diff_story_file}}\n\n==== 人类意图 ====\n{{od_intent}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "运行大纲导演。本章：{{chapter_number}}，上一章：{{prev_chapter}}。目标字数：{{target_word_count}}。直接输出纯 JSON，引擎自动保存。\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n==== 故事引擎 ====\n{{story_plan_file}}\n\n==== 风格档案 ====\n{{style_guide_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 角色档案 ====\n{{character_profiles_file}}\n\n==== 长线角色状态 ====\n{{character_state_long_file}}\n\n==== 卷纲 ====\n{{volume_outline_file}}\n\n==== 近纲 ====\n{{near_term_outline_file}}\n\n==== 上一章世界状态 ====\n{{prev_world_state}}\n\n==== 上一章世界事件 ====\n{{prev_world_events}}\n\n==== 上一章后验裁决 ====\n{{diff_story_file}}\n\n==== 人类意图 ====\n{{od_intent}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 530,
         "y": -120
@@ -288,7 +288,7 @@
       "node_type": "agent",
       "agent_type": "novel-character-maintainer",
       "system_prompt_template": "",
-      "first_message": "运行角色状态维护师。本章：{{chapter_number}}，上一章：{{prev_chapter}}。直接输出纯 JSON，引擎自动保存。\n\n==== 角色档案 ====\n{{character_profiles_file}}\n\n==== 角色声音锚 ====\n{{character_voice_file}}\n\n==== 风格定位 ====\n{{style_guide_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 上一章长线状态 ====\n{{prev_character_state}}\n\n==== 上一章次要角色库 ====\n{{prev_character_minor}}\n\n==== 上章角色差异 ====\n{{prev_diff_character}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "运行角色状态维护师。本章：{{chapter_number}}，上一章：{{prev_chapter}}。直接输出纯 JSON，引擎自动保存。\n\n==== 角色档案 ====\n{{character_profiles_file}}\n\n==== 角色声音锚 ====\n{{character_voice_file}}\n\n==== 风格定位 ====\n{{style_guide_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 上一章长线状态 ====\n{{prev_character_state}}\n\n==== 上一章次要角色库 ====\n{{prev_character_minor}}\n\n==== 上章角色差异 ====\n{{prev_diff_character}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 840,
         "y": -70
@@ -371,7 +371,7 @@
       "node_type": "agent",
       "agent_type": "novel-settler",
       "system_prompt_template": "",
-      "first_message": "运行意图导演。本章：{{chapter_number}}，上一章：{{prev_chapter}}。直接输出纯 JSON，引擎自动保存。\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 故事引擎 ====\n{{story_plan_file}}\n\n==== 长线角色状态 ====\n{{character_state_long_file}}\n\n==== 近纲 ====\n{{near_term_outline_file}}\n\n==== 风格指南 ====\n{{style_guide_file}}\n\n==== 角色声音锚 ====\n{{character_voice_file}}\n\n==== 角色档案 ====\n{{character_profiles_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 本章世界状态 ====\n{{world_state_file}}\n\n==== 上一章分镜 ====\n{{prev_storyboard_file}}\n\n==== 人类意图 ====\n{{se_intent}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "运行意图导演。本章：{{chapter_number}}，上一章：{{prev_chapter}}。直接输出纯 JSON，引擎自动保存。\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 故事引擎 ====\n{{story_plan_file}}\n\n==== 长线角色状态 ====\n{{character_state_long_file}}\n\n==== 近纲 ====\n{{near_term_outline_file}}\n\n==== 风格指南 ====\n{{style_guide_file}}\n\n==== 角色声音锚 ====\n{{character_voice_file}}\n\n==== 角色档案 ====\n{{character_profiles_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 本章世界状态 ====\n{{world_state_file}}\n\n==== 上一章分镜 ====\n{{prev_storyboard_file}}\n\n==== 人类意图 ====\n{{se_intent}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 940,
         "y": 130
@@ -394,7 +394,7 @@
       "node_type": "agent",
       "agent_type": "novel-world-context-trimmer",
       "system_prompt_template": "",
-      "first_message": "运行世界裁剪器。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== 世界设定 JSON ====\n{{sync_world_json}}\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 卷纲 ====\n{{volume_outline_file}}\n\n==== 近纲 ====\n{{near_term_outline_file}}\n\n==== 角色 JSON ====\n{{characters_json_file}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "运行世界裁剪器。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== 世界设定 JSON ====\n{{sync_world_json}}\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 卷纲 ====\n{{volume_outline_file}}\n\n==== 近纲 ====\n{{near_term_outline_file}}\n\n==== 角色 JSON ====\n{{characters_json_file}}\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 1350,
         "y": -20
@@ -477,7 +477,7 @@
       "node_type": "agent",
       "agent_type": "novel-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n{{wroter_context}}\n\n━━ 写的时候记住 ━━\n\n• 🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema\n• 你产出的是带 [SLOT] 标记的叙事骨架——不是完整正文\n• 每个段落里至少要有：具体动作、有信息的对话、发现/决定、或可见位移之一\n• 别平均使力。冲突爆发的地方多写两百字也值得——但具体的对话和动作留给专项写手\n• 场景里的人不能是纸片人。哪怕配角也得有一个小动作让他活过来\n• 结尾别收干净。留一根刺\n• 情绪通过动作和感官细节传递——你写骨架里的情绪铺垫，具体内心活动留给内心写手\n• ⚠️ 段落聚合铁律：连贯的叙事流合并在同一段，不要把每个信息点切成独立段\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n{{wroter_context}}\n\n━━ 写的时候记住 ━━\n\n• 🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema\n• 你产出的是带 [SLOT] 标记的叙事骨架——不是完整正文\n• 每个段落里至少要有：具体动作、有信息的对话、发现/决定、或可见位移之一\n• 别平均使力。冲突爆发的地方多写两百字也值得——但具体的对话和动作留给专项写手\n• 场景里的人不能是纸片人。哪怕配角也得有一个小动作让他活过来\n• 结尾别收干净。留一根刺\n• 情绪通过动作和感官细节传递——你写骨架里的情绪铺垫，具体内心活动留给内心写手\n• ⚠️ 段落聚合铁律：连贯的叙事流合并在同一段，不要把每个信息点切成独立段\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 710,
         "y": 270
@@ -502,7 +502,7 @@
       "node_type": "agent",
       "agent_type": "novel-dialogue-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_DIALOGUE_X] 对话槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_DIALOGUE_X] 对话槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 150,
         "y": 540
@@ -525,7 +525,7 @@
       "node_type": "agent",
       "agent_type": "novel-action-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_ACTION_X] 动作槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_ACTION_X] 动作槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 350,
         "y": 450
@@ -548,7 +548,7 @@
       "node_type": "agent",
       "agent_type": "novel-internal-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_INTERNAL_X] 内心槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_INTERNAL_X] 内心槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 520,
         "y": 540
@@ -571,7 +571,7 @@
       "node_type": "agent",
       "agent_type": "novel-description-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_DESCRIPTION_X] 描写槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_DESCRIPTION_X] 描写槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 660,
         "y": 480
@@ -594,7 +594,7 @@
       "node_type": "agent",
       "agent_type": "novel-transition-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_TRANSITION_X] 过渡槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n骨架写手的 JSON 产出（提取你需要的槽名）：\n{{framework_writer_cache}}\n\n上下文：\n{{wroter_context}}\n\n━━\n骨架写手已产出 JSON 叙事骨架。你的任务：只填充 skeleton 中的 [SLOT_TRANSITION_X] 过渡槽。\n🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「输出格式」章节确认 schema。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 900,
         "y": 420
@@ -617,7 +617,7 @@
       "node_type": "agent",
       "agent_type": "novel-storyboard-integrator",
       "system_prompt_template": "",
-      "first_message": "运行整合写手。本章：{{chapter_number}}。六个写手的 JSON 产出已由变量注入。\n\n=== 骨架写手 ===\n{{framework_writer_cache}}\n\n=== 对话写手 ===\n{{dialogue_writer_cache}}\n\n=== 动作写手 ===\n{{action_writer_cache}}\n\n=== 内心写手 ===\n{{internal_writer_cache}}\n\n=== 描写写手 ===\n{{description_writer_cache}}\n\n=== 过渡写手 ===\n{{transition_writer_cache}}\n\n━━\n你的任务：\n1. 解析以上六段 JSON\n2. 将 skeleton 中的 [SLOT_DIALOGUE/ACTION/INTERNAL/DESCRIPTION/TRANSITION_槽名] 替换为对应 JSON 中的内容\n3. 执行段落重排、润色打磨\n\n━━ 字数要求 ━━\n目标正文字数：{{target_word_count}}\n组装完成后请统计实际字数（不含 markdown 标记和空行）。如果低于目标范围下限，需要对文本进行轻微扩写（参考系统提示词中的 niw_expand 章节）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "运行整合写手。本章：{{chapter_number}}。六个写手的 JSON 产出已由变量注入。\n\n=== 骨架写手 ===\n{{framework_writer_cache}}\n\n=== 对话写手 ===\n{{dialogue_writer_cache}}\n\n=== 动作写手 ===\n{{action_writer_cache}}\n\n=== 内心写手 ===\n{{internal_writer_cache}}\n\n=== 描写写手 ===\n{{description_writer_cache}}\n\n=== 过渡写手 ===\n{{transition_writer_cache}}\n\n━━\n你的任务：\n1. 解析以上六段 JSON\n2. 将 skeleton 中的 [SLOT_DIALOGUE/ACTION/INTERNAL/DESCRIPTION/TRANSITION_槽名] 替换为对应 JSON 中的内容\n3. 执行段落重排、润色打磨\n\n━━ 字数要求 ━━\n目标正文字数：{{target_word_count}}\n组装完成后请统计实际字数（不含 markdown 标记和空行）。如果低于目标范围下限，需要对文本进行轻微扩写（参考系统提示词中的 niw_expand 章节）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 470,
         "y": 880
@@ -640,7 +640,7 @@
       "node_type": "agent",
       "agent_type": "novel-single-writer",
       "system_prompt_template": "",
-      "first_message": "「本章你要讲的这段故事」\n\n{{wroter_context}}\n\n━━ 写的时候记住 ━━\n\n• 🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「产出」章节确认 schema：{\"body\": \"完整章节正文\"}\n• 你是一次成稿的写手，叙事、对话、动作、内心、描写一次完成\n• 每个段落里至少要有：具体动作、有信息的对话、发现/决定、或可见位移之一\n• 别平均使力，冲突爆发的地方多写两百字也值得\n• 场景里的人不能是纸片人。哪怕配角也得有一个小动作让他活过来\n• 结尾别收干净，留一根刺\n• 情绪通过动作和感官细节传递\n• ⚠️ 段落聚合铁律：连贯的叙事流合并在同一段，不要把每个信息点切成独立段\n\n━━ 字数要求 ━━\n目标正文字数：{{target_word_count}}\n\n写完正文后出声读一遍，顺手过五道自编辑关（参考系统提示词中的 sw_self_edit 章节）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告，都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。",
+      "first_message": "「本章你要讲的这段故事」\n\n{{wroter_context}}\n\n━━ 写的时候记住 ━━\n\n• 🔴 你的全部输出必须是纯 JSON（不带 markdown 代码块包裹），读到末尾的「产出」章节确认 schema：{\"body\": \"完整章节正文\"}\n• 你是一次成稿的写手，叙事、对话、动作、内心、描写一次完成\n• 每个段落里至少要有：具体动作、有信息的对话、发现/决定、或可见位移之一\n• 别平均使力，冲突爆发的地方多写两百字也值得\n• 场景里的人不能是纸片人。哪怕配角也得有一个小动作让他活过来\n• 结尾别收干净，留一根刺\n• 情绪通过动作和感官细节传递\n• ⚠️ 段落聚合铁律：连贯的叙事流合并在同一段，不要把每个信息点切成独立段\n\n━━ 字数要求 ━━\n目标正文字数：{{target_word_count}}\n\n写完正文后出声读一遍，顺手过五道自编辑关（参考系统提示词中的 sw_self_edit 章节）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告，都必须使用 {{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
       "position": {
         "x": 1780,
         "y": 510
@@ -1589,6 +1589,18 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": true
+    },
+    {
+      "key": "narrative_pov",
+      "name": "叙事视角",
+      "type": "text",
+      "default": "third_person",
+      "required": true,
+      "description": "first_person=第一人称；third_person=第三人称。全流程必须保持一致。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
     },
     {
       "key": "language",

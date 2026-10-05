@@ -252,7 +252,8 @@ def adopt(args):
     data = load(CANDIDATES)
     if data.get("candidates_sha256") != digest(data["candidates"]):
         raise ValueError("候选文件被修改，请重新蒸馏")
-    selection = load(args.selection)
+    selection_text = getattr(args, "selection_json", "").strip()
+    selection = json.loads(selection_text) if selection_text else load(args.selection)
     if not isinstance(selection, dict) or selection.get("candidates_sha256") != data["candidates_sha256"]:
         raise ValueError("选择文件对应的候选已变化，请重新选择")
     ids = selection.get("selected_candidate_ids")
@@ -316,6 +317,7 @@ def main():
     commands.add_parser("merge").set_defaults(handler=merge)
     adopt_parser = commands.add_parser("adopt")
     adopt_parser.add_argument("--selection", default="learning/selection.json")
+    adopt_parser.add_argument("--selection-json", default="", help="网页提交的候选哈希与选择 ID，优先于选择文件")
     adopt_parser.set_defaults(handler=adopt)
     prepare_parser = commands.add_parser("prepare-context")
     prepare_parser.add_argument("--scope", choices=sorted(SCOPES), required=True)
