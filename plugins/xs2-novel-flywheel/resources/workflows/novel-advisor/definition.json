@@ -1,0 +1,40 @@
+{
+  "workflow_id": "novel-advisor",
+  "name": "小说顾问分析",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "agent_advisor",
+      "label": "小说顾问",
+      "node_type": "agent",
+      "agent_type": "xs2-novel-advisor",
+      "system_prompt_template": "",
+      "first_message": "【作品创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【已确认的抽象写法】\n{{learning_context_file}}\n\n【参考候选机制】\n{{candidates_file}}\n\n请生成小说顾问报告。",
+      "position": { "x": 320, "y": 180 },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 2,
+      "save_output_to_file": true,
+      "output_file_path": "learning/advisor_report.json",
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    { "id": "edge-start-advisor", "source": "__start__", "target": "agent_advisor" },
+    { "id": "edge-advisor-end", "source": "agent_advisor", "target": "__end__" }
+  ],
+  "variables": [
+    { "key": "premise", "name": "故事创意", "type": "textarea", "default": "", "required": false, "description": "没有创意时可根据资料给出方向。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "genre", "name": "题材类型", "type": "text", "default": "都市情感", "required": false, "description": "可留空，让顾问推荐。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "narrative_pov", "name": "叙事视角", "type": "text", "default": "third_person", "required": true, "description": "first_person 或 third_person。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "language", "name": "输出语言", "type": "text", "default": "中文", "required": true, "description": "报告输出语言。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "candidates_file", "name": "蒸馏候选", "type": "file", "default": "learning/candidates.json", "required": false, "description": "参考候选机制。", "options": [], "source_type": "input", "source_node_id": "", "hidden": true },
+    { "key": "learning_context_file", "name": "已确认写法", "type": "file", "default": "learning/active_context.md", "required": false, "description": "用户确认后的抽象机制。", "options": [], "source_type": "input", "source_node_id": "", "hidden": true }
+  ],
+  "gateways": [],
+  "execution_schemes": []
+}

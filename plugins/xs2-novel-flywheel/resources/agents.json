@@ -758,6 +758,48 @@
           "type": "json_object"
         }
       }
+    },
+    "xs2-novel-advisor": {
+      "description": "小说顾问：根据作品创意和已确认写法，给出题材定位、读者承诺、钩子和创作边界",
+      "prompt_template": "xs2-novel-advisor",
+      "tools": null,
+      "disallowed_tools": null,
+      "max_turns": 30,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.6,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "thinking_budget": null,
+        "response_format": { "type": "json_object" }
+      }
+    },
+    "xs2-reader-sim": {
+      "description": "模拟读者：从读者视角评估章节看点、钩子、节奏和继续阅读意愿，并提出定向返修建议",
+      "prompt_template": "xs2-reader-sim",
+      "tools": null,
+      "disallowed_tools": null,
+      "max_turns": 30,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "thinking_budget": null,
+        "response_format": { "type": "json_object" }
+      }
     }
   }
 }

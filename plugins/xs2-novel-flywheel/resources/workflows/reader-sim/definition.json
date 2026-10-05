@@ -1,0 +1,40 @@
+{
+  "workflow_id": "reader-sim",
+  "name": "模拟读者评估",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "agent_reader",
+      "label": "模拟读者",
+      "node_type": "agent",
+      "agent_type": "xs2-reader-sim",
+      "system_prompt_template": "",
+      "first_message": "【章节号】\n{{chapter_number}}\n\n【章节正文】\n{{chapter_file}}\n\n【本章目标字数】\n{{target_word_count}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【写作方向】\n{{human_intent}}\n\n请输出模拟读者评估报告。",
+      "position": { "x": 320, "y": 180 },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 2,
+      "save_output_to_file": true,
+      "output_file_path": "quality/reader_report.json",
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    { "id": "edge-start-reader", "source": "__start__", "target": "agent_reader" },
+    { "id": "edge-reader-end", "source": "agent_reader", "target": "__end__" }
+  ],
+  "variables": [
+    { "key": "chapter_number", "name": "章节号", "type": "text", "default": "0001", "required": true, "description": "当前评估章节。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "chapter_file", "name": "章节正文", "type": "file", "default": "story/{{chapter_number}}/chapter.md", "required": true, "description": "待阅读正文。", "options": [], "source_type": "input", "source_node_id": "", "hidden": true },
+    { "key": "target_word_count", "name": "目标字数", "type": "text", "default": "3000-4000", "required": false, "description": "用于判断章节体量。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "human_intent", "name": "本章意图", "type": "textarea", "default": "", "required": false, "description": "作者希望本章实现的重点。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "narrative_pov", "name": "叙事视角", "type": "text", "default": "third_person", "required": true, "description": "视角一致性检查。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
+    { "key": "language", "name": "输出语言", "type": "text", "default": "中文", "required": true, "description": "报告输出语言。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false }
+  ],
+  "gateways": [],
+  "execution_schemes": []
+}
