@@ -43,7 +43,7 @@ def test_manifest_is_resource_only() -> None:
         (PLUGIN_ROOT / "extension.toml").read_text(encoding="utf-8")
     )
     assert manifest["extension"]["id"] == "xs2-novel-flywheel"
-    assert manifest["extension"]["version"] == "0.1.3"
+    assert manifest["extension"]["version"] == "0.1.4"
     assert "backend" not in manifest["extension"]
     assert "installation" not in manifest
     assert "lifecycle" not in manifest
@@ -236,4 +236,5 @@ def test_public_package_has_no_private_pipeline_markers() -> None:
         for path in (resources / "skill-bundles").iterdir()
         if path.is_dir()
     } == EXPECTED_SKILLS
+
 

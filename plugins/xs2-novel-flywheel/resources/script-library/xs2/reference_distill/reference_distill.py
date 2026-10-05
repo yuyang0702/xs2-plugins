@@ -153,12 +153,19 @@ def normalize(args):
     if window is None:
         raise ValueError("未知窗口")
     payload = load(args.input)
-    if (not isinstance(payload, dict) or payload.get("window_id") != window["window_id"]
-            or payload.get("source_sha256") != data["source"]["text_sha256"]):
+    if (not isinstance(payload, dict) or payload.get("window_id") != window["window_id"]):
         raise ValueError("模型返回的窗口身份或来源哈希不一致")
     items = payload.get("candidates")
     if not isinstance(items, list) or len(items) > 12:
         raise ValueError("每个窗口须返回至多 12 条 candidates（允许空数组）")
+    source_sha256 = payload.get("source_sha256")
+    # 空候选是合法结果；模型有时会省略无法观察到的来源哈希。窗口文件
+    # 已由 split 阶段使用同一份快照生成，此时由脚本补齐哈希，避免把空结果
+    # 误判为失败。只要返回了候选，仍要求模型提供正确哈希。
+    if not items and not source_sha256:
+        source_sha256 = data["source"]["text_sha256"]
+    if source_sha256 != data["source"]["text_sha256"]:
+        raise ValueError("模型返回的窗口身份或来源哈希不一致")
     candidates = []
     relocated = 0
     for item in items:
@@ -194,7 +201,7 @@ def normalize(args):
         candidates.append({"candidate_id": "mechanism-" + digest(semantic)[:20],
                            **semantic, "confidence": confidence, "evidence": checked})
     save(f"learning/cache/{window['window_id']}.validated.json",
-         {"source_sha256": data["source"]["text_sha256"], "window_id": window["window_id"],
+         {"source_sha256": source_sha256, "window_id": window["window_id"],
           "evidence_positions_relocated": relocated, "candidates": candidates})
     print(f"<script_out>已校验 {window['window_id']}：{len(candidates)} 条候选，精确定位修正 {relocated} 条证据</script_out>")
 

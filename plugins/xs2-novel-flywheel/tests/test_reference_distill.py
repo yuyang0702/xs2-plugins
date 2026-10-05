@@ -1,6 +1,7 @@
 from __future__ import annotations
 import importlib.util
-import json, subprocess, sys
+import argparse
+import json, os, subprocess, sys, tempfile
 from pathlib import Path
 
 PLUGIN_ROOT=Path(__file__).resolve().parents[1]
@@ -8,6 +9,13 @@ SCRIPT=PLUGIN_ROOT/'resources'/'script-library'/'xs2'/'reference_distill'/'refer
 
 def run(tmp_path, *args):
     return subprocess.run([sys.executable,str(SCRIPT),*args],cwd=tmp_path,capture_output=True,text=True,encoding='utf-8')
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location('reference_distill', SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_evidence_positions_preserve_exact_quotes_and_reject_ambiguity():
@@ -32,6 +40,36 @@ def test_evidence_positions_preserve_exact_quotes_and_reject_ambiguity():
             raise AssertionError('invalid or ambiguous evidence accepted')
     proof.update(excerpt='重复', source_start=3, source_end=5)
     assert module.evidence_position(proof, window, raw)[3] is False
+
+
+def test_empty_candidates_can_fill_missing_source_hash():
+    """An allowed empty model result should still pass the source contract."""
+    module = _load_module()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "learning" / "cache").mkdir(parents=True)
+        (root / "learning" / "sources").mkdir(parents=True)
+        raw = "没有可迁移机制。"
+        digest = module.digest(raw)
+        (root / "learning" / "sources" / f"{digest}.txt").write_text(raw, encoding="utf-8")
+        (root / "learning" / "cache" / "windows.json").write_text(
+            json.dumps({"source": {"text_sha256": digest, "snapshot_path": f"learning/sources/{digest}.txt"},
+                        "windows": [{"window_id": "window-0001", "source_start": 0,
+                                     "source_end": len(raw)}]}, ensure_ascii=False), encoding="utf-8"
+        )
+        (root / "learning" / "cache" / "empty.raw.json").write_text(
+            json.dumps({"window_id": "window-0001", "source_sha256": "", "candidates": []}),
+            encoding="utf-8"
+        )
+        previous = Path.cwd()
+        try:
+            os.chdir(root)
+            module.normalize(argparse.Namespace(input="learning/cache/empty.raw.json", window_id="window-0001"))
+        finally:
+            os.chdir(previous)
+        validated = json.loads((root / "learning" / "cache" / "window-0001.validated.json").read_text(encoding="utf-8"))
+        assert validated["source_sha256"] == digest
+        assert validated["candidates"] == []
 
 def test_reference_selection_creates_versioned_context(tmp_path):
     source=tmp_path/'references'/'source.txt'; source.parent.mkdir()
