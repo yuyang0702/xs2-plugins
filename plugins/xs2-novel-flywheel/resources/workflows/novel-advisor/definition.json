@@ -2,6 +2,7 @@
   "workflow_id": "novel-advisor",
   "name": "小说顾问分析",
   "version": 1,
+  "console": { "app": "novel-workbench", "role": "advisor", "order": 20, "title": "小说顾问", "group": "方向准备", "description": "根据资料和创意，判断题材定位、写法、钩子与读者承诺。", "artifact": "learning/advisor_report.json", "manual_confirmation": true },
   "nodes": [
     {
       "id": "agent_advisor",

@@ -2,6 +2,7 @@
   "workflow_id": "reader-sim",
   "name": "模拟读者评估",
   "version": 1,
+  "console": { "app": "novel-workbench", "role": "reader", "order": 90, "title": "模拟读者", "group": "质量检查", "description": "从读者视角判断看点、钩子、节奏和继续阅读意愿。", "artifact": "quality/reader_report.json", "manual_confirmation": true },
   "nodes": [
     {
       "id": "agent_reader",
