@@ -9,7 +9,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-corelaws",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n请生成世界观维度一：核心法则。这决定整个世界的底层运行逻辑。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n请生成世界观维度一：核心法则。这决定整个世界的底层运行逻辑。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。",
       "position": {
         "x": -60,
         "y": 100
@@ -32,7 +32,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-spacetime",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n\n请根据以上信息，生成世界观维度二：时空地理。你的设定必须与已确立的核心法则相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n\n请根据以上信息，生成世界观维度二：时空地理。你的设定必须与已确立的核心法则相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。",
       "position": {
         "x": 260,
         "y": 130
@@ -55,7 +55,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-society",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n\n请根据以上信息，生成世界观维度三：社会权力。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n\n请根据以上信息，生成世界观维度三：社会权力。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。",
       "position": {
         "x": 570,
         "y": 140
@@ -78,7 +78,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-historyculture",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n\n请根据以上信息，生成世界观维度四：历史文化。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n\n请根据以上信息，生成世界观维度四：历史文化。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。",
       "position": {
         "x": -90,
         "y": 350
@@ -101,7 +101,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-existence",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n\n请根据以上信息，生成世界观维度五：存在基础。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n\n请根据以上信息，生成世界观维度五：存在基础。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。",
       "position": {
         "x": 240,
         "y": 350
@@ -124,7 +124,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-information",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n存在基础：\n{{agent_existence_output}}\n\n请根据以上信息，生成世界观维度六：信息传播。你的设定必须与已确立的前五维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n存在基础：\n{{agent_existence_output}}\n\n请根据以上信息，生成世界观维度六：信息传播。你的设定必须与已确立的前五维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。",
       "position": {
         "x": 530,
         "y": 380
@@ -503,6 +503,18 @@
       "default": "",
       "required": false,
       "description": "",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "learning_context",
+      "name": "已确认的参考机制",
+      "type": "file",
+      "default": "learning/active_context.md",
+      "required": false,
+      "description": "参考资料蒸馏后用户确认的抽象写法，只允许作为机制约束使用",
       "options": [],
       "source_type": "input",
       "source_node_id": "",

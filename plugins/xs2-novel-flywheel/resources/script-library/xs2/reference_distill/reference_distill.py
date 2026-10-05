@@ -18,7 +18,7 @@ from pathlib import Path
 MANIFEST = "learning/cache/windows.json"
 CANDIDATES = "learning/candidates.json"
 ACTIVE = "learning/active.json"
-SCOPES = {"story-plan", "outline", "mvp", "polish", "post-hoc"}
+SCOPES = {"build", "character", "story-plan", "outline", "mvp", "polish", "post-hoc"}
 
 # Workflow captures subprocess stdout as UTF-8.  Windows may otherwise select
 # the active console code page (for example GBK), which turns Chinese status

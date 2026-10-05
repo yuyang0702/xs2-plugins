@@ -38,7 +38,7 @@
       "node_type": "agent",
       "agent_type": "xs2-reference-distiller",
       "system_prompt_template": "",
-      "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"source_start\":0,\"source_end\":1,\"excerpt\":\"必须与原文完全一致\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。",
+      "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"build\",\"character\",\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"source_start\":0,\"source_end\":1,\"excerpt\":\"必须与原文完全一致\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。",
       "position": {
         "x": 520,
         "y": 150
@@ -171,18 +171,18 @@
       "type": "text",
       "source_type": "input"
     },
-      {
-        "key": "window_size",
-        "name": "分析窗口长度",
+    {
+      "key": "window_size",
+      "name": "分析窗口长度",
       "type": "text",
       "default": "4200",
       "required": true,
       "description": "建议 3000 到 5000",
       "options": [],
       "source_type": "input",
-        "source_node_id": "",
-        "hidden": false
-      },
+      "source_node_id": "",
+      "hidden": false
+    },
     {
       "key": "window_ids",
       "name": "窗口 ID 列表",
