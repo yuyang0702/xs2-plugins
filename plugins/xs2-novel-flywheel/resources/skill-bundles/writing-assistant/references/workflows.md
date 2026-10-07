@@ -1,6 +1,6 @@
 # Workflow 顺序与用户输入
 
-本文件记录 `xs2-novel-flywheel` 0.1.0 的静态摘要。运行时先用 `list_workflows` 和
+本文件记录 `xs2-novel-flywheel` 0.1.13 的静态摘要。运行时先用 `list_workflows` 和
 `get_workflow` 核对实际定义；安装 Prefix 可能变化，有效 ID 不一定以
 `bishu-novel-` 开头。
 
@@ -100,3 +100,9 @@
 
 `adopt` 会创建版本化 `learning/blueprints/vNNNN.json` 和 `learning/active_context.md`。只有用户明确选择的抽象机制进入 `story-plan`、`outline`、`mvp`、`polish` 和 `post-hoc` 的 `learning_context` 文件变量。参考原文、原作人物、具体情节和原句不会进入这些工作流。
 
+
+## 统一创作助手与动态档案（0.1.13）
+
+`novel-advisor` 是可选开书顾问；续写沿用已确认设定，无须再开书。`style-compatibility-advisor` 位于独立参考准备模块，没有蒸馏也可以创作。`reader-sim` 在润色后评估实际正文，按读者意见规划返修，通过后 `post-hoc` 确认实际人物、世界、伏笔和债务，再 `export` 导出；`market-ranking` 是可选市场参考。
+
+创作助手读取同一书内的正文、档案、采用写法与章节计划，支持本章、当前卷、整书的持久讨论。剧情候选必须预览后明确采用，已有正文走返修，不通过剧情采用覆盖。章节生产开始会核对前文确认档案和大纲覆盖；过期先审核、缺规划先补大纲。伏笔计划保存在本章，正式索引只在后验核实真实原句后更新。

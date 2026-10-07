@@ -6,6 +6,10 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_WORKFLOWS = {
+    "novel-advisor",
+    "reader-sim",
+    "export",
+    "market-ranking",
     "build",
     "character",
     "mvp",
@@ -15,8 +19,12 @@ EXPECTED_WORKFLOWS = {
     "story-plan",
     "reference-distillation",
     "adopt-reference",
+    "style-compatibility-advisor",
 }
 EXPECTED_SCRIPT_LIBRARIES = {
+    "story_support",
+    "manuscript_export",
+    "market_rankings",
     "cm_post",
     "json_to_md",
     "local_archive",
@@ -43,7 +51,7 @@ def test_manifest_is_resource_only() -> None:
         (PLUGIN_ROOT / "extension.toml").read_text(encoding="utf-8")
     )
     assert manifest["extension"]["id"] == "xs2-novel-flywheel"
-    assert manifest["extension"]["version"] == "0.1.4"
+    assert manifest["extension"]["version"] == "0.1.13"
     assert "backend" not in manifest["extension"]
     assert "installation" not in manifest
     assert "lifecycle" not in manifest
@@ -120,7 +128,7 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
     definitions = sorted((resources / "workflows").glob("*/definition.json"))
 
     assert {path.parent.name for path in definitions} == EXPECTED_WORKFLOWS
-    assert len(agents) == 34
+    assert len(agents) == 37
     assert set(prompts) == set(agents)
 
     referenced_agents: set[str] = set()
@@ -128,7 +136,7 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
     for definition_path in definitions:
         definition = _json(definition_path)
         assert definition["workflow_id"] == definition_path.parent.name
-        assert definition["version"] in {1, 2, 3}
+        assert isinstance(definition['version'], int) and definition['version'] >= 1
         if definition["workflow_id"] == "mvp":
             assert not definition.get("execution_schemes")
         for node in definition.get("nodes", []):
@@ -149,7 +157,7 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
         (path.name, path.parent.name)
         for path in library_root.rglob("*")
         if path.is_dir() and path.name != "__pycache__"
-    } >= {(name, "nvl") for name in EXPECTED_SCRIPT_LIBRARIES if name != "reference_distill"} | {("reference_distill", "xs2")}
+    } >= {(name, "nvl") for name in EXPECTED_SCRIPT_LIBRARIES if name not in {"reference_distill", "story_support", "manuscript_export", "market_rankings"}} | {("reference_distill", "xs2"), ("story_support", "xs2"), ("manuscript_export", "xs2"), ("market_rankings", "xs2")}
 
 
 def test_workflows_do_not_require_database_or_book_ids() -> None:

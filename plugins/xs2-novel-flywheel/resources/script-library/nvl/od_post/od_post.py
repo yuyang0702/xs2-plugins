@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ def _write_json(path: Path, value: Any) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--chapter", default="")
     args = parser.parse_args()
 
     data = _read_json(args.input)
@@ -44,6 +46,13 @@ def main() -> None:
     _write_json(output_root / "guide.json", guide)
     _write_json(output_root / "hooks.json", hooks)
     _write_json(output_root / "debts.json", debts)
+    if args.chapter:
+        if not re.fullmatch(r'\d{1,6}', args.chapter) or int(args.chapter) < 1:
+            raise ValueError('章节号无效')
+        chapter = f'{int(args.chapter):04d}'
+        _write_json(Path(f'story/{chapter}/planned_hooks.json'), hooks)
+        _write_json(Path(f'story/{chapter}/planned_debts.json'), debts)
+        _write_json(Path(f'story/{chapter}/single_chapter_guide.json'), guide)
     print(
         "[OK] guide.json + hooks.json "
         f"({len(hooks)}条) + debts.json ({len(debts)}条) → cache/od/"

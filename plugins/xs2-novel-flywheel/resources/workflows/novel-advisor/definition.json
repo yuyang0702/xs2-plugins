@@ -1,8 +1,17 @@
 {
   "workflow_id": "novel-advisor",
   "name": "小说顾问分析",
-  "version": 1,
-  "console": { "app": "novel-workbench", "role": "advisor", "order": 20, "title": "小说顾问", "group": "方向准备", "description": "根据资料和创意，判断题材定位、写法、钩子与读者承诺。", "artifact": "learning/advisor_report.json", "manual_confirmation": true },
+  "version": 2,
+  "console": {
+    "app": "novel-workbench",
+    "role": "advisor",
+    "order": 20,
+    "title": "小说顾问",
+    "group": "方向准备",
+    "description": "根据资料和创意，判断题材定位、写法、钩子与读者承诺。",
+    "artifact": "learning/advisor_report.json",
+    "manual_confirmation": true
+  },
   "nodes": [
     {
       "id": "agent_advisor",
@@ -10,8 +19,11 @@
       "node_type": "agent",
       "agent_type": "xs2-novel-advisor",
       "system_prompt_template": "",
-      "first_message": "【作品创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【已确认的抽象写法】\n{{learning_context_file}}\n\n【参考候选机制】\n{{candidates_file}}\n\n请生成小说顾问报告。",
-      "position": { "x": 320, "y": 180 },
+      "first_message": "【作品创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【已确认的抽象写法】\n{{learning_context_file}}\n\n【参考候选机制】\n{{candidates_file}}\n\n请生成小说顾问报告。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "position": {
+        "x": 320,
+        "y": 180
+      },
       "var_bindings": {},
       "node_params": {},
       "auto_flow": false,
@@ -25,16 +37,90 @@
     }
   ],
   "edges": [
-    { "id": "edge-start-advisor", "source": "__start__", "target": "agent_advisor" },
-    { "id": "edge-advisor-end", "source": "agent_advisor", "target": "__end__" }
+    {
+      "id": "edge-start-advisor",
+      "source": "__start__",
+      "target": "agent_advisor"
+    },
+    {
+      "id": "edge-advisor-end",
+      "source": "agent_advisor",
+      "target": "__end__"
+    }
   ],
   "variables": [
-    { "key": "premise", "name": "故事创意", "type": "textarea", "default": "", "required": false, "description": "没有创意时可根据资料给出方向。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
-    { "key": "genre", "name": "题材类型", "type": "text", "default": "都市情感", "required": false, "description": "可留空，让顾问推荐。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
-    { "key": "narrative_pov", "name": "叙事视角", "type": "text", "default": "third_person", "required": true, "description": "first_person 或 third_person。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
-    { "key": "language", "name": "输出语言", "type": "text", "default": "中文", "required": true, "description": "报告输出语言。", "options": [], "source_type": "input", "source_node_id": "", "hidden": false },
-    { "key": "candidates_file", "name": "蒸馏候选", "type": "file", "default": "learning/candidates.json", "required": false, "description": "参考候选机制。", "options": [], "source_type": "input", "source_node_id": "", "hidden": true },
-    { "key": "learning_context_file", "name": "已确认写法", "type": "file", "default": "learning/active_context.md", "required": false, "description": "用户确认后的抽象机制。", "options": [], "source_type": "input", "source_node_id": "", "hidden": true }
+    {
+      "key": "premise",
+      "name": "故事创意",
+      "type": "textarea",
+      "default": "",
+      "required": false,
+      "description": "没有创意时可根据资料给出方向。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "genre",
+      "name": "题材类型",
+      "type": "text",
+      "default": "都市情感",
+      "required": false,
+      "description": "可留空，让顾问推荐。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "narrative_pov",
+      "name": "叙事视角",
+      "type": "text",
+      "default": "third_person",
+      "required": true,
+      "description": "first_person 或 third_person。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "language",
+      "name": "输出语言",
+      "type": "text",
+      "default": "中文",
+      "required": true,
+      "description": "报告输出语言。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "candidates_file",
+      "name": "蒸馏候选",
+      "type": "file",
+      "default": "learning/candidates.json",
+      "required": false,
+      "description": "参考候选机制。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "learning_context_file",
+      "name": "已确认写法",
+      "type": "file",
+      "default": "learning/active_context.md",
+      "required": false,
+      "description": "用户确认后的抽象机制。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    }
   ],
   "gateways": [],
   "execution_schemes": []

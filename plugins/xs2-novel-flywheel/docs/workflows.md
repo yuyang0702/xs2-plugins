@@ -1,12 +1,13 @@
 # XS2 Novel Flywheel Workflows
 
-本插件交付 9 条生产 Workflow。它们使用包内本地 ID，加载时由 DeterminFlow Core 的
+本插件的生产与参考 Workflow 使用包内本地 ID，加载时由 DeterminFlow Core 的
 Resource Resolver（资源解析器）映射为最终 ID；插件代码不拼接资源前缀。
 
 | Workflow | 主要阶段 | 主要落盘内容 |
 |---|---|---|
-| `reference-distillation` | 参考资料分窗、机制提取、证据校验 | `learning/` 候选、选择页与来源快照 |
-| `adopt-reference` | 写入用户选择的创作蓝图 | `learning/blueprints/`、`learning/active_context.md` |
+| `reference-distillation` | 独立资料分窗、Writing DNA 分析、机制与冲突提取、证据校验 | 资料任务的 `learning/`；完成后进入共享写法库 |
+| `style-compatibility-advisor` | 准备三类候选，按本书基线、题材、视角和篇幅判断适配 | `learning/compatibility_report.json` |
+| `adopt-reference` | 保留已采用项，确认新增风格、写法与本书冲突适配 | `learning/blueprints/`、`learning/active_context.md` |
 | `build` | 六维世界观并行生成、校验、合并 | `world/` 与 `meta/world_foundation.md` |
 | `character` | 角色骨架、信念、深层维度、声音 | 角色 JSON 与角色档案 |
 | `story-plan` | 故事宏观规划、风格提取 | 故事规划与风格档案 |
@@ -42,7 +43,7 @@ Agent Definition 不声明模型，Workflow 也不设置 `model_override`，因�
 页面覆盖这一默认值。它要求 Main 在操作前读取实际 Workflow 定义，并以写作助手和工作流
 主管的身份帮助用户选择流程、收集必要创作输入、监督 Task 和核验文件结果。
 
-Chat Main 的 `create_and_attach_task` 不直接接收 `workspace_override`。为了让八条 Workflow
+Chat Main 的 `create_and_attach_task` 不直接接收 `workspace_override`。为了让各条 Workflow
 共享同一本书，同一 Main 会话内应使用 `workspace_mode=named_shared`，并为这本书的每个
 Task 复用相同 `workspace_ref`。`named_shared` 以 Main 会话隔离，新会话不能只凭同名
 `workspace_ref` 连接旧目录；跨会话使用应继续原会话，或由 Web/API 复用同一个
@@ -50,5 +51,9 @@ Task 复用相同 `workspace_ref`。`named_shared` 以 Main 会话隔离，新�
 
 ## 参考学习
 
-先运行 `reference-distillation` 生成候选机制。它不会自动选用写法；用户在 `learning/selection.html` 中明确选择后，通过脚本 `adopt` 创建版本化创作蓝图。已确认的抽象机制会进入故事规划、大纲、章节生产、润色和后验的文件上下文。
+小说生产不要求先蒸馏。资料在独立任务中分析，再从共享写法库加入本书候选；「本书参考写法」提供可选的兼容分析与采用确认，不占用小说生产步骤。
+
+选择结果包含 `selected_candidate_ids`、`selected_style_ids`、`selected_conflict_ids` 及对应候选集哈希。新增冲突必须在 `reference_adaptations` 中提供本书的抽象适配，未提供迁移建议的风格也必须适配。确认脚本校验编号、哈希与适配内容，追加生成版本化蓝图；重复确认不生成新版本，已有规则不会被取消或覆盖。
+
+已确认的风格表达原则、叙事机制和因果冲突进入故事规划、大纲、章节生产、润色和后验的文件上下文。原作情节、人物与证据原句不作为写作指令。人物档案、当前状态和本书风格基线决定具体写法；短篇回收核心冲突，长篇普通章节保持主线连续。
 

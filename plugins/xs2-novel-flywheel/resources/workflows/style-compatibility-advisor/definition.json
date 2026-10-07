@@ -1,0 +1,217 @@
+{
+  "workflow_id": "style-compatibility-advisor",
+  "name": "写法兼容顾问",
+  "version": 4,
+  "console": {
+    "app": "novel-workbench",
+    "role": "style-advisor",
+    "order": 25,
+    "title": "写法兼容顾问",
+    "group": "本书参考写法",
+    "description": "比较当前作品与蒸馏或写法库候选，给出推荐、适配和冲突提示。没有候选时自动跳过，不阻塞创作。",
+    "artifact": "learning/compatibility_report.json",
+    "manual_confirmation": true
+  },
+  "nodes": [
+    {
+      "id": "script_prepare_choices",
+      "label": "准备三类参考候选",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 320,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_argv": [
+          "prepare-choices"
+        ],
+        "timeout": 120,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "agent_compatibility",
+      "label": "分析写法兼容性",
+      "node_type": "agent",
+      "agent_type": "xs2-style-compatibility-advisor",
+      "system_prompt_template": "",
+      "first_message": "【作品创意】\n{{premise}}\n\n【题材】\n{{genre}}\n\n【目标作品类型】\n{{target_work_mode}}（short 表示短篇，serial 表示长篇连载）\n\n【参考语料类型】\n{{source_mode}}（short_full 表示短篇全文，serial_chapters 表示长篇章节样本，auto 表示自动识别）\n\n【叙事视角】\n{{narrative_pov}}\n\n【输出语言】\n{{language}}\n\n【当前统一风格基线（可能不存在）】\n{{style_profile_file}}\n\n【参考候选机制（可能不存在或为空）】\n{{candidates_file}}\n\n【已确认写法】\n{{learning_context_file}}\n\n请输出兼容性报告。判断时必须区分短篇全文结构、长篇开局、长篇章节和长篇卷级机制；语言和角色写法可以跨类型复用，钩子和结构必须检查篇幅适配。\n\n【参考样本的 Writing DNA（尚未采用）】\n{{reference_profile_file}}\n逐项检查与本书基线、题材、视角和篇幅是否冲突。没有蒸馏或独立风格文件时正常分析原创写作，不阻塞流程。此处仅给建议，不覆盖基线，不自动采用规则。\n\n==== 三类候选分别适配 ====\n候选文件中的 candidates 为写法，style_choices 为风格特点，conflict_choices 为冲突参考。对风格/冲突沿用 recommendations 的结构，candidate_id 使用原样 choice_id，decision 使用 recommend/adapt/caution/reject。adaptation_plan 必须给出本书可执行的适配，使用本书题材、视角、人物处境，不能引用原作人物、事件、句子或凭空增加本书重大事实。冲突按目标、提前埋下的伏笔、阻碍、行动、代价、下一阻碍与回收说明；短篇收束核心问题，长篇普通章节保留主线压力。风格转换为表达倾向，避免句长与标点配额。已有采用内容持续保留，存在冲突时建议适配或不新增，不删除旧规则。没有独立风格/冲突时只分析已有项，禁止补造分析。建议不自动采用，需作者确认。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "position": {
+        "x": 320,
+        "y": 180
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 2,
+      "save_output_to_file": true,
+      "output_file_path": "learning/compatibility_report.json",
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-prepare",
+      "source": "__start__",
+      "target": "script_prepare_choices"
+    },
+    {
+      "id": "prepare-advisor",
+      "source": "script_prepare_choices",
+      "target": "agent_compatibility"
+    },
+    {
+      "id": "advisor-end",
+      "source": "agent_compatibility",
+      "target": "__end__"
+    }
+  ],
+  "variables": [
+    {
+      "key": "premise",
+      "name": "故事创意",
+      "type": "textarea",
+      "default": "",
+      "required": false,
+      "description": "当前作品的创意。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "genre",
+      "name": "题材类型",
+      "type": "text",
+      "default": "都市情感",
+      "required": false,
+      "description": "用于判断题材兼容性。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "narrative_pov",
+      "name": "叙事视角",
+      "type": "text",
+      "default": "third_person",
+      "required": true,
+      "description": "first_person 或 third_person。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "language",
+      "name": "输出语言",
+      "type": "text",
+      "default": "中文",
+      "required": true,
+      "description": "报告输出语言。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "target_work_mode",
+      "name": "目标作品类型",
+      "type": "text",
+      "default": "short",
+      "required": true,
+      "description": "short 或 serial。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "source_mode",
+      "name": "参考语料类型",
+      "type": "text",
+      "default": "auto",
+      "required": false,
+      "description": "short_full、serial_chapters 或 auto。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "candidates_file",
+      "name": "蒸馏候选",
+      "type": "file",
+      "default": "learning/candidates.json",
+      "required": false,
+      "description": "没有候选时跳过分析。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "style_profile_file",
+      "name": "统一风格基线",
+      "type": "file",
+      "default": "meta/style_profile.md",
+      "required": false,
+      "description": "当前书已有基线时用于冲突比较。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "learning_context_file",
+      "name": "已确认写法",
+      "type": "file",
+      "default": "learning/active_context.md",
+      "required": false,
+      "description": "已经采用的抽象写法。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "reference_profile_file",
+      "name": "参考样本风格",
+      "type": "file",
+      "default": "learning/reference_profile.md",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": []
+    }
+  ],
+  "gateways": [],
+  "execution_schemes": [],
+  "start_position": {
+    "x": 300,
+    "y": 50
+  },
+  "end_position": {
+    "x": 380,
+    "y": 250
+  }
+}

@@ -1,8 +1,37 @@
 {
   "workflow_id": "post-hoc",
   "name": "章节后验管线",
-  "version": 2,
+  "version": 3,
   "nodes": [
+    {
+      "id": "script_story_context",
+      "label": "核对前文并读取采用方案",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 100,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_args": "context --chapter {{chapter_number}}",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
     {
       "id": "script_sync_down",
       "label": "检查本地章节存档",
@@ -38,7 +67,7 @@
       "node_type": "agent",
       "agent_type": "novel-chapter-observer",
       "system_prompt_template": "",
-      "first_message": "运行章节观察。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== 章节正文 ====\n{{chapter_file}}\n\n==== 世界状态 ====\n{{world_state_file}}\n\n==== 世界事件 ====\n{{world_events_file}}\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 长线角色状态 ====\n{{character_state_long_file}}\n\n==== 次要角色库 ====\n{{character_minor_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "运行章节观察。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== 章节正文 ====\n{{chapter_file}}\n\n==== 世界状态 ====\n{{world_state_file}}\n\n==== 世界事件 ====\n{{world_events_file}}\n\n==== 单章指导 ====\n{{guide_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 长线角色状态 ====\n{{character_state_long_file}}\n\n==== 次要角色库 ====\n{{character_minor_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；如与已确认事实冲突，明确报错或保留冲突供作者选择，不悄悄忽略方案，也不把未写的计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n本章待写伏笔/债务计划（可能未实际发生）：story/{{chapter_number}}/planned_hooks.json、story/{{chapter_number}}/planned_debts.json；存在则读取，不存在则按正文与已确认账本分析。实际回收必须有完整正文依据。",
       "position": {
         "x": 230,
         "y": 270
@@ -52,7 +81,10 @@
       "max_reject_count": 3,
       "save_output_to_file": true,
       "output_file_path": "cache/observer/obs_output.json",
-      "sub_workflow_params": {}
+      "sub_workflow_params": {},
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5,
+      "fail_auto_skip": false
     },
     {
       "id": "agent_arb",
@@ -60,7 +92,7 @@
       "node_type": "agent",
       "agent_type": "novel-arbiter",
       "system_prompt_template": "",
-      "first_message": "运行后验裁决。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== Observer 差异报告 ====\n{{obs_output_file}}\n\n==== 现有伏笔 ====\n{{hooks_file}}\n\n==== 现有叙事债务 ====\n{{debts_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。",
+      "first_message": "运行后验裁决。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== Observer 差异报告 ====\n{{obs_output_file}}\n\n==== 现有伏笔 ====\n{{hooks_file}}\n\n==== 现有叙事债务 ====\n{{debts_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；如与已确认事实冲突，明确报错或保留冲突供作者选择，不悄悄忽略方案，也不把未写的计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n本章待写伏笔/债务计划（可能未实际发生）：story/{{chapter_number}}/planned_hooks.json、story/{{chapter_number}}/planned_debts.json；存在则读取，不存在则按正文与已确认账本分析。实际回收必须有完整正文依据。",
       "position": {
         "x": 450,
         "y": 130
@@ -74,7 +106,10 @@
       "max_reject_count": 3,
       "save_output_to_file": true,
       "output_file_path": "cache/arbiter/arb_output.json",
-      "sub_workflow_params": {}
+      "sub_workflow_params": {},
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5,
+      "fail_auto_skip": false
     },
     {
       "id": "script_sync_up",
@@ -133,18 +168,76 @@
       "save_output_to_file": false,
       "output_file_path": "",
       "sub_workflow_params": {}
+    },
+    {
+      "id": "script_review_source",
+      "label": "绑定待审核正文版本",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 100,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_args": "begin-review --chapter {{chapter_number}}",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_confirm_archive",
+      "label": "确认人物状态并更新动态档案",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 100,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_args": "commit --chapter {{chapter_number}}",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
     }
   ],
   "edges": [
     {
       "id": "edge-start-sync_down",
       "source": "__start__",
-      "target": "script_sync_down"
+      "target": "script_story_context"
     },
     {
       "id": "edge-sync_down-obs",
       "source": "script_sync_down",
-      "target": "agent_obs"
+      "target": "script_review_source"
     },
     {
       "id": "edge-obs-arb",
@@ -164,6 +257,18 @@
     {
       "id": "edge-sync_down_final-end",
       "source": "script_sync_down_final",
+      "target": "script_confirm_archive"
+    },
+    {
+      "source": "script_story_context",
+      "target": "script_sync_down"
+    },
+    {
+      "source": "script_review_source",
+      "target": "agent_obs"
+    },
+    {
+      "source": "script_confirm_archive",
       "target": "__end__"
     }
   ],
@@ -334,6 +439,15 @@
       "options": [],
       "source_type": "input",
       "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "story_support_context",
+      "name": "共同故事上下文",
+      "type": "file",
+      "source_type": "input",
+      "default": "cache/story-support/context.md",
+      "required": false,
       "hidden": true
     }
   ],

@@ -1,0 +1,38 @@
+# 章节规划模板
+# 续写前填写，写完后对比验证
+
+chapter: 0
+title: ""
+pov_character: ""               # 本章视角角色
+target_words: 3000
+
+# ── 本章目标 ──
+objectives: []
+  # - description: ""
+  #   type: advance_plot | reveal_secret | develop_character | worldbuilding | action_scene
+
+# ── 涉及角色 ──
+characters_involved: []
+  # - id: ""
+  #   entering_from: ""         # 从哪里来/上次在哪
+  #   planned_actions: ""
+
+# ── 线索操作 ──
+thread_operations: []
+  # - thread_id: ""
+  #   operation: plant | advance | resolve
+  #   detail: ""
+
+# ── 约束条件 ──
+constraints: []
+  # - type: character_must_be_alive | location_reachable | power_limit | time_sufficient
+  #   detail: ""
+
+# ── 预期情绪曲线 ──
+emotional_arc:
+  start: ""                     # 平静/紧张/悲伤/愤怒...
+  peak: ""
+  end: ""
+
+# ── 本章结尾钩子 ──
+hook: ""                        # 留给下一章的悬念

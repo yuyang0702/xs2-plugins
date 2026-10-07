@@ -1,11 +1,11 @@
 {
   "workflow_id": "adopt-reference",
-  "name": "采用参考写法",
-  "version": 1,
+  "name": "确认本书参考写法",
+  "version": 3,
   "nodes": [
     {
       "id": "script_adopt_reference",
-      "label": "创建创作蓝图",
+      "label": "保留已采用写法并确认新增",
       "node_type": "script",
       "agent_type": "default",
       "system_prompt_template": "",
@@ -19,7 +19,13 @@
         "script_source": "library",
         "script_type": "python",
         "script_name": "reference_distill",
-        "script_argv": ["adopt", "--selection", "{{selection_path}}", "--selection-json", "{{selection_json}}"],
+        "script_argv": [
+          "adopt",
+          "--selection",
+          "{{selection_path}}",
+          "--selection-json",
+          "{{selection_json}}"
+        ],
         "timeout": 120,
         "script_group": "xs2"
       },
@@ -80,5 +86,13 @@
   "end_position": {
     "x": 380,
     "y": 250
+  },
+  "console": {
+    "app": "novel-workbench",
+    "role": "book-reference",
+    "title": "选择与确认",
+    "group": "本书参考写法",
+    "artifact": "learning/active_context.md",
+    "description": "分别确认风格、写法和冲突的本书适配；已有采用内容持续保留。"
   }
 }

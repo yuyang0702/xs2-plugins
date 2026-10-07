@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "project": "novel-copilot",
+      "revision": "9c0dec4ae031b92c827bbe2f1b994c67b700dde7",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "82fcf8a22093c15d721cbda1f66479341e9fa8815f4a92e35eb1cdaebed973d7"
+        },
+        {
+          "path": "scripts/auto_write.py",
+          "sha256": "fa8a827a6a99c29c7ffd523179a3b1e87b797ade532df59d67732bafccd22473"
+        },
+        {
+          "path": "references/divergence-patterns.md",
+          "sha256": "3e1667d9744a6d68e0f734fbc79353a3f7ac985445921157e48fbd80a12b486a"
+        },
+        {
+          "path": "references/character-depth-engine.md",
+          "sha256": "03a284a80429516108f03abca424af273011b88d7965c4af9f66c4aae6b68663"
+        },
+        {
+          "path": "references/dialogue-subtext-engine.md",
+          "sha256": "f7433567a42432fc82760679ecae9dd13cc256117214cf5d30a8d1f56684f622"
+        },
+        {
+          "path": "templates/chapter-plan.yaml",
+          "sha256": "54c239f6f62aa42d59ca6677841cac3561408947599ca6b07ecc200653f96d28"
+        }
+      ],
+      "repository": "https://github.com/andy-develop/novel-copilot"
+    },
+    {
+      "project": "ai-novel-assistant",
+      "revision": "be9509ab024a722a3e5898395815bd0b5ad30d6d",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "17c71b5885335aa28d752355fbdef9ae54ee3ceb85246b32c9f0a69df95bdd64"
+        },
+        {
+          "path": "backend/agent.py",
+          "sha256": "0a0bf46b54d2d638e95956ec4555680a7d710ea060187c31b998faaa8430e237"
+        },
+        {
+          "path": "backend/knowledge.py",
+          "sha256": "054d41a553b118eed67155d89ced50a0156b025ab6c1b90f9d53f08d6a351bf3"
+        },
+        {
+          "path": "prompts/agent_analyze.md",
+          "sha256": "f2977d8dbcd360abd16425d41c27232b6842d36fe57fd495c00c79af76db3ea3"
+        }
+      ],
+      "repository": "https://github.com/furthermoreover/ai-novel-assistant"
+    },
+    {
+      "project": "novel-helper",
+      "revision": "1f3913991c6e12e19b1b50f9d486a757c40b55c9",
+      "files": [
+        {
+          "path": "package.json",
+          "sha256": "b5e72fc10c32f05e9d517d215a16584f1c36165e6557abc13092d53b87de33a3"
+        },
+        {
+          "path": "packages/server/src/outlineStageChat/patch.ts",
+          "sha256": "c3b8a0d6d42b51dcf209c6d49e27cf84c119ca3c212e463bfc53c7da6ca0ee10"
+        },
+        {
+          "path": "packages/server/src/outlineStageChat/context.ts",
+          "sha256": "9cec5c18961c3da955ca030197ac510ae9aa9cfdef2230c0eda2d4b6769051f6"
+        },
+        {
+          "path": "packages/server/src/writingBlockRescue/prompt.ts",
+          "sha256": "80142498d8f6333f9fac0ad5fd4d7418dc27cfc7906c0521f4c9ce43c9413976"
+        }
+      ],
+      "repository": "https://github.com/XFSeven7/novel-helper"
+    }
+  ]
+}

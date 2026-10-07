@@ -104,9 +104,16 @@ def main():
     parser = argparse.ArgumentParser(description="VO 输出渲染追加/替换")
     parser.add_argument("--input", required=True, help="vo_output.json 路径")
     parser.add_argument("--volume-number", type=int, default=None, help="目标卷号。不传则追加，传了则替换")
+    parser.add_argument("--scope", default="serial_chapter", help="short_full 以单章完成三幕")
     args = parser.parse_args()
 
     data = load_json(args.input)
+    if args.scope == "short_full":
+        data["chapter_range"] = {"start": 1, "end": 1}
+        for act in data.get("acts", {}).values():
+            if isinstance(act, dict):
+                act["chapters"] = "第1章内的阶段"
+
     vn = data.get("volume_number", "?")
     md = render_volume(data)
 

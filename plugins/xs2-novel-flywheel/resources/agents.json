@@ -512,6 +512,26 @@
         }
       }
     },
+    "xs2-style-compatibility-advisor": {
+      "description": "写法兼容顾问：比较当前作品设定、统一风格基线与参考写法，输出推荐、适配和冲突建议",
+      "prompt_template": "xs2-style-compatibility-advisor",
+      "tools": null,
+      "disallowed_tools": null,
+      "max_turns": 30,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.2,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": { "type": "json_object" }
+      }
+    },
     "novel-story-planner": {
       "description": "故事架构师 — 根据世界观和角色骨架，构建三层故事引擎：显性层（读者前三章的感知）、引擎层（驱动故事持续发展的核心机制）、兑现层（保证后续章节有料可写的蓝图）",
       "prompt_template": "novel-story-planner",

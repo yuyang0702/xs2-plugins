@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """WE 后处理：we_output.json → world_state.json + world_events.json。"""
 
-import argparse, json, os, sys
+import argparse, json, os, sys, re
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
+    parser.add_argument("--chapter", default="")
     args = parser.parse_args()
 
     data = json.load(open(args.input, encoding="utf-8"))
@@ -28,6 +29,13 @@ def main():
     os.makedirs("cache/we", exist_ok=True)
     json.dump(state, open("cache/we/world_state.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     json.dump(events, open("cache/we/world_events.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    if args.chapter:
+        if not re.fullmatch(r'\d{1,6}', args.chapter) or int(args.chapter) < 1:
+            raise ValueError('章节号无效')
+        directory = f'story/{int(args.chapter):04d}'
+        os.makedirs(directory, exist_ok=True)
+        with open(f'{directory}/planned_world_state.json', 'w', encoding='utf-8') as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2)
     print(f"[OK] world_state.json + world_events.json → cache/we/")
 
 

@@ -346,9 +346,8 @@ def _post_hoc(args: argparse.Namespace) -> None:
     _ensure_indexes()
     _write_json("archive/post_hoc_hooks.json", arbiter.get("new_hooks", []))
     _write_json("archive/post_hoc_debts.json", arbiter.get("new_debts", []))
-    _merge_index("hooks", "archive/post_hoc_hooks.json")
-    _merge_index("debts", "archive/post_hoc_debts.json")
-    _render_indexes()
+    # story_support.commit validates exact body evidence and the review revision
+    # before these proposals are allowed into the confirmed indexes.
 
 
 def _render(args: argparse.Namespace) -> None:

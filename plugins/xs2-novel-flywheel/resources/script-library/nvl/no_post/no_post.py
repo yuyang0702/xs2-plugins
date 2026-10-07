@@ -63,10 +63,24 @@ def main():
     parser = argparse.ArgumentParser(description="NO 输出渲染")
     parser.add_argument("--input", required=True, help="no_output.json 路径")
     parser.add_argument("--volume-number", type=int, default=None, help="目标卷号（用于日志，不影响行为——行为由 agent 的 is_new_volume 控制）")
+    parser.add_argument("--scope", default="serial_chapter", help="short_full 将阶段合并为短篇全文单章")
     args = parser.parse_args()
 
     data = load_json(args.input)
     chapters = data.get("chapters", [])
+    if args.scope == "short_full" and chapters:
+        if len(chapters) > 1:
+            data["chapters"] = [{
+                "number": 1, "title": data.get("arc_name") or chapters[0].get("title", "短篇全文"),
+                "summary": "；".join(f"阶段{i + 1}·{chapter.get('title', '')}：{chapter.get('summary', '')}" for i, chapter in enumerate(chapters)),
+                "rhythm": "起因→递进阻碍→高潮→关键伏笔回收→终局（同一短篇全文）",
+                "time_advance": "篇内按阶段推进：" + "、".join(str(chapter.get("time_advance", "")) for chapter in chapters),
+            }]
+        data["chapter_range"] = {"start": 1, "end": 1}
+        data["is_new_volume"] = True
+        for point in data.get("decision_points", []):
+            point["chapter"] = 1
+        chapters = data["chapters"]
 
     if not chapters:
         print("[OK] 无新增章，跳过")

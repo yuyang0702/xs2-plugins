@@ -1,7 +1,7 @@
 {
   "workflow_id": "reference-distillation",
   "name": "参考资料蒸馏",
-  "version": 3,
+  "version": 7,
   "nodes": [
     {
       "id": "script_split_reference",
@@ -19,7 +19,7 @@
         "script_source": "library",
         "script_type": "python",
         "script_name": "reference_distill",
-        "script_args": "split --input {{reference_path}} --window {{window_size}} --overlap 400",
+        "script_args": "split --input {{reference_path}} --window {{window_size}} --overlap 400 --source-mode {{source_mode}}",
         "timeout": 120,
         "script_group": "xs2"
       },
@@ -38,7 +38,7 @@
       "node_type": "agent",
       "agent_type": "xs2-reference-distiller",
       "system_prompt_template": "",
-      "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"build\",\"character\",\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"source_start\":0,\"source_end\":1,\"excerpt\":\"必须与原文完全一致\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。",
+      "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制和 Writing DNA 观察项。当前语料类型：{{source_mode}}。short_full 表示短篇全文，serial_chapters 表示长篇章节样本，auto 表示请根据来源标记和内容判断。分析开篇钩子时必须遵循对应尺度：短篇看前几百字和全文回收，长篇看前 1～3 章、章首章末和卷级持续性。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"layer\":\"language|structure|narrative_lens|dialogue|imagery|theme|character\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"build\",\"character\",\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"application_scope\":[\"short_full|serial_opening|serial_chapter|serial_arc|general\"],\"source_pov\":[\"first_person|third_person|mixed|unknown\"],\"target_pov\":[\"first_person|third_person\"],\"pov_compatibility\":\"direct|adaptable|risky\",\"adaptation_guidance\":\"视角适配说明\",\"risk_flags\":[\"潜在风险\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"evidence_id\":\"当前窗口 evidence_catalog 中的真实编号\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。\n\n【实际读取的上游分析指令与小说适配约定】\n{{dna_instructions_file}}\n\n【语言统计与语料元数据】\n{{dna_metadata_file}}\n\n在上述 candidates 之外，同一 JSON 顶层还必须提供以下两个数组：\n\"style_observations\":[{\"layer\":\"language|structure|narrative_lens|dialogue|imagery|theme|character\",\"rule\":\"可观察风格规律\",\"transfer_guidance\":\"可迁移的抽象建议\",\"limits\":[\"样本局限或适配边界\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"当前窗口ID\",\"evidence_id\":\"当前窗口 evidence_catalog 中的真实编号\",\"reason\":\"支持观察的理由\"}]}],\n\"conflict_patterns\":[{\"name\":\"抽象链条名称\",\"goal\":\"目标机制\",\"foreshadowing\":\"此前埋下的条件或样本未见\",\"obstacle\":\"阻碍机制\",\"resolution\":\"采取行动或局部解决\",\"cost\":\"行动代价或样本未见\",\"next_obstacle\":\"后续阻碍机制或样本未见\",\"causal_link\":\"为什么前一行动或已有规则引发新阻碍\",\"payoff\":\"回收方式或样本未见\",\"application_scope\":\"short_full|serial_opening|serial_chapter|serial_arc|general\",\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"当前窗口ID\",\"evidence_id\":\"当前窗口 evidence_catalog 中的真实编号\",\"reason\":\"支持链条的哪一环\"}]}]。\n每窗口最多12条风格观察、8条冲突链，每条1～8处证据；没有证据则返回空数组，不编造完整链。证据字符原样复制，来源字体混淆时不得猜测还原。少量样本只描述本样本，不宣称作者稳定风格。\n\n证据选择：直接引用当前窗口 evidence_catalog 的 evidence_id，连同 window_id 和 reason 返回，不要重打摘录或自行计算偏移。脚本会从原文快照提取实际字符并校验；严禁编造编号。\n人物写法必须独立观察（layer=character）：人物自己的欲望/恐惧、矛盾、压力下的选择与代价、情绪如何通过动作或语言显露、各人的说话差异、关系改变、配角是否有独立目标。若有证据，给出可迁移的 character 候选（scopes 包含 character、mvp、polish）和风格观察；样本不足则指出未知，不凭印象补人格。发现人物机械化或只讲规则时作为风险指出，不把缺点提炼成推荐规则。\n\n输出长度约束（保证JSON完整）：本窗口候选至多5条，优先彼此不同且有证据的机制；风格观察至多7条，每个有依据的层次给1条代表；冲突链至多3条。每条证据1～3个真实编号即可。字段用简洁中文，通常20～60字，最长120字；全部JSON控制在8000字符内，不缩进、不重复相同建议。覆盖整个窗口，优先选代表而不是穷举，宁可减少重复条目也不能截断JSON。",
       "position": {
         "x": 520,
         "y": 150
@@ -52,7 +52,10 @@
       "max_reject_count": 3,
       "save_output_to_file": true,
       "output_file_path": "learning/cache/{{window_id}}.raw.json",
-      "sub_workflow_params": {}
+      "sub_workflow_params": {},
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5,
+      "fail_auto_skip": false
     },
     {
       "id": "script_validate_window",
@@ -110,6 +113,59 @@
       "output_file_path": "",
       "save_output_to_file": false,
       "sub_workflow_params": {}
+    },
+    {
+      "id": "agent_summarize_dna",
+      "label": "汇总 Writing DNA 风格",
+      "node_type": "agent",
+      "agent_type": "xs2-reference-distiller",
+      "system_prompt_template": "",
+      "first_message": "执行 writing-dna-skill 的最终汇总。必须实际读取以下上游指令、中文模板和证据校验后的分析包。\n\n【指令和小说适配】\n{{dna_instructions_file}}\n\n【上游中文模板】\n{{dna_templates_file}}\n\n【校验后的分析包】\n{{dna_bundle_file}}\n\n只返回纯JSON：{\"source_sha256\":\"分析包来源哈希\",\"documents\":{\"语言DNA.md\":\"Markdown全文\",\"文章结构模板.md\":\"Markdown全文\",\"写作视角与认知框架.md\":\"Markdown全文\",\"视觉风格指南.md\":\"Markdown全文\",\"Writing-DNA.md\":\"Markdown全文\",\"人物写法.md\":\"小说扩展的Markdown全文\"}}。每份40～16000字符，以中文写清可执行规则、已校验窗口依据、置信度和样本边界，不留待填写。统计数字严格取分析包，不把高频字串伪称词性词频。结构分析区分短篇全文与长篇开局/章节；单一作品不能代表作者全部作品；未见环节保留未知。纯文本未提供图片或网页样式，视觉文档明确无法判断，只记录可观察的段落组织。角色认知不等同作者信念。不得新增无证据的冲突链或具体剧情，不能自动采用或改本书风格。Writing-DNA.md 应整合语言、结构、视角、对话、主题呈现、篇幅迁移和局限，附采用前需要检查的冲突项。\n人物写法.md 是本项目小说扩展，上游五份文档保持原名。根据已校验的 character 观察、对话及认知观察分析人物欲望、内在矛盾、情绪行动、独立目标、声线与关系选择的写法；逐项写依据、迁移建议、风险和未知。不能仅列原作人物履历。没有相关证据时明确暂无法判断，勿虚构。\n汇总输出长度约束：六份文档每份约300～800中文字，合计不超过6000中文字。使用简洁Markdown标题和段落，不重复原文与完整候选表，JSON不要缩进，必须完整闭合。",
+      "position": {
+        "x": 1200,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "learning/dna/summary.raw.json",
+      "sub_workflow_params": {},
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5,
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_finalize_dna",
+      "label": "保存完整蒸馏档案",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 1430,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "finalize-dna --input learning/dna/summary.raw.json",
+        "timeout": 120,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "output_file_path": "",
+      "save_output_to_file": false,
+      "sub_workflow_params": {}
     }
   ],
   "edges": [
@@ -153,8 +209,18 @@
       }
     },
     {
-      "id": "edge-merge-end",
+      "id": "edge-merge-dna",
       "source": "script_merge_candidates",
+      "target": "agent_summarize_dna"
+    },
+    {
+      "id": "edge-dna-final",
+      "source": "agent_summarize_dna",
+      "target": "script_finalize_dna"
+    },
+    {
+      "id": "edge-final-end",
+      "source": "script_finalize_dna",
       "target": "__end__"
     }
   ],
@@ -182,6 +248,18 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": false
+    },
+    {
+      "key": "source_mode",
+      "name": "参考语料类型",
+      "type": "text",
+      "default": "auto",
+      "required": false,
+      "description": "short_full、serial_chapters 或 auto。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
     },
     {
       "key": "window_ids",
@@ -218,6 +296,46 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": true
+    },
+    {
+      "key": "dna_instructions_file",
+      "name": "dna_instructions_file",
+      "type": "file",
+      "default": "learning/dna/instructions.md",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": []
+    },
+    {
+      "key": "dna_templates_file",
+      "name": "dna_templates_file",
+      "type": "file",
+      "default": "learning/dna/templates.md",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": []
+    },
+    {
+      "key": "dna_metadata_file",
+      "name": "dna_metadata_file",
+      "type": "file",
+      "default": "learning/dna/metadata.json",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": []
+    },
+    {
+      "key": "dna_bundle_file",
+      "name": "dna_bundle_file",
+      "type": "file",
+      "default": "learning/dna/bundle.json",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": []
     }
   ],
   "gateways": [
@@ -240,5 +358,12 @@
   "end_position": {
     "x": 1100,
     "y": 220
+  },
+  "console": {
+    "app": "novel-workbench",
+    "role": "library-distillation",
+    "title": "资料蒸馏",
+    "group": "独立资料分析",
+    "description": "独立导入并分析参考资料，完成后进入共享写法库，不占用小说创作步骤。"
   }
 }

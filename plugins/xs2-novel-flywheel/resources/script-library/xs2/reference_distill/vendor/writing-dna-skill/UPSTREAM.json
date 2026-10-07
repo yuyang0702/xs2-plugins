@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/larashero3-dotcom/writing-dna-skill",
+  "commit": "ee3d97ee27268004b5187d97711161f44fc4aae4",
+  "license": "MIT",
+  "adapter": "NOVEL_ADAPTER.md",
+  "included": [
+    "SKILL.md",
+    "README.md",
+    "LICENSE",
+    "templates/author-corpus/zh"
+  ]
+}
