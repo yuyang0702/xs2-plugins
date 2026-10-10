@@ -251,7 +251,34 @@
       "output_file_path": "",
       "save_output_to_file": false,
       "sub_workflow_params": {}
-    
+    },
+    {
+      "id": "script_intelligence_init",
+      "label": "智能推荐初始化",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {"x": 2250, "y": 150},
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reference_intelligence",
+        "script_args": "init --workspace .",
+        "timeout": "60"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "learning/intelligence_initialized.json",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    }
   ],
   "edges": [
     {
@@ -321,6 +348,11 @@
       {
         "id": "edge-summary-end",
         "source": "script_generate_summary",
+        "target": "script_intelligence_init"
+      },
+      {
+        "id": "edge-intelligence-end",
+        "source": "script_intelligence_init",
         "target": "__end__"
     }
   ],
@@ -456,7 +488,7 @@
     "y": 50
   },
   "end_position": {
-    "x": 2100,
+    "x": 2300,
     "y": 220
   },
   "console": {

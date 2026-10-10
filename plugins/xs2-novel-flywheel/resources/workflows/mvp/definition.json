@@ -64,6 +64,36 @@
       "fail_auto_skip": false
     },
     {
+      "id": "script_smart_context",
+      "label": "构建智能上下文",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 270,
+        "y": 300
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reference_intelligence",
+        "script_args": "build-context --workflow mvp --chapter {{chapter_number}} --workspace .",
+        "timeout": "60"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "learning/active_context.md",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
       "id": "agent_we",
       "label": "世界状态机",
       "node_type": "agent",
@@ -924,6 +954,36 @@
       "output_file_path": "",
       "sub_workflow_params": {},
       "fail_auto_skip": false
+    },
+    {
+      "id": "script_check_originality",
+      "label": "原创性检测",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 1200,
+        "y": 1000
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reference_intelligence",
+        "script_args": "check-similarity --chapter {{chapter_number}} --workspace .",
+        "timeout": "60"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "story/{{chapter_number}}/originality_report.json",
+      "sub_workflow_params": {},
+      "fail_auto_skip": true
     }
   ],
   "edges": [
@@ -970,12 +1030,12 @@
     {
       "id": "edge-sync_up_si-__end__",
       "source": "sync_up_si",
-      "target": "__end__"
+      "target": "script_check_originality"
     },
     {
       "id": "edge-syncdown-we",
       "source": "script_sync_down",
-      "target": "agent_we"
+      "target": "script_smart_context"
     },
     {
       "id": "edge-a3126a36",
@@ -1145,6 +1205,14 @@
     {
       "source": "script_story_context",
       "target": "script_sync_down"
+    },
+    {
+      "source": "script_smart_context",
+      "target": "agent_we"
+    },
+    {
+      "source": "script_check_originality",
+      "target": "__end__"
     }
   ],
   "variables": [

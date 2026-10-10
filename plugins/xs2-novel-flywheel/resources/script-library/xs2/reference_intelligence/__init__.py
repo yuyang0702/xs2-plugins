@@ -15,29 +15,22 @@ from .recommender import (
     NovelContext,
     PlotStage,
     ConflictPhase,
-    Technique,
 )
 
 from .genre_adapter import (
     GenreAdapter,
-    GenreCompatibility,
 )
 
 from .plot_planner import (
     PlotPlanner,
-    StoryBeat,
-    PlotSuggestion,
 )
 
 from .context_builder import (
     ContextBuilder,
-    ContextType,
 )
 
 from .originality_monitor import (
     OriginalityMonitor,
-    SimilarityReport,
-    Severity,
 )
 
 from .intelligence_api import (
@@ -55,25 +48,18 @@ __all__ = [
     "NovelContext",
     "PlotStage",
     "ConflictPhase",
-    "Technique",
     
     # Genre Adapter
     "GenreAdapter",
-    "GenreCompatibility",
     
     # Plot Planner
     "PlotPlanner",
-    "StoryBeat",
-    "PlotSuggestion",
     
     # Context Builder
     "ContextBuilder",
-    "ContextType",
     
     # Originality Monitor
     "OriginalityMonitor",
-    "SimilarityReport",
-    "Severity",
     
     # API
     "recommend_for_chapter",
