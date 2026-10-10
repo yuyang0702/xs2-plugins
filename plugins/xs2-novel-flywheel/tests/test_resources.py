@@ -215,6 +215,26 @@ def test_agents_inherit_core_main_model() -> None:
                 assert not node.get("model_override")
 
 
+def test_workflow_agents_do_not_define_model_budgets() -> None:
+    """小说工作流只选择模型与常规参数，不携带独立的模型预算。"""
+    resources = PLUGIN_ROOT / "resources"
+    agents = _json(resources / "agents.json")["agents"]
+    forbidden = {
+        "thinking_budget",
+        "token_budget",
+        "max_tokens",
+        "max_completion_tokens",
+        "output_budget",
+    }
+
+    for agent_name, definition in agents.items():
+        params = definition.get("model_params", {})
+        assert forbidden.isdisjoint(params), (
+            f"工作流 Agent {agent_name} 不应配置模型预算字段: "
+            f"{forbidden.intersection(params)}"
+        )
+
+
 def test_public_package_has_no_private_pipeline_markers() -> None:
     forbidden = {
         "-".join(("nov" + "el", "tear" + "down")),

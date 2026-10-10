@@ -1,7 +1,7 @@
 {
   "workflow_id": "reader-sim",
   "name": "模拟读者评估",
-  "version": 2,
+  "version": 3,
   "console": {
     "app": "novel-workbench",
     "role": "reader",
@@ -9,7 +9,7 @@
     "title": "模拟读者",
     "group": "质量检查",
     "description": "从读者视角判断看点、钩子、节奏和继续阅读意愿。",
-    "artifact": "quality/reader_report.json",
+    "artifact": "story/{chapter}/reader_report.json",
     "manual_confirmation": true
   },
   "nodes": [
@@ -62,10 +62,70 @@
       "enable_reject_upstream": false,
       "max_reject_count": 2,
       "save_output_to_file": true,
-      "output_file_path": "quality/reader_report.json",
+      "output_file_path": "story/{{chapter_number}}/reader_report.json",
       "sub_workflow_params": {},
       "auto_retry_count": 2,
       "auto_retry_interval_seconds": 5,
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_reader_source",
+      "label": "绑定本章读者评估版本",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 270,
+        "y": 180
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_args": "begin-reader --chapter {{chapter_number}}",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_reader_commit",
+      "label": "保存本章独立读者报告",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 270,
+        "y": 180
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_args": "commit-reader --chapter {{chapter_number}}",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
       "fail_auto_skip": false
     }
   ],
@@ -78,11 +138,19 @@
     {
       "id": "edge-reader-end",
       "source": "agent_reader",
-      "target": "__end__"
+      "target": "script_reader_commit"
     },
     {
       "source": "script_story_context",
+      "target": "script_reader_source"
+    },
+    {
+      "source": "script_reader_source",
       "target": "agent_reader"
+    },
+    {
+      "source": "script_reader_commit",
+      "target": "__end__"
     }
   ],
   "variables": [

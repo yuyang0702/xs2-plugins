@@ -1,7 +1,7 @@
 {
   "workflow_id": "post-hoc",
   "name": "章节后验管线",
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": "script_story_context",
@@ -337,7 +337,7 @@
       "key": "hooks_file",
       "name": "伏笔列表",
       "type": "file",
-      "default": "meta/hooks.md",
+      "default": "cache/story-support/{{chapter_number}}/hooks-before.md",
       "required": false,
       "description": "",
       "options": [],
@@ -349,7 +349,7 @@
       "key": "debts_file",
       "name": "叙事债务",
       "type": "file",
-      "default": "meta/debts.md",
+      "default": "cache/story-support/{{chapter_number}}/debts-before.md",
       "required": false,
       "description": "",
       "options": [],

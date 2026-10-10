@@ -30,9 +30,135 @@ def test_actual_upstream_files_and_runtime_functions():
             original = MODULE.parent / 'vendor' / project['project'] / file['path']
             assert hashlib.sha256(original.read_bytes()).hexdigest() == file['sha256']
     assert support.methods()['indexed_sections'] > 0
+
+
+def test_deleted_chapter_blocks_later_production_even_when_outline_exists(tmp_path):
+    support.write(tmp_path, "archive/chapter_resets/0002.json", {"operation": "delete"})
+    support.write(tmp_path, "outline/near_term_outline.md", "### 第3章\n推进")
+    check = support.preflight(tmp_path, "0003")
+    assert not check["ready"] and check["reason_code"] == "chapter_missing"
+    assert check["chapter"] == "0002"
+
+
+def test_archive_refresh_clears_deleted_chapter_facts_when_no_valid_states_remain(tmp_path):
+    support.write(tmp_path, "archive/hooks.json", [{"id": "old", "description": "已删除的事件"}])
+    support.write(tmp_path, "archive/debts.json", [{"id": "old-debt"}])
+    status = support.refresh_archive(tmp_path)
+    assert status["updated_chapter"] == ""
+    assert support.load(tmp_path, "archive/hooks.json") == []
+    assert support.load(tmp_path, "archive/debts.json") == []
+    assert "已删除的事件" not in support.read(tmp_path, "meta/hooks.md")
     assert any(m['id'] == 'D15' for m in support.methods()['directions'])
     text = support.upstream.story_state_text({'characters': [{'name': '赵磊', 'motivation': '救人但怕担责', 'current_status': '缺氧'}]})
     assert '救人但怕担责' in text and '缺氧' in text
+
+
+def test_reader_reports_are_chapter_scoped_and_bound_to_reviewed_body(tmp_path):
+    for chapter in ("0001", "0002"):
+        support.write(tmp_path, f"story/{chapter}/chapter.md", f"第{chapter}章的正文")
+        support.begin_reader(tmp_path, chapter)
+        support.write(tmp_path, f"story/{chapter}/reader_report.json", {"verdict":"pass","summary":chapter})
+        support.commit_reader(tmp_path, chapter)
+    assert support.load(tmp_path, "story/0001/reader_report.json")["summary"] == "0001"
+    assert support.load(tmp_path, "quality/reader_report.json")["chapter_number"] == "0002"
+    support.begin_reader(tmp_path, "0001")
+    support.write(tmp_path, "story/0001/chapter.md", "评估期间改了正文")
+    with pytest.raises(ValueError, match="正文在评估过程中"):
+        support.commit_reader(tmp_path, "0001")
+
+
+def test_revision_context_uses_chapter_start_indexes_not_future_archive(tmp_path):
+    commit_chapter(tmp_path)
+    state = support.load(tmp_path, "story/0001/confirmed_state.json")
+    state["indexes_before"] = {"hooks":[], "debts":[]}
+    support.write(tmp_path, "story/0001/confirmed_state.json", state)
+    support.write(tmp_path, "archive/hooks.json", [{"id":"h999","chapter_created":2,"description":"第二章才发生的秘密"}])
+    support.prepare_context(tmp_path, "0001")
+    assert "第二章才发生的秘密" not in support.read(tmp_path, "cache/story-support/0001/hooks-before.md")
+    assert "不能把后续发生的事提前写成角色已知" in support.read(tmp_path, "cache/story-support/context.md")
+
+
+def test_historical_context_excludes_full_book_current_state_and_ledgers(tmp_path):
+    commit_chapter(tmp_path)
+    support.write(tmp_path, "archive/hooks.json", [
+        {"id":"h002", "chapter_created":2, "description":"第二章未来伏笔"}])
+    support.write(tmp_path, "archive/debts.json", [
+        {"id":"d002", "chapter_created":2, "description":"第二章未来债务"}])
+    support.write(tmp_path, "meta/hooks.md", "第二章未来伏笔")
+    support.write(tmp_path, "meta/debts.md", "第二章未来债务")
+    support.write(tmp_path, "meta/conflict_ledger.md", "第二章未来冲突")
+    support.write(tmp_path, "meta/current_world.md", "第二章未来世界状态")
+    support.write(tmp_path, "meta/current_characters.md", "第二章未来人物状态")
+
+    support.prepare_context(tmp_path, "0001")
+    context = support.read(tmp_path, "cache/story-support/context.md")
+    for future_fact in ("第二章未来伏笔", "第二章未来债务", "第二章未来冲突",
+                        "第二章未来世界状态", "第二章未来人物状态"):
+        assert future_fact not in context
+
+
+def test_begin_review_never_uses_unfiltered_future_archive_as_chapter_start(tmp_path):
+    commit_chapter(tmp_path)
+    state = support.load(tmp_path, "story/0001/confirmed_state.json")
+    state["indexes_before"] = {}
+    support.write(tmp_path, "story/0001/confirmed_state.json", state)
+    support.write(tmp_path, "archive/hooks.json", [
+        {"id":"h002", "chapter_created":2, "description":"第二章未来伏笔"}])
+    support.write(tmp_path, "archive/debts.json", [
+        {"id":"d002", "chapter_created":2, "description":"第二章未来债务"}])
+
+    support.begin_review(tmp_path, "0001")
+    indexes = support.load(tmp_path, "cache/story-support/0001/indexes-before.json")
+    assert indexes == {"hooks":[], "debts":[]}
+
+
+def test_legacy_index_fallback_requires_creation_and_last_change_before_chapter(tmp_path):
+    support.write(tmp_path, "story/0002/chapter.md", "本章正文")
+    entries = [
+        {"id":"h001", "chapter_created":1, "source_chapter":"0001", "description":"前文已埋"},
+        {"id":"h002", "chapter_created":1, "source_chapter":"0003", "status":"resolved"},
+        {"id":"h003", "chapter_created":1, "chapter_resolved":3},
+        {"id":"h004", "chapter_created":1, "last_advanced":3},
+        {"id":"h005", "chapter_created":3},
+        {"id":"h006", "description":"来源不明"},
+        {"id":"h007", "chapter_created":"未知"},
+    ]
+    support.write(tmp_path, "archive/hooks.json", entries)
+    support.prepare_context(tmp_path, "0002")
+    support.begin_review(tmp_path, "0002")
+    indexes = support.load(tmp_path, "cache/story-support/0002/indexes-before.json")
+    assert indexes["hooks"] == entries[:1]
+    assert "前文已埋" in support.read(tmp_path, "cache/story-support/0002/hooks-before.md")
+
+
+def test_context_without_adopted_plan_contains_target_outline_not_future_plans(tmp_path):
+    support.write(tmp_path, "outline/near_term_outline.md",
+                  "### 第1章\n" + "先前规划\n" * 1500 +
+                  "\n### 第 2 章 · 借粮\n本章必须承担借粮的代价。\n"
+                  "#### 场景选择\n承认自己的困境。\n"
+                  "#### 第3章内的分场标题\n这仍属于第2章。\n"
+                  "### 第3章\n未来才揭示的秘密。\n## 角色弧线\n未来的角色结局。\n")
+    support.prepare_context(tmp_path, "0002")
+    text = support.read(tmp_path, "cache/story-support/context.md")
+    assert "本章必须承担借粮的代价" in text
+    assert "承认自己的困境" in text
+    assert "这仍属于第2章" in text
+    assert "未来才揭示的秘密" not in text and "未来的角色结局" not in text
+
+
+def test_chapter_plot_context_does_not_receive_future_outline_sections(tmp_path):
+    support.write(tmp_path, "outline/near_term_outline.md",
+                  "### 第1章\n第一章计划。\n### 第2章\n目标章节计划。\n"
+                  "#### 场景拆分\n本章场景。\n### 第3章\n未来章节计划。")
+    support.write(tmp_path, "outline/volume_outline.md",
+                  "## 卷1（第1-10章）\n本卷后续转折与结局。\n"
+                  "## 卷2（第11-20章）\n第二卷的未来规划。")
+
+    context = support.context(tmp_path, "0002", scope="chapter")
+    sources = {item["source_id"]: item["content"] for item in context["sources"]}
+    assert sources["outline/near_term_outline.md"] == (
+        "### 第2章\n目标章节计划。\n#### 场景拆分\n本章场景。")
+    assert "outline/volume_outline.md" not in sources
 
 
 def test_adoption_is_explicit_idempotent_and_consumed_by_real_context(tmp_path):
@@ -66,12 +192,39 @@ def test_changed_foundation_keeps_author_selection_for_reconciliation(tmp_path):
     support.apply_plan(tmp_path, entry, 'A')
     support.write(tmp_path, 'meta/character_profiles.md', '新确定的人物背景，需核对既有选择。')
     check = support.preflight(tmp_path, '0001')
-    assert not check['ready'] and '创作助手' in check['message']
+    assert not check['ready'] and check['action'] == 'outline'
+    assert check['reason_code'] == 'adopted_plan_stale'
+    assert check['changed_sources'] == ['meta/character_profiles.md']
+    assert '创作助手' in check['next_step'] and '仍保留' in check['message']
     ctx = support.prepare_context(tmp_path, '0001')
     assert ctx['adopted_plan']['compatible'] is False
     assert '交换责任而非强夺记录' in ctx['adopted_plan']['content']
     assert '待重新协调' in support.read(tmp_path, 'cache/story-support/context.md')
     with pytest.raises(ValueError): support.prepare_context(tmp_path, '0001', check=True)
+
+
+def test_story_plan_changes_invalidate_adopted_chapter_plan(tmp_path):
+    entry = proposal(tmp_path)
+    support.apply_plan(tmp_path, entry, "A")
+    support.write(tmp_path, "meta/story_plan.md", "本书核心目标已调整。")
+
+    check = support.preflight(tmp_path, "0001")
+    assert not check["ready"]
+    assert check["reason_code"] == "adopted_plan_stale"
+    assert check["changed_sources"] == ["meta/story_plan.md"]
+
+
+def test_preflight_explains_the_next_action_before_chapter_generation(tmp_path):
+    support.write(tmp_path, 'outline/near_term_outline.md', '### 第1章 · 先找食物')
+    check = support.preflight(tmp_path, '0001')
+    assert check['ready'] and check['action'] == 'mvp'
+    assert check['reason_code'] == 'ready'
+    assert check['next_step'] == '开始生成第 1 章正文。'
+
+    check = support.preflight(tmp_path, '0002')
+    assert not check['ready'] and check['action'] == 'outline'
+    assert check['reason_code'] == 'outline_missing'
+    assert '第 2 章' in check['next_step']
 
 
 def commit_chapter(root, chapter='0001', content='赵磊关上通风阀，决定留下救人。'):
@@ -105,6 +258,65 @@ def test_review_cannot_commit_changed_body_or_false_evidence(tmp_path):
     support.write(tmp_path, 'cache/arbiter/arb_output.json', {'story_confirmed': {}})
     with pytest.raises(ValueError, match='无法核实'): support.commit(tmp_path, '0001')
     assert not (tmp_path/'story/0001/confirmed_state.json').exists()
+
+
+def test_evidence_accepts_independent_quotes_and_legacy_excerpt_formatting():
+    body = '他把明天那份包好，压在空饭盒底下。吃完今天的几块，他捋出碎屑。\n\n柜门还开着，里面只有两个空袋。他关上柜门。'
+    first = '他把明天那份包好，压在空饭盒底下。'
+    last = '柜门还开着，里面只有两个空袋。'
+    assert support.validated_evidence([first, last], body, 'bad') == [first, last]
+    assert support.validated_evidence(first + last, body, 'bad') == [first, last]
+    assert support.validated_evidence(first + '\n\n' + last, body, 'bad') == [first, last]
+    quote = '他捋出碎屑。\n柜门还开着'
+    assert support.validated_evidence(quote, body, 'bad') == quote
+
+
+@pytest.mark.parametrize('evidence', [
+    [], ['真实原句。', '编造原句。'], ['真实原句。', ''], [123], None, 123,
+    {'quote': '真实原句。'}, '真实原句。编造原句。', '真实 原句。',
+    '真实原句！', '原句。他安全。', '他安全。',
+])
+def test_evidence_never_drops_or_fuzzy_matches_invalid_passages(evidence):
+    with pytest.raises(ValueError, match='bad'):
+        support.validated_evidence(evidence, '真实原句。\n他不安全。', 'bad')
+
+
+def test_evidence_preserves_english_spaces_and_word_boundaries():
+    body = 'The room is not safe. The caretaker is unsafe.'
+    assert support.validated_evidence('not  safe', body, 'bad') == 'not  safe'
+    for quote in ['notsafe', 'caret', 'safe room', ['not safe.', 'not safe!']]:
+        with pytest.raises(ValueError, match='bad'):
+            support.validated_evidence(quote, body, 'bad')
+    with pytest.raises(ValueError, match='bad'):
+        support.validated_evidence('safe', 'unsafe', 'bad')
+
+
+def test_commit_verifies_all_archive_evidence_before_writing(tmp_path):
+    body = '赵磊关上通风阀。\n\n他决定留下救人。'
+    support.write(tmp_path, 'story/0001/chapter.md', body)
+    support.begin_review(tmp_path, '0001')
+    evidence = ['赵磊关上通风阀。', '他决定留下救人。']
+    observer = {'confirmed_state': {
+        'characters': [{'name': '赵磊', 'evidence': evidence}],
+        'hooks': [{'id': 'h001', 'description': '通风异常', 'evidence': evidence}],
+        'debts': [{'id': 'd001', 'description': '救人的承诺', 'evidence': evidence}]}}
+    arbiter = {'story_confirmed': {}, 'world_rulings': {'entries': [
+        {'fact': '通风阀已关闭', 'verdict': 'adopt', 'evidence': evidence}]},
+        'new_hooks': [{'id': 'h002', 'description': '尚未确认', 'evidence': evidence + ['凭空出现的枪声。']}]}
+    support.write(tmp_path, 'cache/observer/obs_output.json', observer)
+    support.write(tmp_path, 'cache/arbiter/arb_output.json', arbiter)
+    with pytest.raises(ValueError, match='正文依据'):
+        support.commit(tmp_path, '0001')
+    for path in ['story/0001/confirmed_state.json', 'archive/hooks.json', 'archive/debts.json']:
+        assert not (tmp_path / path).exists()
+    arbiter['new_hooks'][0]['evidence'] = ''.join(evidence)
+    support.write(tmp_path, 'cache/arbiter/arb_output.json', arbiter)
+    state = support.commit(tmp_path, '0001')
+    assert state['characters'][0]['evidence'] == evidence
+    assert state['world']['facts'][0]['evidence'] == evidence
+    assert state['indexes']['hooks'][-1]['evidence'] == evidence
+    assert state['indexes']['debts'][0]['evidence'] == evidence
+    assert support.archive_status(tmp_path)['pending_chapters'] == []
 
 
 def test_no_distillation_and_short_story_remain_supported(tmp_path):
