@@ -7,10 +7,20 @@ import hashlib
 from typing import Dict, List, Any, Tuple
 from pathlib import Path
 
-from analyzers.plot_analyzer import analyze_plot_structure
-from analyzers.character_analyzer import analyze_character_patterns
-from analyzers.conflict_analyzer import analyze_conflict_mechanics
-from analyzers.technique_analyzer import analyze_writing_techniques
+try:
+    from analyzers.plot_analyzer import analyze_plot_structure
+    from analyzers.character_analyzer import analyze_character_patterns
+    from analyzers.conflict_analyzer import analyze_conflict_mechanics
+    from analyzers.technique_analyzer import analyze_writing_techniques
+except ImportError:
+    import sys
+    analyzers_path = str(Path(__file__).parent / "analyzers")
+    if analyzers_path not in sys.path:
+        sys.path.insert(0, str(Path(__file__).parent))
+    from analyzers.plot_analyzer import analyze_plot_structure
+    from analyzers.character_analyzer import analyze_character_patterns
+    from analyzers.conflict_analyzer import analyze_conflict_mechanics
+    from analyzers.technique_analyzer import analyze_writing_techniques
 
 
 class ReferenceAnalysisUpgrade:
