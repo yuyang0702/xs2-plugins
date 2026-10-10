@@ -166,8 +166,7 @@
       "output_file_path": "",
       "save_output_to_file": false,
       "sub_workflow_params": {}
-    }
-    ,
+    },
     {
       "id": "script_analyze_dimensions",
       "label": "多维度分析",
@@ -259,7 +258,10 @@
       "agent_type": "default",
       "system_prompt_template": "",
       "first_message": "",
-      "position": {"x": 2250, "y": 150},
+      "position": {
+        "x": 2250,
+        "y": 150
+      },
       "var_bindings": {},
       "node_params": {
         "script_source": "library",
@@ -273,11 +275,11 @@
       "enable_complete_node_task": true,
       "output_variable": "",
       "enable_reject_upstream": false,
-      "max_reject_count": 3,
+      "max_reject_count": 1,
       "save_output_to_file": true,
       "output_file_path": "learning/intelligence_initialized.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": true
     }
   ],
   "edges": [
@@ -333,27 +335,27 @@
     {
       "id": "edge-final-end",
       "source": "script_finalize_dna",
-        "target": "script_analyze_dimensions"
-      },
-      {
-        "id": "edge-analyze-validate",
-        "source": "script_analyze_dimensions",
-        "target": "script_validate_analysis"
-      },
-      {
-        "id": "edge-validate-summary",
-        "source": "script_validate_analysis",
-        "target": "script_generate_summary"
-      },
-      {
-        "id": "edge-summary-end",
-        "source": "script_generate_summary",
-        "target": "script_intelligence_init"
-      },
-      {
-        "id": "edge-intelligence-end",
-        "source": "script_intelligence_init",
-        "target": "__end__"
+      "target": "script_analyze_dimensions"
+    },
+    {
+      "id": "edge-analyze-validate",
+      "source": "script_analyze_dimensions",
+      "target": "script_validate_analysis"
+    },
+    {
+      "id": "edge-validate-summary",
+      "source": "script_validate_analysis",
+      "target": "script_generate_summary"
+    },
+    {
+      "id": "edge-summary-end",
+      "source": "script_generate_summary",
+      "target": "script_intelligence_init"
+    },
+    {
+      "id": "edge-intelligence-end",
+      "source": "script_intelligence_init",
+      "target": "__end__"
     }
   ],
   "variables": [

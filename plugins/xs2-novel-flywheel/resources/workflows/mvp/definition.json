@@ -87,11 +87,11 @@
       "enable_complete_node_task": true,
       "output_variable": "",
       "enable_reject_upstream": false,
-      "max_reject_count": 3,
+      "max_reject_count": 1,
       "save_output_to_file": true,
       "output_file_path": "learning/active_context.md",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": true
     },
     {
       "id": "agent_we",
