@@ -478,6 +478,122 @@ def prepare_choices(args):
     print("<script_out>风格、写法与冲突候选已准备；暂无参考时可继续原创创作。</script_out>")
 
 
+def analyze_dimensions(args):
+    """Perform multi-dimensional analysis on reference material."""
+    from distillation_upgrade import ReferenceAnalysisUpgrade
+    
+    analyzer = ReferenceAnalysisUpgrade(load, save, digest)
+    
+    print("正在进行多维度分析...")
+    combined_analysis = analyzer.perform_analysis()
+    
+    print("正在增强候选数据...")
+    analyzer.enhance_candidates(combined_analysis)
+    
+    print("正在保存分析结果...")
+    analyzer.save_analyses(combined_analysis)
+    
+    plot_count = combined_analysis["analyses"]["plot"]["plot_dimensions"]["conflict_escalation"]["count"]
+    char_count = combined_analysis["analyses"]["character"]["character_dimensions"]["character_arcs"]["count"]
+    conflict_count = combined_analysis["analyses"]["conflict"]["conflict_dimensions"]["escalation_paths"]["count"]
+    technique_count = combined_analysis["analyses"]["technique"]["technique_dimensions"]["dialogue_craft"]["count"]
+    
+    print(f"<script_out>多维度分析完成：剧情 {plot_count} 项、角色 {char_count} 项、冲突 {conflict_count} 项、技法 {technique_count} 项。分析结果已保存至 learning/analysis/</script_out>")
+
+
+def validate_analysis(args):
+    """Validate analysis results for completeness and consistency."""
+    if not path("learning/reference_analysis.json").exists():
+        raise ValueError("分析文件不存在，请先执行 analyze-dimensions")
+    
+    analysis = load("learning/reference_analysis.json")
+    
+    # Validate schema
+    if analysis.get("schema") != "xs2.reference.multi_dimensional_analysis.v1":
+        raise ValueError("分析文件格式版本不匹配")
+    
+    # Validate presence of all dimensions
+    required_dims = ["plot", "character", "conflict", "technique"]
+    analyses = analysis.get("analyses", {})
+    missing = [dim for dim in required_dims if dim not in analyses]
+    
+    if missing:
+        raise ValueError(f"分析结果缺失维度：{', '.join(missing)}")
+    
+    # Validate summaries
+    summary = analysis.get("summary", {})
+    for dim in required_dims:
+        if not summary.get(dim):
+            print(f"警告：{dim} 维度的摘要为空")
+    
+    print("<script_out>分析结果验证通过。所有维度数据完整。</script_out>")
+
+
+def generate_summary(args):
+    """Generate human-readable summary of all analyses."""
+    if not path("learning/reference_analysis.json").exists():
+        raise ValueError("分析文件不存在，请先执行 analyze-dimensions")
+    
+    analysis = load("learning/reference_analysis.json")
+    summary = analysis.get("summary", {})
+    source = analysis.get("source", {})
+    
+    lines = [
+        "# 参考小说多维度分析摘要",
+        "",
+        f"来源：{source.get('title', '未知')}",
+        f"作者：{source.get('author', '未知')}",
+        "",
+        summary.get("plot", "剧情分析数据不足"),
+        "",
+        summary.get("character", "角色分析数据不足"),
+        "",
+        summary.get("conflict", "冲突分析数据不足"),
+        "",
+        summary.get("technique", "技法分析数据不足"),
+        "",
+        "# 应用指南",
+        "",
+        "以上分析提取的是可迁移的创作技巧和设计模式，不是具体内容。",
+        "应用时必须：",
+        "1. 创造本书独特的人物、情节和世界观",
+        "2. 禁止复制参考作品的具体台词、场景或事件",
+        "3. 根据本书篇幅和风格重新设计所有元素",
+        "4. 定期进行原创性检测，避免无意识模仿"
+    ]
+    
+    summary_text = "\n".join(lines)
+    save("learning/analysis_summary.md", summary_text)
+    
+    print("<script_out>分析摘要已生成：learning/analysis_summary.md</script_out>")
+
+
+def check_originality(args):
+    """Check writing originality against reference."""
+    from distillation_upgrade import OriginalityDetector
+    
+    if not args.input:
+        raise ValueError("必须指定待检测文本文件路径 --input")
+    
+    if not path(args.input).exists():
+        raise ValueError(f"文件不存在：{args.input}")
+    
+    text = path(args.input).read_text(encoding="utf-8")
+    threshold = args.threshold if hasattr(args, 'threshold') and args.threshold else 0.75
+    
+    detector = OriginalityDetector(load, save)
+    result = detector.check_originality(text, threshold)
+    report = detector.generate_report(result)
+    
+    # Save report
+    save("learning/originality_report.json", result)
+    save("learning/originality_report.md", report)
+    
+    status = "通过" if result.get("original") else "存在问题"
+    max_sim = result.get("max_similarity", 0)
+    print(f"<script_out>原创性检测完成：{status}。最高相似度 {max_sim:.1%}。报告已保存至 learning/originality_report.md</script_out>")
+
+
 def render(scope):
     lines = ["# 用户已选写法", ""]
     version = 0
@@ -555,6 +671,16 @@ def main():
     prepare_parser = commands.add_parser("prepare-context")
     prepare_parser.add_argument("--scope", choices=sorted(SCOPES), required=True)
     prepare_parser.set_defaults(handler=lambda args: render(args.scope))
+    analyze_parser = commands.add_parser("analyze-dimensions")
+    analyze_parser.set_defaults(handler=analyze_dimensions)
+    validate_parser = commands.add_parser("validate-analysis")
+    validate_parser.set_defaults(handler=validate_analysis)
+    summary_parser = commands.add_parser("generate-summary")
+    summary_parser.set_defaults(handler=generate_summary)
+    originality_parser = commands.add_parser("check-originality")
+    originality_parser.add_argument("--input", required=True, help="待检测的文本文件")
+    originality_parser.add_argument("--threshold", type=float, default=0.75, help="相似度阈值 (0-1)")
+    originality_parser.set_defaults(handler=check_originality)
     args = root.parse_args()
     try:
         args.handler(args)

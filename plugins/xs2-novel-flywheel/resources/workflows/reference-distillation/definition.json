@@ -1,7 +1,7 @@
 {
   "workflow_id": "reference-distillation",
   "name": "参考资料蒸馏",
-  "version": 7,
+  "version": 8,
   "nodes": [
     {
       "id": "script_split_reference",
@@ -167,6 +167,91 @@
       "save_output_to_file": false,
       "sub_workflow_params": {}
     }
+    ,
+    {
+      "id": "script_analyze_dimensions",
+      "label": "多维度分析",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 1650,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "analyze-dimensions",
+        "timeout": 180,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "output_file_path": "",
+      "save_output_to_file": false,
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_validate_analysis",
+      "label": "校验分析结果",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 1850,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "validate-analysis",
+        "timeout": 60,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "output_file_path": "",
+      "save_output_to_file": false,
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_generate_summary",
+      "label": "生成分析摘要",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 2050,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_args": "generate-summary",
+        "timeout": 60,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "output_file_path": "",
+      "save_output_to_file": false,
+      "sub_workflow_params": {}
+    
   ],
   "edges": [
     {
@@ -221,7 +306,22 @@
     {
       "id": "edge-final-end",
       "source": "script_finalize_dna",
-      "target": "__end__"
+        "target": "script_analyze_dimensions"
+      },
+      {
+        "id": "edge-analyze-validate",
+        "source": "script_analyze_dimensions",
+        "target": "script_validate_analysis"
+      },
+      {
+        "id": "edge-validate-summary",
+        "source": "script_validate_analysis",
+        "target": "script_generate_summary"
+      },
+      {
+        "id": "edge-summary-end",
+        "source": "script_generate_summary",
+        "target": "__end__"
     }
   ],
   "variables": [
@@ -356,7 +456,7 @@
     "y": 50
   },
   "end_position": {
-    "x": 1100,
+    "x": 2100,
     "y": 220
   },
   "console": {
