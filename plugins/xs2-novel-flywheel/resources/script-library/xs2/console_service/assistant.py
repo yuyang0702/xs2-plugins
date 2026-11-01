@@ -12,7 +12,7 @@ from time import perf_counter
 from typing import Any
 from types import SimpleNamespace
 
-from .configuration import ADVISOR_PROMPT, CONFIGURATION_PROMPT, parse_advisor, parse_configuration
+from .configuration import ADVISOR_PROMPT, CONFIGURATION_PROMPT, advisor_catalog, parse_advisor, parse_configuration
 
 logger = logging.getLogger(__name__)
 ANALYSIS_TIMEOUT_SECONDS = 180
@@ -107,9 +107,10 @@ async def _receive_model_reply(llm: Any, messages: list, on_output) -> Any:
 
 
 class NovelAssistantJobs:
-    def __init__(self, model_factory, support_loader) -> None:
+    def __init__(self, model_factory, support_loader, catalog_loader=None) -> None:
         self.model_factory = model_factory
         self.support_loader = support_loader
+        self.catalog_loader = catalog_loader
         self.tasks: dict[str, asyncio.Task] = {}
 
     def _write(self, root: Path, entries: list[dict]) -> None:
@@ -184,6 +185,10 @@ class NovelAssistantJobs:
                        "下一阶段": payload.get("next_stage", ""), "缺少参数": payload.get("missing", []),
                        "蒸馏候选": payload.get("candidates", [])[:40],
                        "冲突规划": payload.get("conflict_plan", {})}
+            reference_catalog = self.catalog_loader() if self.catalog_loader and payload.get('purpose') == 'advisor' else None
+            if reference_catalog is not None:
+                context['写法来源目录'] = advisor_catalog(reference_catalog)
+                context['蒸馏候选'] = []
             context["之前的讨论"] = [{"问题": item["question"], "回答": item["reply"][:6000],
                                      "顾问方案": item.get('advisor_sections', {})}
                                      for item in self.history(root)
@@ -306,7 +311,7 @@ class NovelAssistantJobs:
                     try:
                         mode = payload.get('project', {}).get('mode', 'short')
                         if payload.get('purpose') == 'advisor':
-                            answer, suggestions, sections = parse_advisor(reply, mode)
+                            answer, suggestions, sections = parse_advisor(reply, mode, catalog=reference_catalog)
                             result['advisor_sections'] = sections
                         else:
                             answer, suggestions = parse_configuration(reply, mode)

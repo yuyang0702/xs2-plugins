@@ -12,6 +12,32 @@ FIELD_LABELS = {
 }
 
 
+def advisor_catalog(catalog):
+    """A source index for planning; detailed evidence is reserved for review."""
+    fields = {'candidate_id', 'choice_id', 'mechanism', 'title', 'kind', 'layer', 'scopes',
+              'application_scope', 'target_pov', 'source_pov', 'pov_compatibility', 'risk_flags'}
+    result = []
+    for library in catalog:
+        source = library.get('candidates', {})
+        profile = library.get('profile', {})
+        if not isinstance(source, dict):
+            continue
+        choices = {}
+        for key in ('candidates', 'style_choices', 'conflict_choices'):
+            choices[key] = []
+            for item in source.get(key, []):
+                compact = {key: value for key, value in item.items() if key in fields}
+                guidance = item.get('transfer_guidance') or item.get('adaptation_guidance')
+                if isinstance(guidance, str):
+                    compact['guidance'] = guidance[:600]
+                choices[key].append(compact)
+        result.append({'library_id': library['library_id'], 'name': library.get('name', ''),
+                       'source_description': {key: profile[key] for key in ('genre', 'word_count', 'source_pov')
+                                              if isinstance(profile, dict) and isinstance(profile.get(key), (str, int))},
+                       'candidates': choices})
+    return result
+
+
 def parse_configuration(text: str, mode: str) -> tuple[str, list[dict]]:
     raw = text.strip()
     if raw.startswith('```'):
@@ -83,7 +109,7 @@ CONFIGURATION_PROMPT = (
 )
 
 
-ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了”分析并完善设置”。', '本次用户正在与小说顾问讨论方向。') + (
+ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了“分析并完善设置”。', '本次用户正在与小说顾问讨论方向。') + (
     '本次是正式创作前的小说顾问交流，优先判断这本书写什么、主要看点是什么、适合怎么写。'
     '除reply和suggestions外，JSON还必须包含advisor_sections对象，其四个核心键均为中文Markdown字符串：'
     'direction（推荐的故事方向，具体主角、目标与故事起点，可给少量备选并明确推荐），'
@@ -92,16 +118,19 @@ ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了”分析并
     'risks（创意薄弱处、规则矛盾、风格适配风险与处理建议）。'
     '此外，如果写法库中有相关内容，还应包含三个推荐清单（JSON结构，可选）：'
     'mechanism_recommendations（推荐的写法机制，JSON结构：'
-    '{“adopted_from_library”:[{“mechanism”:”机制名”,”usage_in_story”:”在此故事中的具体用法”,”priority”:”HIGH/MEDIUM/LOW”,”chapter_placement”:”第几章”}],'
-    '”new_mechanisms”:[{“mechanism”:”机制名”,”reason”:”为什么推荐这个新机制”,”synergy_with”:[“关联机制1”,”机制2”],”priority”:”HIGH/MEDIUM”}],'
-    '”avoid_combinations”:[{“a”:”机制A”,”b”:”机制B”,”reason”:”为什么不适合组合”}]}），'
+    '{"adopted_from_library":[{"library_id":"来源ID","candidate_id":"机制ID","mechanism":"机制名","usage_in_story":"本书具体用法","priority":"HIGH","chapter_placement":"第几章"}],'
+    '"new_mechanisms":[{"mechanism":"原创机制名","reason":"推荐理由","synergy_with":["关联机制"],"priority":"MEDIUM"}],'
+    '"avoid_combinations":[{"a":"机制A","b":"机制B","reason":"不适合组合的原因"}]}），'
     'style_recommendations（推荐的文风选择，JSON结构：'
-    '{“adopted_styles”:[{“style”:”风格名称”,”reason”:”为什么适合此故事”,”usage_in_story”:”具体应用场景”,”priority”:”HIGH/MEDIUM/LOW”}],'
-    '”avoid_styles”:[{“style”:”风格名称”,”reason”:”为什么不适合”}]}），'
+    '{"adopted_styles":[{"library_id":"来源ID","choice_id":"风格ID","style":"风格名称","reason":"适配理由","usage_in_story":"具体场景","priority":"HIGH"}],'
+    '"avoid_styles":[{"style":"风格名称","reason":"不适合的原因"}]}），'
     'conflict_recommendations（推荐的冲突模式，JSON结构：'
-    '{“adopted_conflicts”:[{“conflict”:”冲突模式名称”,”reason”:”为什么适合此故事”,”usage_in_story”:”如何在故事中展开”,”priority”:”HIGH/MEDIUM/LOW”}],'
-    '”avoid_conflicts”:[{“conflict”:”冲突模式名称”,”reason”:”为什么不适合”}]})。'
-    '推荐时应从写法库的实际内容中选择，推荐的名称必须与写法库中的mechanism/title字段匹配或语义相近。'
+    '{"adopted_conflicts":[{"library_id":"来源ID","choice_id":"冲突ID","conflict":"冲突名称","reason":"适配理由","usage_in_story":"本书展开方式","priority":"HIGH"}],'
+    '"avoid_conflicts":[{"conflict":"冲突名称","reason":"不适合的原因"}]})。'
+    '推荐时只能从写法来源目录的实际条目中选择，机制推荐必须包含原样library_id和candidate_id，'
+    '文风和冲突推荐必须包含原样library_id和choice_id；名称使用该条目的mechanism/title，不得按近义词猜测来源。'
+    '例如机制条目：{"library_id":"来源ID","candidate_id":"机制ID","mechanism":"机制原名","usage_in_story":"本书用法"}；'
+    '风格条目使用style和choice_id，冲突条目使用conflict和choice_id。目录为空时采用清单为空，可在new_mechanisms提出原创建议。'
     'reply先直接回应用户最新问题或追问，再给简短结论；四个分区补充相应细节，避免重复全文。'
     '初次方向判断保持精炼：reply约100字，四个分区合计约1500字；参数理由简短。'
     '不要把用户整份设定抄进建议参数，原始设定会另外完整传给创作流程。'
@@ -114,7 +143,7 @@ ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了”分析并
 )
 
 
-def parse_advisor(text: str, mode: str) -> tuple[str, list[dict], dict[str, str | dict]]:
+def parse_advisor(text: str, mode: str, catalog=None) -> tuple[str, list[dict], dict[str, str | dict]]:
     reply, suggestions = parse_configuration(text, mode)
     raw = re.sub(r'^```(?:json)?\s*', '', text.strip())
     raw = re.sub(r'\s*```$', '', raw)
@@ -161,4 +190,36 @@ def parse_advisor(text: str, mode: str) -> tuple[str, list[dict], dict[str, str 
         if isinstance(conflict_recs, dict):
             result['conflict_recommendations'] = conflict_recs
 
+    if catalog is not None:
+        _validate_source_recommendations(result, catalog)
     return reply, suggestions, result
+
+
+def _validate_source_recommendations(sections, catalog):
+    """A model may recommend catalog IDs, but cannot create source identities."""
+    for section, selected_key, source_key, id_key, label, title in (
+        ('mechanism_recommendations', 'adopted_from_library', 'candidates', 'candidate_id', 'mechanism', 'mechanism'),
+        ('style_recommendations', 'adopted_styles', 'style_choices', 'choice_id', 'style', 'title'),
+        ('conflict_recommendations', 'adopted_conflicts', 'conflict_choices', 'choice_id', 'conflict', 'title'),
+    ):
+        group = sections.get(section, {})
+        selected = group.get(selected_key, []) if isinstance(group, dict) else []
+        if not isinstance(selected, list) or len(selected) > 40:
+            raise ValueError('invalid reference recommendations')
+        available = {}
+        for library in catalog:
+            data = library.get('candidates', {})
+            for candidate in data.get(source_key, []) if isinstance(data, dict) else []:
+                key = (library.get('library_id'), candidate.get(id_key))
+                if key in available:
+                    raise ValueError('ambiguous catalog source')
+                available[key] = candidate
+        seen = set()
+        for item in selected:
+            if not isinstance(item, dict):
+                raise ValueError('invalid reference recommendation')
+            key = (item.get('library_id'), item.get(id_key))
+            if key not in available or key in seen or not all(isinstance(value, str) and value for value in key):
+                raise ValueError('unknown or duplicate reference source')
+            seen.add(key)
+            item[label] = available[key].get(title, item.get(label, ''))
