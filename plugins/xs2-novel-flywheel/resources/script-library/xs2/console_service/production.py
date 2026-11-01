@@ -83,7 +83,9 @@ def parameters(state, definition):
         key = variable["key"]
         if variable.get("source_type") == "output" or (variable.get("type") == "file" and key != "author_feedback_file"):
             continue
-        value = values.get(key, variable.get("default", ""))
+        # The workflow's optional feedback path is a conventional location,
+        # not an author-approved repair plan for this chapter.
+        value = values.get(key, "" if key == "author_feedback_file" else variable.get("default", ""))
         if variable.get("required") and not variable.get("hidden") and variable.get("type") != "file" and not str(value or "").strip():
             raise ValueError(f"请先填写{variable.get('name') or key}。")
         if value is not None:

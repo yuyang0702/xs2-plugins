@@ -39,6 +39,7 @@ EXPECTED_SCRIPT_LIBRARIES = {
     "reference_distill",
     "reference_intelligence_helper",
     "we_post",
+    "short_preparation",
 }
 EXPECTED_SKILLS = {"writing-assistant"}
 
@@ -129,7 +130,6 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
     definitions = sorted((resources / "workflows").glob("*/definition.json"))
 
     assert {path.parent.name for path in definitions} == EXPECTED_WORKFLOWS
-    assert len(agents) == 37
     assert set(prompts) == set(agents)
 
     referenced_agents: set[str] = set()

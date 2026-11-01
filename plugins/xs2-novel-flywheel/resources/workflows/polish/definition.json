@@ -1,7 +1,7 @@
 {
   "workflow_id": "polish",
   "name": "章节润色管线",
-  "version": 5,
+  "version": 6,
   "nodes": [
     {
       "id": "script_story_context",
@@ -197,6 +197,31 @@
       "output_file_path": "",
       "sub_workflow_params": {},
       "fail_auto_skip": false
+    },
+    {
+      "id": "script_normalize_critique",
+      "label": "核对场景审阅证据",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 20,
+        "y": -100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "nvl",
+        "script_name": "polish_post",
+        "script_args": "--normalize-critique cache/sc/critique.json --source-chapter story/{{chapter_number}}/chapter.md",
+        "timeout": 30
+      },
+      "first_message": "",
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "output_variable": ""
     }
   ],
   "edges": [
@@ -209,11 +234,6 @@
       "id": "edge-sync_down-sc",
       "source": "script_sync_down",
       "target": "agent_sc"
-    },
-    {
-      "id": "edge-sc-pl",
-      "source": "agent_sc",
-      "target": "agent_pl"
     },
     {
       "id": "edge-pl-pp",
@@ -238,6 +258,16 @@
     {
       "source": "script_story_context",
       "target": "script_sync_down"
+    },
+    {
+      "id": "edge-agent_sc-script_normalize_critique",
+      "source": "agent_sc",
+      "target": "script_normalize_critique"
+    },
+    {
+      "id": "edge-script_normalize_critique-agent_pl",
+      "source": "script_normalize_critique",
+      "target": "agent_pl"
     }
   ],
   "variables": [

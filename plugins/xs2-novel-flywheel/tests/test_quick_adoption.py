@@ -127,6 +127,69 @@ def test_adopts_exact_library_into_versioned_context_and_preserves_novel(tmp_pat
     assert model.closed
 
 
+@pytest.mark.parametrize('correct_second', [True, False])
+def test_invalid_review_gets_one_bounded_correction_without_relaxing_validation(tmp_path, correct_second):
+    setup_book(tmp_path)
+    invalid = {'decisions': [decision(decision='recommend/adapt')], 'voice_adaptations': []}
+    valid = {'decisions': [decision()], 'voice_adaptations': []}
+    model = Model(invalid)
+    calls = []
+    async def receive(messages):
+        calls.append(messages)
+        return SimpleNamespace(content=json.dumps(valid if correct_second and len(calls) == 2 else invalid, ensure_ascii=False))
+    model.ainvoke = receive
+    jobs = service().ReferenceAdoptionJobs(lambda **kwargs: model, lambda: [catalog()], merge, runner, threading.RLock())
+    request_id = str(uuid.uuid4())
+    async def run():
+        jobs.start(tmp_path, request_id, {'advisor_entry_id': 'adviser-1'})
+        await asyncio.gather(*list(jobs.tasks.values()))
+    asyncio.run(run())
+    result = jobs.get(tmp_path, request_id)
+    assert len(calls) == 2
+    assert '原样' in calls[1][-1][1]
+    assert result['status'] == ('applied' if correct_second else 'review_required')
+    assert (tmp_path / 'learning/active.json').exists() == correct_second
+    assert (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8') == '原有声音不可覆盖'
+
+
+def test_full_normal_source_profile_is_reviewed_once_for_multiple_items(tmp_path):
+    library = catalog()
+    library['profile'] = {'markdown': '完整来源档案与适用边界' * 700,
+                          'statistics': {'characters': 18000}, 'limitations': ['仅覆盖已导入正文']}
+    other = copy.deepcopy(library['candidates']['candidates'][0])
+    other.update(candidate_id='mechanism-second', mechanism='另一个可复核的写法')
+    library['candidates']['candidates'].append(other)
+    setup_book(tmp_path)
+    history = tmp_path / 'learning/assistant-history.json'
+    entries = json.loads(history.read_text(encoding='utf-8'))
+    entries['entries'][0]['advisor_sections']['mechanism_recommendations']['adopted_from_library'].append(
+        {'library_id': 'correct', 'candidate_id': 'mechanism-second'})
+    write_json(history, entries)
+    model = Model({'decisions': [decision(), decision(identifier='mechanism-second')], 'voice_adaptations': []})
+    jobs = service().ReferenceAdoptionJobs(lambda **kwargs: model, lambda: [library], merge, runner, threading.RLock())
+    request_id = str(uuid.uuid4())
+    async def run():
+        jobs.start(tmp_path, request_id, {'advisor_entry_id': 'adviser-1'})
+        await asyncio.gather(*list(jobs.tasks.values()))
+    asyncio.run(run())
+    assert jobs.get(tmp_path, request_id)['status'] == 'applied'
+    context = json.loads(model.messages[1][1])
+    assert context['source_profiles']['correct'] == library['profile']
+    assert all(item['source_profile_id'] == 'correct' for item in context['requested_items'])
+    assert model.messages[1][1].count(library['profile']['markdown']) == 1
+    assert (tmp_path / 'story/0001/chapter.md').read_text(encoding='utf-8') == '用户已有正文'
+
+
+def test_extreme_source_profile_still_blocks_without_truncating_evidence(tmp_path):
+    library = catalog()
+    library['profile'] = {'markdown': '完整证据' * 7000}
+    _, model, _, result = run_job(tmp_path, libraries=[library])
+    assert result['status'] == 'review_required'
+    assert model.messages is None
+    assert not (tmp_path / 'learning/active.json').exists()
+    assert (tmp_path / 'story/0001/chapter.md').read_text(encoding='utf-8') == '用户已有正文'
+
+
 @pytest.mark.parametrize('recommendation,libraries', [
     ({'mechanism': '代价'}, [catalog()]),
     ({'mechanism': '代价推动'}, [catalog(), catalog('duplicate')]),
@@ -188,6 +251,42 @@ def test_voice_adapts_actual_characters_and_keeps_existing_voice(tmp_path):
     assert result['voice_status'] == 'adapted'
     text = (tmp_path / 'meta/character_voice_adaptations.md').read_text(encoding='utf-8')
     assert '许青' in text and '面对矿长' in text and '许宁' in text
+    assert (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8') == '原有声音不可覆盖'
+
+
+def test_new_book_defers_unverifiable_voice_payload_until_characters_exist(tmp_path):
+    response = {'decisions': [decision()], 'voice_adaptations': [
+        {'character_name': '根据创意猜出的角色', 'profile_evidence': '尚无正式人物档案',
+         'guidance': '模型不能将创意中的猜测当作已经存在的角色证据。'}]}
+    _, _, _, result = run_job(tmp_path, response=response, libraries=[catalog(layer='dialogue')])
+    assert result['status'] == 'applied'
+    assert result['voice_status'] == 'pending_characters'
+    assert result['voice_adaptations'] == []
+    assert not (tmp_path / 'meta/character_voice_adaptations.md').exists()
+    assert (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8') == '原有声音不可覆盖'
+
+
+@pytest.mark.parametrize('suffix', ['（阿青）', '(阿青)', ' （阿青）'])
+def test_generated_profile_alias_headings_bind_voices_to_canonical_names(tmp_path, suffix):
+    setup_book(tmp_path, characters=True)
+    path = tmp_path / 'meta/character_profiles.md'
+    path.write_text(path.read_text(encoding='utf-8').replace('## 许青', '## 许青' + suffix)
+                    .replace('## 许宁', '## 许宁（小宁、宁宁）'), encoding='utf-8')
+    original = path.read_bytes()
+    model = Model({'decisions': [decision()], 'voice_adaptations': [
+        {'character_name': '许青', 'profile_evidence': '对妹妹温和，对矿长克制质疑',
+         'guidance': '对妹妹用日常短句和关切提问，对矿长保持克制而具体的追问，不使用妹妹的反问习惯。'}]})
+    jobs = service().ReferenceAdoptionJobs(lambda **kwargs: model, lambda: [catalog(layer='dialogue')], merge, runner, threading.RLock())
+    request_id = str(uuid.uuid4())
+    async def run():
+        jobs.start(tmp_path, request_id, {'advisor_entry_id': 'adviser-1'})
+        await asyncio.gather(*list(jobs.tasks.values()))
+    asyncio.run(run())
+    result = jobs.get(tmp_path, request_id)
+    assert result['status'] == 'applied'
+    assert result['voice_status'] == 'adapted'
+    assert result['voice_adaptations'][0]['character_name'] == '许青'
+    assert path.read_bytes() == original
     assert (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8') == '原有声音不可覆盖'
 
 

@@ -1,7 +1,7 @@
 {
   "workflow_id": "character",
   "name": "角色创建管线",
-  "version": 4,
+  "version": 5,
   "nodes": [
     {
       "id": "script_sync_down",
@@ -333,6 +333,49 @@
       "output_file_path": "",
       "sub_workflow_params": {},
       "fail_auto_skip": false
+    },
+    {
+      "id": "agent_short_character",
+      "label": "短篇角色、关系与声音（一次准备）",
+      "node_type": "agent",
+      "agent_type": "novel-short-character",
+      "position": {
+        "x": 20,
+        "y": -100
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "first_message": "作者已确认创意：\n{{premise}}\n世界基础：\n{{world_foundation}}\n已批准写法：\n{{learning_context}}\n视角：{{narrative_pov}}；输出语言：{{language}}。\n按系统JSON契约一次准备相关角色与声音，不扩展无关设定。",
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "save_output_to_file": true,
+      "output_file_path": "cache/short/characters.json",
+      "output_variable": ""
+    },
+    {
+      "id": "script_short_character",
+      "label": "校验并存档短篇角色与声音",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 20,
+        "y": -100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "short_preparation",
+        "script_args": "characters --input cache/short/characters.json",
+        "timeout": 30
+      },
+      "first_message": "",
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "output_variable": ""
     }
   ],
   "edges": [
@@ -340,11 +383,6 @@
       "id": "edge-start-sync",
       "source": "__start__",
       "target": "script_sync_down"
-    },
-    {
-      "id": "edge-sync-skeleton",
-      "source": "script_sync_down",
-      "target": "agent_skeleton"
     },
     {
       "id": "edge-skeleton-persist",
@@ -418,6 +456,41 @@
     {
       "id": "edge-md-end",
       "source": "script_voice_to_md",
+      "target": "__end__"
+    },
+    {
+      "id": "edge-script_sync_down-gw-short-character",
+      "source": "script_sync_down",
+      "target": "gw-short-character"
+    },
+    {
+      "id": "edge-gw-short-character-agent_short_character",
+      "source": "gw-short-character",
+      "target": "agent_short_character",
+      "condition": {
+        "expression": "{{preparation_mode}}==compact AND {{conflict_plan_mode}}==short_full",
+        "label": "独立短篇轻量",
+        "is_default": false
+      }
+    },
+    {
+      "id": "edge-gw-short-character-agent_skeleton",
+      "source": "gw-short-character",
+      "target": "agent_skeleton",
+      "condition": {
+        "expression": "",
+        "label": "完整准备",
+        "is_default": true
+      }
+    },
+    {
+      "id": "edge-agent_short_character-script_short_character",
+      "source": "agent_short_character",
+      "target": "script_short_character"
+    },
+    {
+      "id": "edge-script_short_character-__end__",
+      "source": "script_short_character",
       "target": "__end__"
     }
   ],
@@ -587,6 +660,37 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": true
+    },
+    {
+      "key": "preparation_mode",
+      "name": "短篇准备方式",
+      "type": "string",
+      "default": "full",
+      "required": false,
+      "hidden": false,
+      "source_type": "input",
+      "options": [
+        {
+          "name": "轻量准备（短篇）",
+          "value": "compact"
+        },
+        {
+          "name": "完整准备",
+          "value": "full"
+        }
+      ],
+      "description": "轻量合并重复准备；完整保留逐维度和逐角色分析。只在独立短篇适用，已有作品默认完整。"
+    },
+    {
+      "key": "conflict_plan_mode",
+      "name": "conflict_plan_mode",
+      "type": "string",
+      "default": "serial_arc",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": [],
+      "description": ""
     }
   ],
   "gateways": [
@@ -597,6 +701,16 @@
       "position": {
         "x": 620,
         "y": 450
+      },
+      "converge_gateway_id": null
+    },
+    {
+      "id": "gw-short-character",
+      "gateway_type": "condition",
+      "label": "短篇准备方式",
+      "position": {
+        "x": 0,
+        "y": -200
       },
       "converge_gateway_id": null
     }
