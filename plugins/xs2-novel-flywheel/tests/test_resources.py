@@ -48,6 +48,26 @@ def _json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_polish_target_word_count_is_a_bound_input_instead_of_an_empty_template(tmp_path):
+    import asyncio
+    import importlib.util
+    from src.workflow.variable_resolution import resolve_placeholders
+    workflow = _json(PLUGIN_ROOT / 'resources/workflows/polish/definition.json')
+    assert any('{{target_word_count}}' in node.get('first_message', '') for node in workflow['nodes'])
+    fields = {field['key']: field for field in workflow['variables']}
+    assert fields['target_word_count']['source_type'] == 'input'
+    assert fields['target_word_count']['type'] == 'text'
+    path = PLUGIN_ROOT / 'resources/script-library/xs2/console_service/production.py'
+    spec = importlib.util.spec_from_file_location('polish_target_parameters', path)
+    production = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(production)
+    state = {'mode':'short', 'values':{'chapter_number':'0001', 'target_word_count':'4800-5200'}}
+    parameters = production.parameters(state, workflow)
+    node = next(node for node in workflow['nodes'] if node['id'] == 'agent_pl')
+    message = asyncio.run(resolve_placeholders(node['first_message'], parameters, workflow['variables'], str(tmp_path)))
+    assert '本章目标字数：4800-5200' in message
+
+
 def test_manifest_is_resource_only() -> None:
     manifest = tomllib.loads(
         (PLUGIN_ROOT / "extension.toml").read_text(encoding="utf-8")
