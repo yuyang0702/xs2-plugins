@@ -1,7 +1,7 @@
 {
   "workflow_id": "reference-distillation",
   "name": "参考资料蒸馏",
-  "version": 8,
+  "version": 9,
   "nodes": [
     {
       "id": "script_split_reference",
@@ -267,7 +267,7 @@
         "script_source": "library",
         "script_type": "python",
         "script_group": "xs2",
-        "script_name": "reference_intelligence",
+        "script_name": "reference_intelligence_helper",
         "script_args": "init --workspace .",
         "timeout": "60"
       },
@@ -279,7 +279,7 @@
       "save_output_to_file": true,
       "output_file_path": "learning/intelligence_initialized.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": true
+      "fail_auto_skip": false
     }
   ],
   "edges": [

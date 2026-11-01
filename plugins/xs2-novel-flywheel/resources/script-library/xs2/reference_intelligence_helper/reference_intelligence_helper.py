@@ -6,6 +6,7 @@ Reference Intelligence Script Wrapper
 import argparse
 import json
 import sys
+import re
 from pathlib import Path
 
 # Import the intelligence API
@@ -14,7 +15,6 @@ from reference_intelligence.intelligence_api import (
     recommend_for_chapter,
     adapt_to_genre,
     plan_structure,
-    build_context,
     monitor_originality,
     load_json,
     save_json,
@@ -22,74 +22,33 @@ from reference_intelligence.intelligence_api import (
 
 
 def init_intelligence(workspace: Path) -> dict:
-    """
-    初始化智能推荐系统
-    在reference-distillation完成后调用
-    """
-    learning_dir = workspace / "learning"
-    learning_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Check if we have candidates
-    candidates_file = learning_dir / "candidates.json"
-    if not candidates_file.exists():
-        return {
-            "status": "skipped",
-            "reason": "No candidates.json found, intelligence system not initialized"
-        }
-    
-    candidates = load_json(candidates_file)
-    
-    # Create reference_analysis.json from candidates
-    # This transforms candidates into the format expected by intelligence system
-    analysis = {
-        "source_title": candidates.get("reference_title", "Unknown"),
-        "source_genre": candidates.get("source_genre", "未知"),
-        "techniques": [],
-        "plot_patterns": candidates.get("plot_patterns", []),
-        "style_features": candidates.get("style_features", {}),
-    }
-    
-    # Transform candidates to techniques
-    for candidate in candidates.get("candidates", []):
-        technique = {
-            "id": candidate.get("id", ""),
-            "name": candidate.get("name", ""),
-            "category": candidate.get("category", "general"),
-            "description": candidate.get("why_effective", ""),
-            "examples": candidate.get("examples", []),
-            "applicable_stages": ["rising", "climax"],  # Default, can be refined
-            "effectiveness": candidate.get("confidence", 0.7),
-        }
-        analysis["techniques"].append(technique)
-    
-    # Save reference_analysis.json
-    analysis_file = learning_dir / "reference_analysis.json"
-    save_json(analysis_file, analysis)
-    
-    # Initialize novel_info.json if it doesn't exist
-    novel_info_file = learning_dir / "novel_info.json"
-    if not novel_info_file.exists():
-        # Read from workspace manifest if available
-        manifest_file = workspace / ".novel-project.json"
-        manifest = load_json(manifest_file) if manifest_file.exists() else {}
-        
-        novel_info = {
-            "genre": manifest.get("genre", "都市"),
-            "total_chapters": manifest.get("target_chapters", 100),
-            "current_chapter": 1,
-            "pov": "third_person",
-            "plot_stage": "setup",
-            "conflict_phase": "introduction",
-            "active_conflicts": [],
-            "main_characters": [],
-        }
-        save_json(novel_info_file, novel_info)
-    
-    return {
-        "status": "initialized",
-        "analysis_file": str(analysis_file),
-        "techniques_count": len(analysis["techniques"]),
-    }
+    """Distillation is a proposal, never authorization to adopt candidates."""
+    return {"success": True, "status": "ready" if (workspace / "learning/candidates.json").exists() else "skipped",
+            "message": "Reference candidates require explicit adoption before use."}
+
+
+def check_originality(workspace: Path, chapter: str, threshold: float) -> dict:
+    """Run the existing lexical monitor only when source snapshots are available."""
+    if not re.fullmatch(r'[0-9]{4}', chapter) or chapter == '0000':
+        raise ValueError('chapter must be a four-digit positive chapter number')
+    draft = workspace / f'story/{chapter}/chapter.md'
+    if not draft.is_file():
+        raise ValueError('Chapter file does not exist')
+    if not 0 < threshold <= 1:
+        raise ValueError('threshold must be within (0, 1]')
+    sources = []
+    for source in sorted((workspace / 'learning/sources').glob('*.txt')):
+        if not source.resolve().is_relative_to(workspace.resolve()):
+            raise ValueError('Reference source must stay inside workspace')
+        text = source.read_text(encoding='utf-8-sig')
+        if text.strip():
+            sources.append({'candidate_id': source.stem, 'evidence': {'raw_text': text}})
+    if not sources:
+        return {"success": True, "status": "skipped", "reason": "No reference text snapshots available; no similarity assessment performed."}
+    from reference_intelligence.originality_monitor import OriginalityMonitor
+    monitor = OriginalityMonitor(load_fn=lambda _: {'candidates': sources})
+    report = monitor.check_full_chapter(draft.read_text(encoding='utf-8-sig'), threshold)
+    return {"success": True, "status": "checked", "method": "lexical_overlap", "originality_report": report}
 
 
 def update_novel_state(workspace: Path, chapter_num: int) -> dict:
@@ -158,13 +117,6 @@ def main():
     rec_parser.add_argument('--chapter', type=int, required=True)
     rec_parser.add_argument('--workspace', default='.')
     
-    # build-context command
-    ctx_parser = subparsers.add_parser('build-context', help='Build smart context for workflow')
-    ctx_parser.add_argument('--workflow', required=True, choices=['mvp', 'outline', 'polish'])
-    ctx_parser.add_argument('--chapter', type=int, required=True)
-    ctx_parser.add_argument('--workspace', default='.')
-    ctx_parser.add_argument('--max-techniques', type=int, default=8)
-    
     # check-similarity command
     check_parser = subparsers.add_parser('check-similarity', help='Check originality')
     check_parser.add_argument('--chapter', required=True)
@@ -186,6 +138,10 @@ def main():
         parser.print_help()
         sys.exit(1)
     
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
     workspace = Path(args.workspace).resolve()
     learning_dir = workspace / "learning"
     
@@ -206,26 +162,9 @@ def main():
                 workspace_root=str(workspace)
             )
             
-        elif args.command == 'build-context':
-            # Update state first
-            update_novel_state(workspace, args.chapter)
-            # Build context
-            result = build_context(
-                workflow=args.workflow,
-                chapter_num=args.chapter,
-                novel_state_path=str(learning_dir / "novel_info.json"),
-                workspace_root=str(workspace),
-                max_techniques=args.max_techniques
-            )
-            
         elif args.command == 'check-similarity':
-            draft_path = f"story/{args.chapter}/chapter.md"
-            result = monitor_originality(
-                draft_path=draft_path,
-                workspace_root=str(workspace),
-                threshold=args.threshold
-            )
-            
+            result = check_originality(workspace, args.chapter, args.threshold)
+
         elif args.command == 'adapt-genre':
             result = adapt_to_genre(
                 my_genre=args.genre,

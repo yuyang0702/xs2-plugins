@@ -37,6 +37,7 @@ EXPECTED_SCRIPT_LIBRARIES = {
     "trimmer_post",
     "vo_post",
     "reference_distill",
+    "reference_intelligence_helper",
     "we_post",
 }
 EXPECTED_SKILLS = {"writing-assistant"}
@@ -152,12 +153,17 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
 
     assert referenced_agents == set(agents)
     assert referenced_libraries == EXPECTED_SCRIPT_LIBRARIES
+    # Resolve each workflow identity to its actual executable. Host-loaded
+    # service libraries (voice/console support) may legitimately be unreferenced.
     library_root = resources / "script-library"
-    assert {
-        (path.name, path.parent.name)
-        for path in library_root.rglob("*")
-        if path.is_dir() and path.name != "__pycache__"
-    } >= {(name, "nvl") for name in EXPECTED_SCRIPT_LIBRARIES if name not in {"reference_distill", "story_support", "manuscript_export", "market_rankings"}} | {("reference_distill", "xs2"), ("story_support", "xs2"), ("manuscript_export", "xs2"), ("market_rankings", "xs2")}
+    for definition_path in definitions:
+        for node in _json(definition_path).get("nodes", []):
+            params = node.get("node_params", {})
+            if node.get("node_type") != "script" or params.get("script_source") != "library":
+                continue
+            name = params["script_name"]
+            entrypoint = library_root / params["script_group"] / name / (name + ".py")
+            assert entrypoint.is_file(), f"Unresolved script: {definition_path}:{node['id']}: {entrypoint}"
 
 
 def test_workflows_do_not_require_database_or_book_ids() -> None:

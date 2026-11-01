@@ -1,7 +1,7 @@
 {
   "workflow_id": "mvp",
   "name": "章节生产管线",
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": "script_story_context",
@@ -79,8 +79,8 @@
         "script_source": "library",
         "script_type": "python",
         "script_group": "xs2",
-        "script_name": "reference_intelligence",
-        "script_args": "build-context --workflow mvp --chapter {{chapter_number}} --workspace .",
+        "script_name": "reference_distill",
+        "script_args": "prepare-context --scope mvp",
         "timeout": "60"
       },
       "auto_flow": false,
@@ -88,10 +88,10 @@
       "output_variable": "",
       "enable_reject_upstream": false,
       "max_reject_count": 1,
-      "save_output_to_file": true,
-      "output_file_path": "learning/active_context.md",
+      "save_output_to_file": false,
+      "output_file_path": "",
       "sub_workflow_params": {},
-      "fail_auto_skip": true
+      "fail_auto_skip": false
     },
     {
       "id": "agent_we",
@@ -971,7 +971,7 @@
         "script_source": "library",
         "script_type": "python",
         "script_group": "xs2",
-        "script_name": "reference_intelligence",
+        "script_name": "reference_intelligence_helper",
         "script_args": "check-similarity --chapter {{chapter_number}} --workspace .",
         "timeout": "60"
       },
@@ -983,7 +983,7 @@
       "save_output_to_file": true,
       "output_file_path": "story/{{chapter_number}}/originality_report.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": true
+      "fail_auto_skip": false
     }
   ],
   "edges": [
@@ -1796,7 +1796,7 @@
       "key": "learning_context",
       "name": "已确认参考机制",
       "type": "file",
-      "default": "learning/active_context.md",
+      "default": "learning/context/mvp.md",
       "required": false,
       "description": "用户确认后的抽象创作机制；没有选择时为空",
       "options": [],
