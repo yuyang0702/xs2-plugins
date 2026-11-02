@@ -1,7 +1,7 @@
 {
   "workflow_id": "polish",
   "name": "章节润色管线",
-  "version": 8,
+  "version": 9,
   "nodes": [
     {
       "id": "script_story_context",
@@ -222,6 +222,36 @@
       "save_output_to_file": false,
       "output_file_path": "",
       "output_variable": ""
+    },
+    {
+      "id": "script_dialogue_context",
+      "label": "核对本章已采用写法与对白语境",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 150,
+        "y": 180
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reference_distill",
+        "script_args": "prepare-context --scope polish --chapter {{chapter_number}}",
+        "timeout": "60"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 1,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
     }
   ],
   "edges": [
@@ -257,7 +287,7 @@
     },
     {
       "source": "script_story_context",
-      "target": "script_sync_down"
+      "target": "script_dialogue_context"
     },
     {
       "id": "edge-agent_sc-script_normalize_critique",
@@ -268,6 +298,11 @@
       "id": "edge-script_normalize_critique-agent_pl",
       "source": "script_normalize_critique",
       "target": "agent_pl"
+    },
+    {
+      "id": "edge-dialogue-context-sync",
+      "source": "script_dialogue_context",
+      "target": "script_sync_down"
     }
   ],
   "variables": [
@@ -347,7 +382,7 @@
       "key": "learning_context",
       "name": "已确认参考机制",
       "type": "file",
-      "default": "learning/active_context.md",
+      "default": "learning/context/polish.md",
       "required": false,
       "description": "用户确认后的抽象创作机制；没有选择时为空",
       "options": [],

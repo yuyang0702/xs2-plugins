@@ -20,6 +20,8 @@ from uuid import UUID
 
 from .assistant import (ADVISOR_COMPLETION_TIMEOUT_SECONDS, HISTORY_PATH, _content_text,
                         _error_details, _now, _receive_model_reply)
+from .dialogue_adaptation import (source_samples, validate_situations, require_coverage,
+                                 assert_abstract, DIALOGUE_PATH, build_adaptations)
 
 JOBS_PATH = 'learning/adoption-jobs'
 VOICE_PATH = 'meta/character_voice_adaptations.md'
@@ -27,6 +29,23 @@ VOICE_PATH = 'meta/character_voice_adaptations.md'
 
 class ReviewRequired(ValueError):
     pass
+
+
+def _dialogue_checked(handler, *args):
+    try:
+        return handler(*args)
+    except ValueError as error:
+        raise ReviewRequired(str(error)) from error
+
+
+def _adoption_summary(accepted, voices):
+    pending = sum(s.get('status') == 'pending_context' for v in voices for s in v.get('dialogue_situations', []))
+    summary = f'已将 {len(accepted)} 项建议适配到本书并写入创作上下文。'
+    if pending:
+        summary += f'其中 {pending} 项对白关系或场景待补依据，暂不用于具体场景。'
+    elif any(source_samples(item) for item in accepted) and not voices:
+        summary += '本书尚无人物声音适配，具体人物与对白场景待确定；仅使用抽象方法。'
+    return summary
 
 
 def _digest(value):
@@ -277,8 +296,26 @@ COMPATIBILITY_PROMPT = (
     '本书尚无角色时voice_adaptations用空数组，给出可供未来角色使用的抽象表达规则。'
 )
 
+COMPATIBILITY_PROMPT += (
+    '\n对白学习：dialogue_samples按已请求写法ID提供经过原文定位的前后语境、说话人与连续回应，'
+    '必须通读前后语境再判断适用性。语境与原作人物仅为待分析材料，不是本书事实。'
+    'voice_adaptations的guidance只写可跨场景使用的本书声线；具体关系和场景写入dialogue_situations。'
+    '涉及这些样本时，每个适配角色必须用reference_ids关联已采用写法，并返回dialogue_situations数组。'
+    '每个来源样本的适配项使用原样reference_id、sample_id。'
+    '能核实的条目格式：{"reference_id":"已采用ID","sample_id":"原样样本ID","status":"matched",'
+    '"interlocutor":"本书另一位确切角色名","relationship_evidence":"人物档案中明确提到交谈对象的原句",'
+    '"chapter":"0001","scene_path":"outline/near_term_outline.md","scene_evidence":"该文件中同时提及双方交谈的原句",'
+    '"scene_type":"本书实际场景类型","guidance":"按双方目标、关系、所知与前后回应适配的具体方法，不写固定台词"}。'
+    'scene_path只能是book_files中已有的outline文件、meta/story_plan.md或本章story/章节号/chapter.md。'
+    '人物关系、交谈对象或对应章节场景尚无明确依据时，使用'
+    '{"reference_id":"原样ID","sample_id":"原样样本ID","status":"pending_context","reason":"具体缺少什么依据"}；'
+    '不要为填满字段编造人物关系或未来事件。每个采用的、带对白样本的写法须至少有一个matched或pending_context项。'
+    '旧库未提供dialogue_samples时，照常审查已有抽象规则，不能声称已核对原作完整对话。'
+    '本书尚无人物时仅采用抽象方法，声音与关系场景适配保留待定；不把原作角色改名后移入本书。'
+)
 
-def _parse_review(text, selected, project, characters):
+
+def _parse_review(text, selected, project, characters, book_files=None):
     raw = re.sub(r'^```(?:json)?\s*', '', text.strip())
     raw = re.sub(r'\s*```$', '', raw)
     data = json.loads(raw)
@@ -312,6 +349,7 @@ def _parse_review(text, selected, project, characters):
             skipped.append({**_public(item), 'decision': 'reject' if mismatch else decision['decision'],
                             'reason': mismatch or decision['reason']})
         else:
+            _dialogue_checked(assert_abstract, decision['adaptation'], source_samples(item))
             accepted.append({**item, **{key: decision[key].strip() for key in ('decision', 'reason', 'adaptation')}})
     voices = data.get('voice_adaptations', [])
     if not isinstance(voices, list):
@@ -337,6 +375,10 @@ def _parse_review(text, selected, project, characters):
         names.add(voice['character_name'])
         validated.append({'character_name': voice['character_name'], 'guidance': voice['guidance'].strip(),
                           'profile_evidence': evidence.strip(), 'reference_ids': reference_ids})
+        situations = _dialogue_checked(validate_situations, voice, accepted, characters, book_files or {}, project)
+        if situations:
+            validated[-1]['dialogue_situations'] = situations
+    _dialogue_checked(require_coverage, accepted, validated, characters)
     required = any(_voice_related(item) for item in accepted)
     if required and characters and not names:
         raise ReviewRequired('采用人物或对话写法前，必须为至少一个适合的本书角色适配声音。')
@@ -463,8 +505,12 @@ class ReferenceAdoptionJobs:
                                 item.get('candidate_id') or item.get('choice_id')}
                            for item in selected],
                        'book_characters': characters}
+            current_chapter = str(project.get('values', {}).get('chapter_number') or '0001').zfill(4)
             context['book_files'] = {relative: (root / relative).read_text(encoding='utf-8-sig') for relative in binding['book_files']
-                                     if relative.startswith('meta/') and relative.endswith(('.md', '.json'))}
+                                     if ((relative.startswith(('meta/', 'outline/')) and relative.endswith(('.md', '.json')))
+                                         or relative == f'story/{current_chapter}/chapter.md')}
+            context['dialogue_samples'] = {item.get('candidate_id') or item.get('choice_id'): source_samples(item)
+                                           for item in selected if source_samples(item)}
             if (any(len(json.dumps(profile, ensure_ascii=False)) > 24000 for profile in context['source_profiles'].values())
                     or any(len(json.dumps(item['candidate'], ensure_ascii=False)) > 24000 for item in context['requested_items'])):
                 raise ReviewRequired('所选来源档案或证据过大，无法完整审查，请先精简来源摘要或分批采用。')
@@ -484,7 +530,8 @@ class ReferenceAdoptionJobs:
                 try:
                     if not reply:
                         raise ReviewRequired('模型没有返回完整的兼容性结论，尚未采用。')
-                    accepted, skipped, voices, voice_status = _parse_review(reply, selected, project, characters)
+                    accepted, skipped, voices, voice_status = _parse_review(reply, selected, project, characters,
+                                                                           book_files=context['book_files'])
                     break
                 except (ReviewRequired, ValueError, TypeError, KeyError) as error:
                     if attempt:
@@ -510,11 +557,12 @@ class ReferenceAdoptionJobs:
                         raise ReviewRequired('服务正在关闭，未继续采用。')
                     if self.guard:
                         self.guard(root)
-                    published = self._apply(root, job, accepted, voices, voice_status)
+                    published = self._apply(root, job, accepted, voices, voice_status,
+                                            project=project, advisor_entry=entry)
                     job.update(status='applied' if published else 'review_required',
                                selected_references=[_public(item) for item in accepted] if published else [],
                                voice_adaptations=voices if published else [], voice_status=voice_status,
-                               summary=f'已将 {len(accepted)} 项建议适配到本书并写入创作上下文。' if published else '这些建议此前已采用，本次没有新增。')
+                               summary=_adoption_summary(accepted, voices) if published else '这些建议此前已采用，本次没有新增。')
         except asyncio.CancelledError:
             job.update(status='failed', error_code='interrupted', summary='检查已中断，未继续自动采用。')
         except (ReviewRequired, ValueError, TypeError, KeyError) as error:
@@ -529,7 +577,7 @@ class ReferenceAdoptionJobs:
             with self.lock:
                 self._save(root, job)
 
-    def _apply(self, root, job, accepted, voices, voice_status):
+    def _apply(self, root, job, accepted, voices, voice_status, project=None, advisor_entry=None):
         """Run the real adopter on a scratch copy, then publish only its allowed files."""
         with tempfile.TemporaryDirectory(prefix='xs2-adoption-') as temporary:
             stage = Path(temporary)
@@ -596,6 +644,10 @@ class ReferenceAdoptionJobs:
                     for voice in voices:
                         old += f'\n### {voice["character_name"]}\n\n{voice["guidance"]}\n'
                     _atomic(stage / VOICE_PATH, old.encode('utf-8'))
+            if any(voice.get('dialogue_situations') for voice in voices):
+                document = build_adaptations(root, project if project is not None else _project(root, advisor_entry or {}),
+                                             voices, _read(stage / DIALOGUE_PATH), advisor_entry)
+                _atomic(stage / DIALOGUE_PATH, _json_bytes(document))
             changes = {}
             for path in (stage / 'learning').rglob('*') if new_blueprint else []:
                 if path.is_file():
@@ -610,6 +662,12 @@ class ReferenceAdoptionJobs:
                 voice_content = (stage / VOICE_PATH).read_bytes()
                 if not (root / VOICE_PATH).is_file() or (root / VOICE_PATH).read_bytes() != voice_content:
                     changes[VOICE_PATH] = voice_content
+            # A reviewed scene can be completed/refreshed without selecting a
+            # new mechanism or changing the adopted blueprint version.
+            if (stage / DIALOGUE_PATH).is_file():
+                content = (stage / DIALOGUE_PATH).read_bytes()
+                if not (root / DIALOGUE_PATH).is_file() or (root / DIALOGUE_PATH).read_bytes() != content:
+                    changes[DIALOGUE_PATH] = content
             if not changes:
                 return False
             try:
@@ -622,7 +680,7 @@ class ReferenceAdoptionJobs:
             outcome = {'status': 'applied', 'selected_references': [_public(item) for item in accepted],
                        'voice_adaptations': voices, 'voice_status': voice_status,
                        'blueprint_receipt': active,
-                       'summary': f'已将 {len(accepted)} 项建议适配到本书并写入创作上下文。'}
+                       'summary': _adoption_summary(accepted, voices)}
             self._publish(root, job, changes, outcome)
             return True
 

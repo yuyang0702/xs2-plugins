@@ -89,6 +89,7 @@ def checked_extras(payload, window, raw, text_field, strings, evidence_position)
 
 
 def bundle(data, candidates, observations, patterns, load, save):
+    from dialogue_learning import profile_samples
     metadata = load("learning/dna/metadata.json")
     # Every window is analyzed and the full checked results remain in candidates.
     # Global synthesis uses bounded representatives instead of overflowing a
@@ -118,6 +119,7 @@ def bundle(data, candidates, observations, patterns, load, save):
     selected_patterns = bounded(selected_patterns)
     selected = bounded(selected)
     result = {**metadata, "covered_window_ids": data["covered_window_ids"],
+              "dialogue_samples": profile_samples(candidates),
               "style_observations": selected, "conflict_patterns": selected_patterns,
               "analysis_counts": {"all_observations": len(observations), "all_conflicts": len(patterns),
                                   "summary_observations": len(selected), "summary_conflicts": len(selected_patterns)},
@@ -143,6 +145,7 @@ def finalize(args, load, save, digest):
     if packet["statistics"].get("font_obfuscated_chars"):
         limits.append("来源含特殊字体编码，词汇与细微语感结论置信度受限；未自行猜测还原字符。")
     profile = {"schema": "xs2.reference.dna.v1", "source_sha256": analysis["source_sha256"],
+               "dialogue_samples": packet.get('dialogue_samples', []),
                "upstream": load("learning/dna/upstream.json"), "source_mode": packet["source_mode"],
                "documents": documents, "limitations": limits,
                "statistics": packet["statistics"], "conflict_count": len(packet["conflict_patterns"])}

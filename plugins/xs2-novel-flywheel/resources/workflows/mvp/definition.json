@@ -1,7 +1,7 @@
 {
   "workflow_id": "mvp",
   "name": "章节生产管线",
-  "version": 7,
+  "version": 8,
   "nodes": [
     {
       "id": "script_story_context",
@@ -80,7 +80,7 @@
         "script_type": "python",
         "script_group": "xs2",
         "script_name": "reference_distill",
-        "script_args": "prepare-context --scope mvp",
+        "script_args": "prepare-context --scope mvp --chapter {{chapter_number}}",
         "timeout": "60"
       },
       "auto_flow": false,

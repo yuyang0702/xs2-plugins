@@ -74,7 +74,7 @@ def test_workflow_consumes_context_without_overwriting_it():
     variable = next(v for v in mvp['variables'] if v['key'] == 'learning_context')
     assert variable['default'] == 'learning/context/mvp.md'
     assert context['node_params']['script_name'] == 'reference_distill'
-    assert context['node_params']['script_args'] == 'prepare-context --scope mvp'
+    assert context['node_params']['script_args'] == 'prepare-context --scope mvp --chapter {{chapter_number}}'
     assert not context['save_output_to_file']
     for workflow in ['mvp', 'reference-distillation']:
         definition = json.loads((ROOT / f'workflows/{workflow}/definition.json').read_text(encoding='utf-8'))

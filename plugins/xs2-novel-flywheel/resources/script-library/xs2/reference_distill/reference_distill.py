@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import writing_dna
+from dialogue_learning import normalize_dialogue_samples, combine_samples, render_adaptations
 
 MANIFEST = "learning/cache/windows.json"
 CANDIDATES = "learning/candidates.json"
@@ -262,6 +263,9 @@ def normalize(args):
                     "application_scope": application_scope}
         candidates.append({"candidate_id": "mechanism-" + digest(semantic)[:20],
                            **semantic, "confidence": confidence, "evidence": checked})
+        samples = normalize_dialogue_samples(item.get('dialogue_samples'), window, raw, evidence_position)
+        if samples:
+            candidates[-1]['dialogue_samples'] = samples
     save(f"learning/cache/{window['window_id']}.validated.json",
          {"source_sha256": source_sha256, "window_id": window["window_id"],
           "evidence_positions_relocated": relocated, "candidates": candidates,
@@ -325,6 +329,9 @@ def _merge_similar(candidates):
         merged_item["application_scope"] = sorted(application_scope)
         merged_item["support_count"] = len(evidence_sources)
         merged_item["variants"] = sorted(set(filter(None, variants)))
+        samples = combine_samples(cluster)
+        if samples:
+            merged_item['dialogue_samples'] = samples
         merged.append(merged_item)
     return merged
 
@@ -344,6 +351,9 @@ def merge(args):
                     target.append(item)
         for candidate in packet["candidates"]:
             current = merged.setdefault(candidate["candidate_id"], {**candidate, "evidence": []})
+            samples = combine_samples([current, candidate])
+            if samples:
+                current['dialogue_samples'] = samples
             for proof in candidate["evidence"]:
                 if proof not in current["evidence"]:
                     current["evidence"].append(proof)
@@ -594,10 +604,11 @@ def check_originality(args):
     print(f"<script_out>原创性检测完成：{status}。最高相似度 {max_sim:.1%}。报告已保存至 learning/originality_report.md</script_out>")
 
 
-def render(scope):
+def render(scope, chapter=None):
     lines = ["# 用户已选写法", ""]
     version = 0
     has_reference = False
+    dialogue_receipt = {'applied':0, 'pending':0, 'skipped':0}
     if path(ACTIVE).exists():
         active = load(ACTIVE)
         blueprint = load(active["blueprint_path"])
@@ -629,6 +640,8 @@ def render(scope):
         lines.extend(["参考风格与本书基线共同使用：已有正文的统一风格、事实、人物声音和作者意图优先。发现冲突时提出适配建议，不自动替换基线，不清除旧规则。",
                       "风格是表达倾向，不是句长或标点配额；根据场景允许变化，避免每段机械执行全部规则。",
                       "冲突参考须落实成本书的目标、前置伏笔、阻碍、行动、代价和回收，写入现有大纲与冲突/伏笔账本。短篇回收核心问题，长篇普通章保留主线压力；无前置依据不得突发新危机。", ""])
+        dialogue_lines, dialogue_receipt = render_adaptations(Path.cwd(), blueprint, scope, chapter)
+        lines.extend(dialogue_lines)
     if not has_reference:
         lines.append("本阶段没有已选参考写法，按作者原创设定正常创作。")
     advisor_file = path("learning/advisor_report.json")
@@ -643,6 +656,7 @@ def render(scope):
     save(target, "\n".join(lines))
     # Per-stage receipt makes the consumed version inspectable without inserting provenance in prompts.
     save(f"learning/receipts/{scope}.json", {"blueprint_version": version, "context_path": target,
+                                            "dialogue":dialogue_receipt, "chapter":chapter,
                                             "context_sha256": digest("\n".join(lines) + "\n")})
 
 
@@ -670,7 +684,8 @@ def main():
     adopt_parser.set_defaults(handler=adopt)
     prepare_parser = commands.add_parser("prepare-context")
     prepare_parser.add_argument("--scope", choices=sorted(SCOPES), required=True)
-    prepare_parser.set_defaults(handler=lambda args: render(args.scope))
+    prepare_parser.add_argument("--chapter", default=None)
+    prepare_parser.set_defaults(handler=lambda args: render(args.scope, args.chapter))
     analyze_parser = commands.add_parser("analyze-dimensions")
     analyze_parser.set_defaults(handler=analyze_dimensions)
     validate_parser = commands.add_parser("validate-analysis")
