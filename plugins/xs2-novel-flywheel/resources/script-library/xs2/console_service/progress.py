@@ -13,7 +13,7 @@ STAGES = [('build', '建立世界观'), ('character', '创建角色'), ('story-p
           ('reader-sim', '读者评估'), ('post-hoc', '质量审核'), ('export', '导出成品')]
 ACTIVE = {'pending', 'preparing', 'pre_running', 'running', 'retry_waiting', 'resume_pending', 'waiting_approval'}
 TERMINAL = {'completed', 'failed', 'interrupted', 'stopped', 'cancelled'}
-CHAPTER_STAGES = {'mvp', 'polish', 'reader-sim', 'post-hoc', 'export'}
+CHAPTER_STAGES = {'mvp', 'polish', 'reader-sim', 'post-hoc'}
 BODY = 'story/{chapter}/chapter.md'
 EXPORT = 'export/manuscript.md'
 
@@ -168,12 +168,14 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
     for stage, label in STAGES:
         reference = refs.get(stage) or {}
         task = tasks.get(stage) or {}
-        task_chapter = chapter_id((task.get('parameter_values') or {}).get('chapter_number'))
         historical = (archived or {}).get(stage)
         if historical and chapter != project_chapter and stage in CHAPTER_STAGES:
             task = historical
             reference = {'workflow_id': task.get('workflow_id'), 'task_id': task.get('task_id')}
-        elif stage in CHAPTER_STAGES and (task_chapter and task_chapter != chapter or chapter != project_chapter and not task_chapter):
+        parameters = task.get('parameter_values')
+        task_chapter = chapter_id(parameters.get('chapter_number')) if isinstance(parameters, dict) else ''
+        chapter_bound = stage not in CHAPTER_STAGES or task_chapter == chapter
+        if not chapter_bound and (task_chapter or chapter != project_chapter):
             task, reference = {}, {'mismatched_chapter': True}
         status = task.get('status', '')
         rel = _reader_path(root, chapter) if stage == 'reader-sim' else production.ARTIFACTS[stage].format(chapter=chapter)
@@ -193,7 +195,7 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
         if stage == 'export' and exists and any(body.stat().st_mtime_ns > exists.stat().st_mtime_ns for body in bodies):
             complete = False
         row = {'id': stage, 'label': label, 'completed': complete, 'status': status or ('completed' if complete else 'not_started')}
-        if include_details and task.get('workspace_override'):
+        if include_details and chapter_bound and task.get('workspace_override'):
             row['task'] = _task_details(task, reference, (usages or {}).get(stage), now)
         stages.append(row)
     completed = sum(item['completed'] for item in stages)

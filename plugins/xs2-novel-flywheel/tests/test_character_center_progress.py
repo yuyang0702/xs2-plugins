@@ -84,3 +84,23 @@ def test_stage_completion_retains_legacy_tasks_and_checks_upstream_invalidation(
     assert '润色正文处理中' in actual['label']
     assert not actual['export_current']
     assert actual['can_download']
+def test_chapter_detail_requires_positive_chapter_binding_but_export_is_bookwide(tmp_path):
+    state = {'values': {'chapter_number': '0002'}, 'refs': {}}
+    stages = ('mvp', 'polish', 'reader-sim', 'post-hoc', 'export')
+    for stage in stages:
+        state['refs'][stage] = {'task_id': stage, 'workflow_id': stage}
+    saved = {'workspace_override': str(tmp_path), 'status': 'failed', 'error': '只在绑定后显示'}
+    usage = {'basis': 'ledger', 'models': ['test:model'], 'call_count': 1}
+    tasks = {stage: saved | {'task_id': stage} for stage in stages}
+    tasks['polish']['parameter_values'] = {'chapter_number': '../0002'}
+    tasks['reader-sim']['parameter_values'] = {'chapter_number': '0003'}
+    tasks['post-hoc']['parameter_values'] = {'chapter_number': '0002'}
+    result = service.progress.project_progress(tmp_path, state, tasks, {stage: usage for stage in stages})
+    by_stage = {row['id']: row for row in result['stages']}
+    for stage in ('mvp', 'polish', 'reader-sim'):
+        assert 'task' not in by_stage[stage]
+    assert by_stage['post-hoc']['task']['usage'] == usage
+    assert by_stage['export']['task']['usage'] == usage
+    alternate = service.progress.project_progress(tmp_path, state, tasks, selected='0001')
+    selected = {row['id']: row for row in alternate['stages']}
+    assert 'task' in selected['export'] and 'task' not in selected['post-hoc']
