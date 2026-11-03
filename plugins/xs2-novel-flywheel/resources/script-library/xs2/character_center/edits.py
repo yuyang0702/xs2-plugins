@@ -112,7 +112,8 @@ def _recover(root):
 def legacy_mutation(root):
     root = workspace(root)
     with locked(root):
-        _recover(root)
+        if source_path(root, PENDING).exists():
+            _recover(root)
         yield
 
 

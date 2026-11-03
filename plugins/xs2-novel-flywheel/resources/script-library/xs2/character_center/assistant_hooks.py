@@ -29,7 +29,7 @@ def _read(root, relative):
 
 def _context(root, chapter, ids):
     view, _, documents = inventory(root)
-    add_state(root, view, chapter)
+    world_before = add_state(root, view, chapter)
     link_relations(view['characters'])
     selected = [person for person in view['characters'] if person['id'] in ids and person['status'] == 'structured']
     if len(selected) != len(ids):
@@ -50,8 +50,7 @@ def _context(root, chapter, ids):
         characters = [{'name': person['name'], 'states': [
             state for state in person['states'] if include_current or state['chapter'] < chapter][-2:]}
                       for person in selected]
-        return {'characters': characters, 'world_facts': [
-            fact for fact in view['world_facts'] if include_current or fact['source_chapter'] < chapter]}
+        return {'characters': characters, 'world_facts': view['world_facts'] if include_current else world_before}
 
     past_facts = confirmed_facts(True)
     binding = digest(encode([str(root), chapter, sorted(ids), view['revision'], preference['revision'],

@@ -418,3 +418,58 @@ def test_trial_snapshot_accounts_for_newly_adopted_guidance_and_excludes_itself(
     assert service.finish(book, first, 'dialogue_trial', candidate)['error_code'] == 'character_stale'
     latest = service.freeze(book, options | {'_request_id': 'third'})
     assert json.loads(latest['user'])['scoped_preferences'] == [{'reason': '视角稳定', 'carry_forward': '用收伞动作'}]
+
+
+@pytest.mark.parametrize('late_facts', [[], [
+    {'description': '下一章才录入的断言', 'source_chapter': '0001', 'evidence': '伞是她自己做的。'},
+]])
+def test_production_guidance_binds_world_at_chapter_start(service, book, late_facts):
+    from importlib import import_module
+    story = import_module(service.__package__ + '.dependencies').sibling('story_support')
+    outline = book / 'outline/near_term_outline.md'
+    outline.parent.mkdir()
+    outline.write_text('## 第 2 章\n### 场景：收伞\n出场人物：阿杏\n', encoding='utf-8')
+
+    def confirm(chapter, body, facts):
+        folder = book / 'story' / chapter
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'chapter.md').write_bytes(body.encode())
+        (folder / 'confirmed_state.json').write_text(json.dumps({
+            'chapter': chapter, 'body_sha256': hashlib.sha256(body.encode()).hexdigest(), 'source_hashes': {},
+            'world': {'facts': facts},
+        }), encoding='utf-8')
+
+    confirm('0001', '伞是她自己做的。', [
+        {'description': '阿杏亲手制伞', 'source_chapter': '0001', 'evidence': '伞是她自己做的。'},
+    ])
+    view = service.read(book)
+    frozen = service.freeze(book, dict(purpose='dialogue_trial', chapter='0002', question='试读',
+                            scene='收伞', baseline='她说了几句。', _request_id='trial',
+                            character_ids=[select(view)['character_id']], expected_revision=view['revision']))
+    candidate = '{"candidate":"她拢住伞骨。","checks":["保留人物手上的伞"]}'
+    trial = service.finish(book, frozen['target'], 'dialogue_trial', candidate)['trial']
+    entry = dict(id='trial', status='completed', purpose='dialogue_trial', trial=trial,
+                 character_source=frozen['target'])
+    service.accept_trial(book, entry, 'candidate', '动作更贴合', '用手指的犹豫展示心情')
+    confirm('0002', '阿杏把伞收了起来。', late_facts)
+    story.prepare_context(book, '0002')
+    prepared = story.read(book, 'cache/story-support/context.md')
+    assert '用手指的犹豫展示心情' in prepared
+    assert '下一章才录入的断言' not in prepared
+    confirm('0001', '伞是她自己做的。', [])
+    story.prepare_context(book, '0002')
+    assert '用手指的犹豫展示心情' not in story.read(book, 'cache/story-support/context.md')
+
+
+def test_legacy_save_does_not_read_unrelated_damaged_archive(service, book):
+    from importlib import import_module
+    voice = import_module(service.__package__ + '.dependencies').sibling('voice_support')
+    archive = book / 'learning/character_center/history.json'
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b'truncated history')
+    assert voice.save(book, '## 阿杏\n改过的声音') == {
+        'status': 'success', 'file_path': str(book / 'meta/character_voice.md')}
+    assert (book / 'meta/character_voice.md').read_text(encoding='utf-8') == '## 阿杏\n改过的声音'
+    (book / 'meta/character_voice.md').unlink()
+    assert voice.generate(book)['generation_mode'] == 'template'
+    assert archive.read_bytes() == b'truncated history'

@@ -75,12 +75,14 @@ def _evidence(root, chapter, row, valid, story):
 
 
 def add_state(root, view, chapter=''):
+    """Project through the requested chapter and return its opening world facts."""
     story = sibling('story_support')
     chapter = chapter_id(chapter) if chapter else ''
     snapshots, stale = story.confirmed(root)
     valid = {row['chapter'] for row in snapshots}
     chapter = chapter or max(valid, default='')
     view.update(chapter=chapter, chapters=sorted(valid), stale_chapters=stale, world_facts=[])
+    world_before = []
     counts = Counter(item['name'] for item in view['characters'])
     people = {item['name']: item for item in view['characters'] if counts[item['name']] == 1}
     for document in snapshots:
@@ -104,6 +106,8 @@ def add_state(root, view, chapter=''):
             if _string(row.get('description')) and (proof := _evidence(root, number, row, valid, story)):
                 facts.append(dict(description=row['description'], **proof))
         view['world_facts'] = facts
+        if number < chapter:
+            world_before = facts
     for person in people.values():
         if not person['states']:
             continue
@@ -114,3 +118,4 @@ def add_state(root, view, chapter=''):
                 row['target'], _string(row.get('change')) or nature, state['source_id'], None, 'confirmed_state',
                 nature=nature, meaning=_string(row.get('meaning_to_character')),
                 tension=_string(row.get('hidden_tension')), attitude=_string(row.get('default_attitude'))))
+    return world_before
