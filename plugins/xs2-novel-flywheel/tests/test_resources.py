@@ -44,6 +44,15 @@ EXPECTED_SCRIPT_LIBRARIES = {
     "short_preparation",
 }
 EXPECTED_SKILLS = {"writing-assistant"}
+EXPECTED_WORKBENCH_SERVICES = {"character_center", "console_service", "prose_policy", "story_support", "voice_support"}
+
+
+def test_workbench_services_are_packaged_with_the_plugin():
+    extension = tomllib.loads((PLUGIN_ROOT / 'extension.toml').read_text(encoding='utf-8'))
+    scripts = PLUGIN_ROOT / extension['resources']['script_libraries'] / 'xs2'
+    for service in EXPECTED_WORKBENCH_SERVICES:
+        assert (scripts / service / 'SCRIPT.md').is_file()
+        assert (scripts / service / f'{service}.py').is_file()
 
 
 def _json(path: Path) -> dict:

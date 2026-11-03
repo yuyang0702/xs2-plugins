@@ -6,5 +6,6 @@ from .adoption import ReferenceAdoptionJobs
 from .library_metadata import library_metadata
 
 
-def create_assistant(model_factory, support_loader, catalog_loader=None):
-    return NovelAssistantJobs(model_factory, support_loader, catalog_loader=catalog_loader)
+def create_assistant(model_factory, support_loader, catalog_loader=None, character_loader=None):
+    return NovelAssistantJobs(model_factory, support_loader, catalog_loader=catalog_loader,
+                              character_loader=character_loader)

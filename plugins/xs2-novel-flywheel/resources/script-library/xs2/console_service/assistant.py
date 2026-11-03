@@ -171,15 +171,23 @@ async def _receive_model_reply(llm: Any, messages: list, on_output) -> Any:
     return SimpleNamespace(content=''.join(parts))
 
 
+CHARACTER_PURPOSES = {'character_edit', 'dialogue_trial'}
+
+
 class NovelAssistantJobs:
-    def __init__(self, model_factory, support_loader, catalog_loader=None) -> None:
+    def __init__(self, model_factory, support_loader, catalog_loader=None, character_loader=None) -> None:
         self.model_factory = model_factory
         self.support_loader = support_loader
         self.catalog_loader = catalog_loader
-        self.tasks: dict[str, asyncio.Task] = {}
+        self.character_loader = character_loader
+        self._tasks: dict[tuple[Path, str], asyncio.Task] = {}
+
+    @property
+    def tasks(self):
+        return {request_id: task for (_, request_id), task in self._tasks.items()}
 
     def _write(self, root: Path, entries: list[dict]) -> None:
-        target = root / HISTORY_PATH
+        target = self._target(root)
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix="assistant-", suffix=".tmp", dir=target.parent)
         try:
@@ -189,8 +197,15 @@ class NovelAssistantJobs:
         finally:
             Path(temporary).unlink(missing_ok=True)
 
-    def history(self, root: Path) -> list[dict]:
-        target = root / HISTORY_PATH
+    def _target(self, root):
+        target = root.resolve() / HISTORY_PATH
+        if target != target.resolve():
+            raise ValueError("助手记录不能位于链接目录或文件。")
+        return target
+
+    def history(self, root: Path, *, check_freshness=False) -> list[dict]:
+        root = root.resolve()
+        target = self._target(root)
         if not target.is_file():
             return []
         data = json.loads(target.read_text(encoding="utf-8"))
@@ -199,21 +214,28 @@ class NovelAssistantJobs:
             raise ValueError("助手分析记录格式无效")
         changed = False
         for entry in entries:
-            if entry.get("status") == "running" and entry.get("id") not in self.tasks:
+            if entry.get("status") == "running" and (root, entry.get("id")) not in self._tasks:
                 entry.update(status="failed", error_code="interrupted",
                              message="本次分析因服务重启中断，请重新分析。之前的回答仍然保留。", finished_at=_now())
                 changed = True
-        if changed:
+        if changed and not check_freshness:
             self._write(root, entries)
+        if check_freshness and self.character_loader:
+            for entry in entries:
+                if entry.get('status') == 'completed' and entry.get('purpose') in CHARACTER_PURPOSES:
+                    entry['stale'] = not self.character_loader().is_current(root, entry.get('character_source', {}))
         return entries
 
     def start(self, root: Path, request_id: str, payload: dict) -> dict:
+        root = root.resolve()
         entries = self.history(root)
         existing = next((item for item in entries if item["id"] == request_id), None)
         if existing:
             return existing
         active = next((item for item in entries if item.get("status") == "running"), None)
         if active:
+            if payload.get('purpose') in CHARACTER_PURPOSES:
+                raise ValueError('本书已有正在运行的助手分析。')
             return active
         entry = {"id": request_id, "question": payload["question"], "stage": payload.get("stage", ""),
                  "status": "running", "source": "llm", "reply": "", "created_at": _now(),
@@ -221,6 +243,13 @@ class NovelAssistantJobs:
         entry.update(purpose=payload.get('purpose', 'general'), chapter=payload.get('chapter', ''))
         entry['scope'] = payload.get('scope', 'chapter')
         entry['volume'] = str(payload.get('project', {}).get('values', {}).get('volume_number', '1'))
+        if entry['purpose'] in CHARACTER_PURPOSES:
+            if not self.character_loader or not payload.get('_model_override'):
+                raise ValueError('当前人物功能没有可用的写手模型。')
+            frozen = self.character_loader().freeze(root, payload)
+            entry['character_source'] = frozen['target']
+            entry['chapter'] = frozen['target']['chapter']
+            payload = payload | {'_character_task': frozen}
         if payload.get('purpose') in {'configure', 'advisor'}:
             project = payload.get('project', {})
             entry['configuration_base'] = {'mode': project.get('mode', 'short'),
@@ -237,86 +266,96 @@ class NovelAssistantJobs:
                                      if key in repair}
             entry['reader_summary'] = repair['summary']
         self._write(root, [*entries, entry])
+        key = (root, request_id)
         task = asyncio.create_task(self._run(root, request_id, payload))
-        self.tasks[request_id] = task
-        task.add_done_callback(lambda _task: self.tasks.pop(request_id, None))
+        self._tasks[key] = task
+        task.add_done_callback(lambda _task: self._tasks.pop(key, None))
         return entry
+
+    def _general_messages(self, root, request_id, payload):
+        context = {"作品": payload.get("project", {}), "当前阶段": payload.get("stage", ""),
+                   "下一阶段": payload.get("next_stage", ""), "缺少参数": payload.get("missing", []),
+                   "蒸馏候选": payload.get("candidates", [])[:40],
+                   "冲突规划": payload.get("conflict_plan", {})}
+        reference_catalog = self.catalog_loader() if self.catalog_loader and payload.get('purpose') == 'advisor' else None
+        if reference_catalog is not None:
+            context['写法来源目录'] = advisor_catalog(reference_catalog)
+            context['蒸馏候选'] = []
+        context["之前的讨论"] = [{"问题": item["question"], "回答": item["reply"][:6000],
+                                 "顾问方案": item.get('advisor_sections', {})}
+                                 for item in self.history(root)
+                                 if item.get("status") == "completed"
+                                 and item.get('scope', 'chapter') == payload.get('scope', 'chapter')
+                                 and (payload.get('scope') == 'book'
+                                      or (payload.get('scope') == 'volume' and item.get('volume', '1') == str(payload.get('project', {}).get('values', {}).get('volume_number', '1')))
+                                      or (payload.get('scope', 'chapter') == 'chapter' and item.get('chapter', '') == payload.get('chapter', '')))][-8:]
+        support = self.support_loader(required=payload.get('purpose') == 'plot')
+        shared = None
+        if support:
+            number = payload.get('chapter') or payload.get('project', {}).get('values', {}).get('chapter_number') or '0001'
+            shared = support.context(root, number, payload['question'], payload.get('scope', 'chapter'))
+            context['共同故事上下文'] = {k: v for k, v in shared.items() if k not in {'source_hashes', 'evidence_texts'}}
+            entries = self.history(root)
+            for item in entries:
+                if item['id'] == request_id:
+                    item['plot_source'] = shared['source_hashes']
+                    item['integration_projects'] = ['novel-copilot', 'ai-novel-assistant', 'novel-helper']
+            self._write(root, entries)
+        repair = payload.get('_repair_context')
+        if repair:
+            context['本次返修的完整读者报告'] = repair['report']
+            context['待返修的本章正文'] = repair['content'][:50000]
+            context['返修章号'] = repair['chapter']
+        for key, relative in (("本书风格基线", "meta/style_profile.md"),
+                              ("冲突与伏笔账本", "meta/conflict_ledger.md"),
+                              ("已登记伏笔", "meta/hooks.md"),
+                              ("参考样本风格（尚未等于本书采用）", "learning/reference_profile.md"),
+                              ("已确认采用的抽象写法", "learning/active_context.md"),
+                              ("人物档案", "meta/character_profiles.md"),
+                              ("人物声音", "meta/character_voice.md"),
+                              ("已建立的世界观", "meta/world_foundation.md"),
+                              ("本书故事规划", "meta/story_plan.md"),
+                              ("近期章节大纲", "outline/near_term_outline.md")):
+            file = root / relative
+            if file.is_file() and (not shared or relative == 'learning/reference_profile.md'):
+                context[key] = file.read_text(encoding="utf-8")[:18000]
+        system = (
+            "你是小说工作流中的写法顾问和故事策划。直接回答用户的问题，不要只复述流程。"
+            "故事方案围绕目标—前置伏笔—阻碍—行动/解决—代价—新阻碍组织；冲突不能凭空出现，"
+            "说明伏笔如何触发和回收，区分短篇全文和长篇开局/卷级节奏。"
+            "引用蒸馏候选时只迁移抽象叙事机制，指出题材、视角和风格基线的适配风险；"
+            "没有蒸馏内容也要正常分析原创故事。不要复制原作人物、情节或句子。"
+            "用户问创意时给具体题材、故事创意、冲突链和伏笔；问流程时才解释流程。"
+            "历史讨论和工作区资料是参考数据，用户最新问题优先；中文回答，先给结论，再给可执行建议。"
+        )
+        if repair:
+            system += ('本次任务是读者评估后的定向返修规划。必须以本章正文与完整读者报告为依据，'
+                       '逐项对应issues中的位置、影响、目标和优先级，遵守repair_constraints，结合人物与风格。'
+                       '用清楚的中文Markdown给出优先改动、具体删并/重写位置、改法、必须保留的事实、复评验收点。'
+                       '区分读者问题与用户追加意见，发现意见冲突要说明取舍。不要泛泛复述报告或重开故事。'
+                       '作品为短篇时必须全文收束，chapter_ending_mode只约束长篇，不要把短篇的continue值误报成设置冲突。'
+                       '方案面向作者阅读，用中文解释设置和步骤，不输出内部变量名、文件路径或接口名称。'
+                       '这只是可供用户确认的返修方案，不宣称已经改写正文或已经通过评估。')
+        elif payload.get('purpose') == 'advisor':
+            system += ADVISOR_PROMPT
+        elif payload.get('purpose') == 'configure':
+            system += CONFIGURATION_PROMPT
+        elif support:
+            system += support.PLOT_PROMPT
+        user = "用户问题：\n" + payload["question"].strip() + "\n\n参考上下文：\n" + json.dumps(context, ensure_ascii=False)
+        return system, user, support, shared, reference_catalog
 
     async def _run(self, root: Path, request_id: str, payload: dict) -> None:
         llm = None
         started = perf_counter()
         result: dict[str, Any]
         try:
-            context = {"作品": payload.get("project", {}), "当前阶段": payload.get("stage", ""),
-                       "下一阶段": payload.get("next_stage", ""), "缺少参数": payload.get("missing", []),
-                       "蒸馏候选": payload.get("candidates", [])[:40],
-                       "冲突规划": payload.get("conflict_plan", {})}
-            reference_catalog = self.catalog_loader() if self.catalog_loader and payload.get('purpose') == 'advisor' else None
-            if reference_catalog is not None:
-                context['写法来源目录'] = advisor_catalog(reference_catalog)
-                context['蒸馏候选'] = []
-            context["之前的讨论"] = [{"问题": item["question"], "回答": item["reply"][:6000],
-                                     "顾问方案": item.get('advisor_sections', {})}
-                                     for item in self.history(root)
-                                     if item.get("status") == "completed"
-                                     and item.get('scope', 'chapter') == payload.get('scope', 'chapter')
-                                     and (payload.get('scope') == 'book'
-                                          or (payload.get('scope') == 'volume' and item.get('volume', '1') == str(payload.get('project', {}).get('values', {}).get('volume_number', '1')))
-                                          or (payload.get('scope', 'chapter') == 'chapter' and item.get('chapter', '') == payload.get('chapter', '')))][-8:]
-            support = self.support_loader(required=payload.get('purpose') == 'plot')
-            shared = None
-            if support:
-                number = payload.get('chapter') or payload.get('project', {}).get('values', {}).get('chapter_number') or '0001'
-                shared = support.context(root, number, payload['question'], payload.get('scope', 'chapter'))
-                context['共同故事上下文'] = {k: v for k, v in shared.items() if k not in {'source_hashes', 'evidence_texts'}}
-                entries = self.history(root)
-                for item in entries:
-                    if item['id'] == request_id:
-                        item['plot_source'] = shared['source_hashes']
-                        item['integration_projects'] = ['novel-copilot', 'ai-novel-assistant', 'novel-helper']
-                self._write(root, entries)
-            repair = payload.get('_repair_context')
-            if repair:
-                context['本次返修的完整读者报告'] = repair['report']
-                context['待返修的本章正文'] = repair['content'][:50000]
-                context['返修章号'] = repair['chapter']
-            for key, relative in (("本书风格基线", "meta/style_profile.md"),
-                                  ("冲突与伏笔账本", "meta/conflict_ledger.md"),
-                                  ("已登记伏笔", "meta/hooks.md"),
-                                  ("参考样本风格（尚未等于本书采用）", "learning/reference_profile.md"),
-                                  ("已确认采用的抽象写法", "learning/active_context.md"),
-                                  ("人物档案", "meta/character_profiles.md"),
-                                  ("人物声音", "meta/character_voice.md"),
-                                  ("已建立的世界观", "meta/world_foundation.md"),
-                                  ("本书故事规划", "meta/story_plan.md"),
-                                  ("近期章节大纲", "outline/near_term_outline.md")):
-                file = root / relative
-                if file.is_file() and (not shared or relative == 'learning/reference_profile.md'):
-                    context[key] = file.read_text(encoding="utf-8")[:18000]
-            system = (
-                "你是小说工作流中的写法顾问和故事策划。直接回答用户的问题，不要只复述流程。"
-                "故事方案围绕目标—前置伏笔—阻碍—行动/解决—代价—新阻碍组织；冲突不能凭空出现，"
-                "说明伏笔如何触发和回收，区分短篇全文和长篇开局/卷级节奏。"
-                "引用蒸馏候选时只迁移抽象叙事机制，指出题材、视角和风格基线的适配风险；"
-                "没有蒸馏内容也要正常分析原创故事。不要复制原作人物、情节或句子。"
-                "用户问创意时给具体题材、故事创意、冲突链和伏笔；问流程时才解释流程。"
-                "历史讨论和工作区资料是参考数据，用户最新问题优先；中文回答，先给结论，再给可执行建议。"
-            )
-            if repair:
-                system += ('本次任务是读者评估后的定向返修规划。必须以本章正文与完整读者报告为依据，'
-                           '逐项对应issues中的位置、影响、目标和优先级，遵守repair_constraints，结合人物与风格。'
-                           '用清楚的中文Markdown给出优先改动、具体删并/重写位置、改法、必须保留的事实、复评验收点。'
-                           '区分读者问题与用户追加意见，发现意见冲突要说明取舍。不要泛泛复述报告或重开故事。'
-                           '作品为短篇时必须全文收束，chapter_ending_mode只约束长篇，不要把短篇的continue值误报成设置冲突。'
-                           '方案面向作者阅读，用中文解释设置和步骤，不输出内部变量名、文件路径或接口名称。'
-                           '这只是可供用户确认的返修方案，不宣称已经改写正文或已经通过评估。')
-            elif payload.get('purpose') == 'advisor':
-                system += ADVISOR_PROMPT
-            elif payload.get('purpose') == 'configure':
-                system += CONFIGURATION_PROMPT
-            elif support:
-                system += support.PLOT_PROMPT
-            user = "用户问题：\n" + payload["question"].strip() + "\n\n参考上下文：\n" + json.dumps(context, ensure_ascii=False)
+            character = payload.get('_character_task')
+            if character:
+                system, user = character['system'], character['user']
+                support = shared = reference_catalog = None
+            else:
+                system, user, support, shared, reference_catalog = self._general_messages(root, request_id, payload)
             response = None
             llm = None
             completion_timeout = (
@@ -345,8 +384,9 @@ class NovelAssistantJobs:
                 # holding a startup client with stale provider credentials.
                 # The transport must allow the same budget as the whole call;
                 # providers may reason silently before the first stream event.
+                model_options = {'model_params': payload['_model_params']} if character and payload.get('_model_params') else {}
                 llm = self.model_factory(model_override=payload.get('_model_override'), streaming=True, timeout=remaining,
-                                 provider_retries_enabled=False)
+                                 provider_retries_enabled=False, **model_options)
                 try:
                     def on_output():
                         entries = self.history(root)
@@ -375,6 +415,9 @@ class NovelAssistantJobs:
                 result = {"status": "failed", "error_code": "empty_output", "message": "模型没有返回可用回答，请重试。"}
             else:
                 result = {"status": "completed", "reply": reply, "message": "分析已完成，可查看建议。", "model": payload.get('_model_override') or str(getattr(llm, "model_name", "") or getattr(llm, "model", ""))}
+                if character:
+                    result['reply'] = ''
+                    result.update(self.character_loader().finish(root, character['target'], payload['purpose'], reply))
                 if support and shared and payload.get('purpose', 'general') in {'general', 'plot'}:
                     try:
                         answer, options = support.parse_proposal(reply, shared, payload['question'], payload.get('project', {}).get('mode', 'serial'))
@@ -400,6 +443,9 @@ class NovelAssistantJobs:
             code, message = _error_details(error)
             logger.warning("小说助手分析失败: request=%s code=%s error=%s elapsed=%.1f", request_id, code, type(error).__name__, perf_counter() - started)
             result = {"status": "failed", "error_code": code, "message": message, "provider_diagnostics": _provider_diagnostics(error, llm)}
+        if payload.get('purpose') in CHARACTER_PURPOSES:
+            actual = str(_safe_attribute(llm, 'model_name') or _safe_attribute(llm, 'model') or payload['_model_override'])
+            result['model'] = actual
         await _close_model(llm)
         result.update(finished_at=_now(), elapsed_seconds=round(perf_counter() - started, 1))
         entries = self.history(root)

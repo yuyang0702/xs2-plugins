@@ -192,16 +192,24 @@ def readable(value, depth=0):
 def confirmed(root, before=None):
     valid, stale = [], []
     for path in sorted((Path(root) / "story").glob("[0-9][0-9][0-9][0-9]/confirmed_state.json")):
-        data = json.loads(path.read_text(encoding="utf-8"))
         number = int(path.parent.name)
         if before is not None and number >= int(before):
             continue
         try:
-            verify(root, data.get("source_hashes", {}))
+            canonical = safe(root, f"story/{number:04d}/confirmed_state.json")
+            if canonical != path.absolute():
+                raise ValueError("确认记录指向别名路径")
+            data = json.loads(canonical.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, dict) or data.get("chapter") != f"{number:04d}":
+                raise ValueError("确认记录章节无效")
+            hashes = data.get("source_hashes")
+            if not isinstance(hashes, dict) or not isinstance(data.get("body_sha256"), str) or not data["body_sha256"]:
+                raise ValueError("确认记录缺少来源校验")
+            verify(root, hashes)
             if digest(root, f"story/{number:04d}/chapter.md") != data.get("body_sha256"):
                 raise ValueError("正文已修改")
             valid.append(data)
-        except ValueError:
+        except (ValueError, OSError):
             stale.append(path.parent.name)
     return valid, stale
 
@@ -612,6 +620,18 @@ def prepare_context(root, chapter, check=False, *, task_id=None):
         text += "\n\n## 本章大纲（待写计划，不是已发生事实）\n" + (
             chapter_outline(root, chapter, read(root, outline_alias) if outline_alias else None)
             or "未找到本章独立大纲，请核对章节规划。")
+    preference_path = Path(root) / 'learning/character_center/preferences.json'
+    if preference_path.is_file():
+        entry = HERE.parent / 'character_center' / 'character_center.py'
+        if entry.is_file():
+            center_spec = importlib.util.spec_from_file_location('xs2_story_character_center', entry)
+            center = importlib.util.module_from_spec(center_spec)
+            center_spec.loader.exec_module(center)
+            planned = render_plan(adopted) if adopted and not adopted_note else chapter_outline(root, chapter)
+            guidance = center.planned_preferences(root, chapter, planned)
+            if guidance:
+                text += '\n\n## 作者采用的场景表达参考\n仅限下列场景和人物。按情境参考，不复述样句，不作为人物或世界事实。\n'
+                text += readable(guidance)
     if ctx.get("chapter_drafts"):
         text += "\n\n## 本章细纲（待写计划，不是已发生事实）\n" + "\n\n".join(
             f"### {item['source_id']}\n{item['content']}" for item in ctx["chapter_drafts"]
