@@ -62,7 +62,16 @@ FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)")
 CLAUSE = re.compile(r"[^。！？；;]+[。！？；;]?")
 BULLET = re.compile(r"^\s*(?:[-+*]|\d+[.)、])\s+")
 EXPRESSION_LABEL = re.compile(r"^(?:长短句偏好|停顿习惯|常用句式|愤怒时|紧张时|撒谎时)[：:]\s*")
-MIXED = re.compile(r"(?:[,，:：()（）]|且|并须|并应|同时|否则|必须(?:在|由|等到|知道|保留|发生)|不得(?:在|由|知道)|\band\b)", re.I)
+# Audit patterns deliberately match clues broadly. Preview permission requires
+# a complete, known expression form with no open-ended subject or outcome.
+EXPRESSION_CLAUSE = re.compile(
+    r"(?:每句(?:对白|对话|台词)(?:都)?(?:必须|要)(?:推进(?:情节|剧情)|有(?:一个)?(?:具体)?(?:目的|功能|作用))"
+    r"|每段(?:正文)?(?:都)?(?:必须|要)(?:添|加|加入|安排)(?:一|1)个(?:动作|感官细节)"
+    r"|(?:对白|对话|台词)(?:结束)?后(?:必须|一定要|都要)(?:解释(?:其|这句话的)?(?:用意|功能|目的)|复述对白内容)"
+    r"|长短句交替|禁止(?:使用)?破折号|禁止被动语态"
+    r"|(?:every|each) (?:line of dialogue|dialogue turn) must advance the plot)"
+    r"[。.!！?？]?", re.I,
+)
 
 
 def workspace(root):
@@ -160,8 +169,7 @@ def scan(source_id, text, sha):
                 eligible = (
                     not protected and in_expression and quote == body and
                     kind != "generated_common_context" and source_id.endswith(".md") and
-                    match.start() == 0 and len(quote) <= 400 and not MIXED.search(quote) and
-                    text.count(quote) == 1
+                    EXPRESSION_CLAUSE.fullmatch(quote) is not None and text.count(quote) == 1
                 )
                 yield {
                     "source_id": source_id, "source_kind": kind, "source_sha256": sha,

@@ -831,8 +831,11 @@ def main():
                 key, sep, source_id = spec.partition("=")
                 if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
                     raise ValueError("无效的工作流叙述资料别名。")
-                alias = _prose_policy().runtime_alias(root, runtime["directory"], source_id,
-                                                      task_id=runtime["task_id"])
+                policy = _prose_policy()
+                alias = policy.runtime_alias(root, runtime["directory"], source_id, task_id=runtime["task_id"])
+                if alias == source_id:
+                    alias = policy.compact_mirror_alias(root, runtime["directory"], source_id,
+                                                        task_id=runtime["task_id"])
                 if alias != source_id:
                     print(f"<WF_VAR>{key}:{alias}</WF_VAR>")
     if args.command == "preflight" and not result["ready"]:

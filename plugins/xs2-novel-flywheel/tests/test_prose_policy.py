@@ -341,3 +341,111 @@ def test_review_reads_adopted_chapter_guide_expression_as_planned_context(book):
     assert "本章细纲（待写计划，不是已发生事实）" in message
     assert NEW in message and OLD not in message
     assert OLD in (book / guide).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("stage,node_id", [
+    ("reader-sim", "agent_reader"), ("polish", "agent_sc"), ("polish", "agent_pl"),
+    ("post-hoc", "agent_obs"),
+])
+def test_later_consumers_project_existing_compact_profile_mirrors(book, stage, node_id):
+    profile = "meta/character_profiles.md"
+    write(book, profile, f"## 阿杏\n{KNOWLEDGE}\n### 表达建议\n{OLD}\n")
+    write(book, VOICE, "## 阿杏\n她避开官话。\n")
+    (book / "story/0001/single_chapter_guide.md").unlink()
+    definition, values = workflow_context(book, "mvp", "legacy-short")
+    workflow_script(book, definition, values, "script_short_context", "legacy-short")
+    write(book, "story/0001/chapter.md", "阿杏走到渡口。")
+    approve(policy(), book, profile)
+    files = ["story/0001/character_minor.md", "story/0001/character_state_long.md"]
+    originals = {file: (book / file).read_bytes() for file in files}
+    definition, values = workflow_context(book, stage, f"compact-{stage}-{node_id}")
+    node = next(n for n in definition["nodes"] if n["id"] == node_id)
+    message = asyncio.run(resolve(node["first_message"], values, definition, book))
+    assert NEW in message and OLD not in message
+    assert KNOWLEDGE in message
+    assert {file: (book / file).read_bytes() for file in files} == originals
+
+
+def test_changed_compact_state_is_not_projected_as_a_profile_mirror(book):
+    profile = "meta/character_profiles.md"
+    write(book, profile, f"## 表达建议\n{OLD}\n")
+    write(book, VOICE, "## 阿杏\n她避开官话。\n")
+    (book / "story/0001/single_chapter_guide.md").unlink()
+    definition, values = workflow_context(book, "mvp", "old-short")
+    workflow_script(book, definition, values, "script_short_context", "old-short")
+    state = "story/0001/character_state_long.md"
+    content = f"# 生成前人物基线\n\n## 表达建议\n{OLD}\n后来阿杏亲眼看到交易。\n"
+    write(book, state, content)
+    write(book, "story/0001/chapter.md", "阿杏亲眼看到交易。")
+    approve(policy(), book, profile)
+    definition, values = workflow_context(book, "reader-sim", "preserve-state")
+    reader = next(n for n in definition["nodes"] if n["id"] == "agent_reader")
+    message = asyncio.run(resolve(reader["first_message"], values, definition, book))
+    assert content in message
+    assert (book / state).read_bytes() == content.encode("utf-8")
+
+
+def test_post_hoc_projects_the_existing_compact_guide_from_its_outline_source(book):
+    outline = "outline/near_term_outline.md"
+    write(book, VOICE, "## 阿杏\n她避开官话。\n")
+    write(book, outline, f"### 第1章\n{FACT}\n#### 表达建议\n{OLD}\n")
+    guide = book / "story/0001/single_chapter_guide.md"
+    guide.unlink()
+    definition, values = workflow_context(book, "mvp", "legacy-compact-guide")
+    workflow_script(book, definition, values, "script_short_context", "legacy-compact-guide")
+    original = guide.read_bytes()
+    write(book, "story/0001/chapter.md", "阿杏走到渡口。")
+    approve(policy(), book, outline)
+    definition, values = workflow_context(book, "post-hoc", "compact-guide-review")
+    observer = next(n for n in definition["nodes"] if n["id"] == "agent_obs")
+    message = asyncio.run(resolve(observer["first_message"], values, definition, book))
+    assert NEW in message and OLD not in message and FACT in message
+    assert guide.read_bytes() == original
+
+
+@pytest.mark.parametrize("stage,node_id", [("mvp", "agent_sw"), ("polish", "agent_pl")])
+def test_learning_context_resolves_an_explicit_active_context_alias(book, stage, node_id):
+    active = "learning/active_context.md"
+    write(book, VOICE, "## 阿杏\n她避开官话。\n")
+    write(book, active, f"## 表达建议\n{OLD}\n")
+    approve(policy(), book, active)
+    definition = load_workflow(stage)
+    values = {v["key"]: v.get("default", "") for v in definition["variables"]}
+    values.update(chapter_number="0001", learning_context=active)
+    values.update(workflow_script(book, definition, values, "script_story_context", f"learning-{stage}"))
+    node = next(n for n in definition["nodes"] if n["id"] == node_id)
+    message = asyncio.run(resolve(node["first_message"], values, definition, book))
+    assert NEW in message and OLD not in message
+
+
+def test_named_testimony_outcome_remains_audit_only_under_expression_heading(book):
+    service = policy()
+    quote = "每句证词必须指认阿杏。"
+    write(book, VOICE, f"## 表达建议\n{quote}\n")
+    report = service.audit(book)
+    finding = next(row for row in report["findings"] if row["quote"] == quote)
+    assert not finding["override_eligible"]
+    with pytest.raises(ValueError):
+        service.preview_override(book, {"source_id": VOICE, "quote": quote, "replacement": NEW}, report["revision"])
+
+
+def test_override_replacement_rejects_unicode_line_separator(book):
+    service = policy()
+    revision = service.read(book)["revision"]
+    with pytest.raises(ValueError):
+        service.preview_override(book, {"source_id": VOICE, "quote": OLD,
+                                       "replacement": "按场景取舍。\u2028## 新小节"}, revision)
+
+
+@pytest.mark.parametrize("mode", ["inherit", "narrative_led"])
+def test_mvp_planners_read_chapter_state_contents_in_both_modes(book, mode):
+    state = "story/0001/character_state_long.md"
+    marker = "独立状态锚：阿杏早就认出假钥匙。"
+    write(book, state, marker)
+    service = policy()
+    service.save(book, {"mode": mode}, service.read(book)["revision"])
+    definition, values = workflow_context(book, "mvp", f"state-{mode}")
+    for node_id in ("agent_od", "agent_se"):
+        node = next(n for n in definition["nodes"] if n["id"] == node_id)
+        message = asyncio.run(resolve(node["first_message"], values, definition, book))
+        assert marker in message and state not in message

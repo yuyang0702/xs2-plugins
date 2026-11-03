@@ -29,6 +29,7 @@ runtime_file = _implementation.runtime_file
 runtime_alias = _implementation.runtime_alias
 runtime_common = _implementation.runtime_common
 voice_mirror = _implementation.voice_mirror
+compact_mirror_alias = _implementation.compact_mirror_alias
 
 
 def main():

@@ -30,7 +30,7 @@ type: python
 
 ### 预览与确认
 
-1. 用 `preview_override(root, {"source_id": finding["source_id"], "quote": finding["quote"], "replacement": replacement}, revision)` 预览。必须是当前文件内唯一、完整、单行的表达建议。允许明确的表达类 Markdown 小节（如“表达建议”“表达倾向（非固定台词）”）。未标注、混有事实、来源不唯一、作者要求、已确认事实、身份、知识、世界规则、生成缓存或 JSON 记录只供核对。不会批量替换“必须/不得”等词。
+1. 用 `preview_override(root, {"source_id": finding["source_id"], "quote": finding["quote"], "replacement": replacement}, revision)` 预览。必须是当前文件内唯一、完整、单行的已知表达句式，例如“每句对白必须有具体目的”。表达类 Markdown 小节只提供定位线索。涉及具体剧情结果、无法判定含义、来源不唯一、作者要求、已确认事实、身份、知识、世界规则、生成缓存或 JSON 记录只供核对。
 2. 展示凭证的 `source_id`、`before` 和 `after`。完整凭证包含 `preview_id`、`revision`、`source_id`、`source_sha256`、`source_category`、`quote`、`replacement`、`start`、`end`、`before`、`after`。
 3. 用户确认后调用 `save(root, {"mode": "narrative_led", "overrides": [preview]}, revision)`。列表代表全部保留的覆盖，可附上当前 `read` 返回的、仍有效的旧凭证。省略 `overrides` 保留现有列表；传 `[]` 撤回全部。切回 `inherit` 会停用已存覆盖。
 

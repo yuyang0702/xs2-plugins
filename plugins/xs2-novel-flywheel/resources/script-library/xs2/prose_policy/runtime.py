@@ -76,7 +76,9 @@ def prepare_runtime(root, chapter="0001", *, task_id):
     key = _task_key(task_id)
     directory = f"{DIRECTORY}/runtime/{key}/{uuid4().hex}"
     result.update(directory=directory, prompt_file=f"{directory}/preference.md")
-    atomic_bytes(root, result["prompt_file"], context["instructions"].encode("utf-8"))
+    # The optional file carries its own separator so a workflow can append it
+    # to an existing system prompt with no change when the file is disabled.
+    atomic_bytes(root, result["prompt_file"], ("\n\n" + context["instructions"]).encode("utf-8"))
     rows = _active(state)
     manifest = {}
     for source_id in dict.fromkeys(item["source_id"] for item in rows):

@@ -90,7 +90,8 @@ def _bind(root, payload):
         raise ValueError("请选择体检列表中可以定位的原文。")
     if (not isinstance(quote, str) or not 0 < len(quote) <= 400 or not isinstance(replacement, str)
             or not 0 < len(replacement) <= 400 or replacement != replacement.strip()
-            or any(token in replacement for token in ("\r", "\n", "{{", "}}", "\x00"))
+            or replacement.splitlines() != [replacement]
+            or any(token in replacement for token in ("{{", "}}", "\x00"))
             or replacement.startswith(("#", ">", "`", "~")) or quote == replacement):
         raise ValueError("请给出一条非空、单行、不同于原文的表达建议。")
     path = safe(root, source_id)
