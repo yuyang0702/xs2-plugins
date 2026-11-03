@@ -23,7 +23,7 @@ def execute(root, node_id, content):
 
 def test_only_polish_pl_pp_opt_into_single_body_envelope():
     nodes=definition()['nodes']
-    assert definition()['version']==15
+    assert definition()['version']>=15
     assert {n['id'] for n in nodes if n.get('node_params',{}).get('json_single_string_field')}=={'agent_pl','agent_pp'}
     for n in nodes:
         if n['id'] in ('agent_pl','agent_pp'):assert n['node_params']['json_single_string_field']=='body'

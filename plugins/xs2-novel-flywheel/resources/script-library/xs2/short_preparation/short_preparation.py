@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -227,13 +228,26 @@ def render_characters(root, data):
                     'cache/character/voice.json': _json({'characters': voice_records})})
 
 
-def prepare_context(root, chapter):
+def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
     if chapter != '0001':
         raise ValueError('轻量正文准备仅支持独立短篇首章；请使用完整流程')
     if _path(root, f'story/{chapter}/chapter.md').exists():
         raise ValueError('已有正文已保留；请通过返修或重新生成流程处理')
-    sources = {}
+    policy_runtime = policy_runtime.strip()
+    policy = None
+    if policy_runtime:
+        entry = Path(__file__).resolve().parents[1] / "prose_policy/prose_policy.py"
+        spec = importlib.util.spec_from_file_location("xs2_short_prose_policy", entry)
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+    sources, effective, aliases = {}, {}, {}
     for relative in (*REQUIRED, *OPTIONAL):
+        if relative == 'cache/story-support/context.md' and policy:
+            # The shared context is already rendered from the task's effective
+            # sources. Reading its legacy alias here would reintroduce old rules.
+            common = policy.runtime_common(root, policy_runtime, task_id=task_id)
+            effective[relative] = _path(root, common).read_text(encoding="utf-8")
+            continue
         path = _path(root, relative)
         if not path.is_file():
             if relative in REQUIRED:
@@ -245,7 +259,10 @@ def prepare_context(root, chapter):
         if len(value) > 24000:
             raise ValueError(f'{relative} 超出轻量完整上下文范围，请选择完整准备；未截断')
         sources[relative] = value
-    context = '\n\n'.join(f'## {name}\n\n{text}' for name, text in sources.items())
+        alias = policy.runtime_alias(root, policy_runtime, relative, task_id=task_id) if policy else relative
+        aliases[relative] = alias
+        effective[relative] = value if alias == relative else _path(root, alias).read_text(encoding="utf-8")
+    context = '\n\n'.join(f'## {name}\n\n{text}' for name, text in effective.items())
     project_path = _path(root, '.novel-project.json')
     if project_path.is_file():
         project = json.loads(project_path.read_text(encoding='utf-8-sig'))
@@ -257,8 +274,9 @@ def prepare_context(root, chapter):
     guide = sources['outline/near_term_outline.md']
     world_state = sources.get('meta/current_world.md') or sources['meta/world_foundation.md']
     character_state = sources.get('meta/current_characters.md') or sources['meta/character_profiles.md']
-    _publish(root, {'cache/short/production_context.md': '# 独立短篇写作上下文\n\n' + context + '\n',
-                    f'story/{chapter}/single_chapter_guide.md': guide,
+    context_path = 'cache/short/production_context.md'
+    context_text = '# 独立短篇写作上下文\n\n' + context + '\n'
+    outputs = {f'story/{chapter}/single_chapter_guide.md': guide,
                     f'story/{chapter}/world_state.md': '# 生成前世界基线\n\n' + world_state,
                     f'story/{chapter}/world_events.md': '# 本章事件状态\n\n本章尚未发生；按大纲待写，不能把计划当成已确认事实。\n',
                     f'story/{chapter}/character_state_long.md': '# 生成前人物基线\n\n' + character_state,
@@ -266,7 +284,20 @@ def prepare_context(root, chapter):
                     f'story/{chapter}/character_profiles_trimmed.md': sources['meta/character_profiles.md'],
                     f'story/{chapter}/world_foundation_trimmed.md': sources['meta/world_foundation.md'],
                     'cache/se/se_output.json': _json({'chapter_number': chapter, 'planned_only': True,
-                                                    'source': 'outline/near_term_outline.md', 'guide': guide})})
+                                                    'source': 'outline/near_term_outline.md', 'guide': guide})}
+    if not policy:
+        outputs[context_path] = context_text
+    _publish(root, outputs)
+    if policy:
+        context_path = policy.runtime_file(root, policy_runtime, "short-context.md", context_text, task_id=task_id)
+        profile = "meta/character_profiles.md"
+        if not sources.get("meta/current_characters.md") and aliases[profile] != profile:
+            state_path = f"story/{chapter}/character_state_long.md"
+            aliases[state_path] = policy.runtime_file(
+                root, policy_runtime, "short-character-state.md",
+                "# 生成前人物基线\n\n" + effective[profile], task_id=task_id,
+            )
+    return context_path, aliases
 
 
 def main():
@@ -274,11 +305,24 @@ def main():
     parser.add_argument('action', choices=['world', 'characters', 'context'])
     parser.add_argument('--input')
     parser.add_argument('--chapter', default='0001')
+    parser.add_argument('--policy-runtime', default='')
+    parser.add_argument('--guide-file', default='')
+    parser.add_argument('--character-minor-file', default='')
+    parser.add_argument('--character-state-file', default='')
     args = parser.parse_args()
     root = Path.cwd().resolve()
     if args.action == 'context':
-        prepare_context(root, args.chapter)
-        print('<WF_VAR>short_context_file:cache/short/production_context.md</WF_VAR>')
+        context_path, aliases = prepare_context(root, args.chapter, policy_runtime=args.policy_runtime,
+                                               task_id=os.environ.get("TASK_ID"))
+        print(f'<WF_VAR>short_context_file:{context_path}</WF_VAR>')
+        state_path = f"story/{args.chapter}/character_state_long.md"
+        for key, actual, expected, source in (
+            ("pp_guide_file", args.guide_file, f"story/{args.chapter}/single_chapter_guide.md", "outline/near_term_outline.md"),
+            ("pp_character_minor_file", args.character_minor_file, f"story/{args.chapter}/character_minor.md", "meta/character_profiles.md"),
+            ("pp_character_state_long_file", args.character_state_file, state_path, state_path),
+        ):
+            if actual == expected and aliases.get(source, source) != source:
+                print(f"<WF_VAR>{key}:{aliases[source]}</WF_VAR>")
     else:
         if not args.input:
             parser.error('--input is required')

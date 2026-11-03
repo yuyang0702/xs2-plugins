@@ -13,13 +13,26 @@ import os
 import re
 import tempfile
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
+from uuid import uuid4
 
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("xs2_story_upstream", HERE / "upstream.py")
 upstream = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(upstream)
+
+
+@lru_cache(maxsize=1)
+def _prose_policy():
+    entry = HERE.parent / "prose_policy" / "prose_policy.py"
+    policy_spec = importlib.util.spec_from_file_location("xs2_story_prose_policy", entry)
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    return policy
+
+
 BASE_FILES = (
     "meta/world_foundation.md", "meta/character_profiles.md", "meta/character_voice.md",
     "meta/style_profile.md", "learning/active_context.md", "meta/story_plan.md",
@@ -217,9 +230,10 @@ def chapter_start_indexes(root, chapter):
             for key in ("hooks", "debts")}
 
 
-def chapter_outline(root, chapter):
+def chapter_outline(root, chapter, text=None):
     """Keep complete target-chapter sections, including nested scene headings."""
-    text = read(root, "outline/near_term_outline.md")
+    if text is None:
+        text = read(root, "outline/near_term_outline.md")
     headings = list(re.finditer(r"^(#{1,6})[ \t]+([^\n]+)", text, re.M))
     sections = []
     active_chapter_level = None
@@ -274,9 +288,20 @@ def methods(question=""):
             "boundary": "方法按需要选择；不执行固定爽点、句式或章节配额；一致性和视角先于新颖度。"}
 
 
-def context(root, chapter="0001", question="", scope="chapter"):
+def context(root, chapter="0001", question="", scope="chapter", *, runtime=None, chapter_drafts=True):
     root = Path(root).resolve()
     chapter = chapter_id(chapter)
+    policy = _prose_policy()
+    preference = runtime["context"] if runtime is not None else policy.effective_context(root, chapter)
+
+    def effective(file, canonical):
+        if preference["mode"] != "narrative_led":
+            return canonical
+        if runtime is not None:
+            alias = runtime["aliases"].get(file)
+            return read(root, alias) if alias else canonical
+        return policy.effective_text(root, file, canonical)
+
     sources = source_hashes(root)
     entries = []
     evidence = {}
@@ -292,9 +317,11 @@ def context(root, chapter="0001", question="", scope="chapter"):
             continue
         if file == "meta/conflict_ledger.md" and historical:
             continue
-        text = read(root, file)
+        original = read(root, file)
+        text = effective(file, original)
         if scope == "chapter" and file == "outline/near_term_outline.md":
-            text = chapter_outline(root, chapter)
+            original = chapter_outline(root, chapter, original)
+            text = chapter_outline(root, chapter, text)
         if text:
             # Preserve both the beginning and latest additions of growing indexes.
             chosen = text if len(text) <= 6500 else text[:3000] + "\n（中段按本次问题检索）\n" + text[-3500:]
@@ -303,7 +330,18 @@ def context(root, chapter="0001", question="", scope="chapter"):
                 relevant = [p for p in text.split("\n\n") if any(t in p for t in terms)]
                 chosen += "\n" + "\n\n".join(relevant[:6])[:2500]
             entries.append({"source_id": file, "content": chosen})
-            evidence[file] = text
+            evidence[file] = original
+    drafts = []
+    if chapter_drafts and scope == "chapter" and preference["instructions"]:
+        for name in ("single_chapter_guide", "storyboard", "storyboard_final"):
+            file = f"story/{chapter}/{name}.md"
+            original = read(root, file)
+            text = effective(file, original)
+            if text != original:
+                drafts.append({"source_id": file, "content": text[:6500],
+                               "boundary": "待写计划，不是已发生事实。"})
+                sources[file] = digest(root, file)
+                evidence[file] = original
     # upstream story_state_text is real reused code, now fed the relevant file state.
     chars = latest.get("characters", [])
     active_text = question + read(root, f"planning/chapters/{chapter}.json") + chapter_outline(root, chapter)
@@ -338,7 +376,9 @@ def context(root, chapter="0001", question="", scope="chapter"):
             "world_current": latest.get("world", {}), "indexes_before": indexes,
             "archive_status": archive_status(root),
             "methods": methods(question), "source_hashes": sources,
-            "stale_chapters": stale, "evidence_texts": evidence}
+            "stale_chapters": stale, "evidence_texts": evidence,
+            **({"prose_policy": preference} if preference["instructions"] else {}),
+            **({"chapter_drafts": drafts} if drafts else {})}
 
 
 PLOT_PROMPT = """
@@ -537,13 +577,17 @@ def preflight(root, chapter):
             "message": "已核对前文档案与大纲覆盖，可继续本章。"}
 
 
-def prepare_context(root, chapter, check=False):
+def prepare_context(root, chapter, check=False, *, task_id=None):
     chapter = chapter_id(chapter)
     if check:
         result = preflight(root, chapter)
         if not result['ready']:
             raise ValueError(result['message'])
-    ctx = context(root, chapter)
+    policy = _prose_policy()
+    runtime = policy.prepare_runtime(root, chapter, task_id=task_id or uuid4().hex)
+    # MVP will produce a new guide before using it. Review stages can use the
+    # selected existing guide as separately identified planning evidence.
+    ctx = context(root, chapter, runtime=runtime, chapter_drafts=not check)
     adopted = load(root, f"planning/chapters/{chapter}.json")
     adopted_note = ''
     if adopted:
@@ -564,8 +608,14 @@ def prepare_context(root, chapter, check=False):
         if s['source_id'] not in {*PRIORITY_FILES, 'outline/volume_outline.md', 'outline/near_term_outline.md'})
     text += "\n\n## 用户已采用的本章计划\n" + (adopted_note + '\n\n' + render_plan(adopted) if adopted else "尚未采用额外方案，按现有大纲原创。")
     if not adopted:
+        outline_alias = runtime["aliases"].get("outline/near_term_outline.md")
         text += "\n\n## 本章大纲（待写计划，不是已发生事实）\n" + (
-            chapter_outline(root, chapter) or "未找到本章独立大纲，请核对章节规划。")
+            chapter_outline(root, chapter, read(root, outline_alias) if outline_alias else None)
+            or "未找到本章独立大纲，请核对章节规划。")
+    if ctx.get("chapter_drafts"):
+        text += "\n\n## 本章细纲（待写计划，不是已发生事实）\n" + "\n\n".join(
+            f"### {item['source_id']}\n{item['content']}" for item in ctx["chapter_drafts"]
+        )
     indexes = ctx["indexes_before"]
     for key in ("hooks", "debts"):
         write(root, f"cache/story-support/{chapter}/{key}-before.md", readable(indexes.get(key, [])) or "暂无前文已确认条目。")
@@ -575,11 +625,14 @@ def prepare_context(root, chapter, check=False):
     text += '\n\n## 人物信念与声音\n' + ctx['methods']['character']
     text += '\n\n## 局部剧情讨论约束\n' + '\n'.join(ctx['methods']['rescue_rules'])
     text += "\n\n事实与人物知识分开。章节方案是待写计划，不是已发生事实。世界规则、视角与本书风格先于方法偏好。"
-    write(root, "cache/story-support/context.md", text)
+    if runtime["directory"]:
+        runtime["common_file"] = policy.runtime_file(root, runtime["directory"], "common.md", text + "\n")
+    else:
+        write(root, "cache/story-support/context.md", text)
     write(root, f"story/{chapter}/planning_context.json", {"chapter": chapter, "adopted_request": (adopted or {}).get("request_id", ""),
           "adopted_option": (adopted or {}).get("option_id", ""), "source_hashes": ctx["source_hashes"],
           "projects": [p["project"] for p in json.loads((HERE/"UPSTREAM.json").read_text())["projects"]]})
-    return ctx
+    return ctx | {"prose_policy_runtime": runtime}
 
 
 def begin_reader(root, chapter):
@@ -760,12 +813,28 @@ def main():
     parser.add_argument("command", choices=["context", "begin-reader", "commit-reader", "begin-review", "commit", "preflight", "refresh"])
     parser.add_argument("--chapter", default="0001")
     parser.add_argument("--check", action='store_true')
+    parser.add_argument("--policy-alias", action="append", default=[])
     args = parser.parse_args()
     root = Path.cwd().resolve()
     action = {"context": prepare_context, "begin-reader": begin_reader, "commit-reader": commit_reader,
               "begin-review": begin_review, "commit": commit, "preflight": preflight}
     result = (refresh_archive(root) if args.command == "refresh" else
-              prepare_context(root, args.chapter, args.check) if args.command == 'context' else action[args.command](root, args.chapter))
+              prepare_context(root, args.chapter, args.check, task_id=os.environ.get("TASK_ID"))
+              if args.command == 'context' else action[args.command](root, args.chapter))
+    if args.command == "context":
+        runtime = result["prose_policy_runtime"]
+        if runtime["directory"]:
+            print(f"<WF_VAR>prose_policy_runtime:{runtime['directory']}</WF_VAR>")
+            print(f"<WF_VAR>prose_policy_prompt:{runtime['prompt_file']}</WF_VAR>")
+            print(f"<WF_VAR>story_support_context:{runtime['common_file']}</WF_VAR>")
+            for spec in args.policy_alias:
+                key, sep, source_id = spec.partition("=")
+                if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
+                    raise ValueError("无效的工作流叙述资料别名。")
+                alias = _prose_policy().runtime_alias(root, runtime["directory"], source_id,
+                                                      task_id=runtime["task_id"])
+                if alias != source_id:
+                    print(f"<WF_VAR>{key}:{alias}</WF_VAR>")
     if args.command == "preflight" and not result["ready"]:
         raise ValueError(result["message"])
     print(json.dumps({"status": "completed", "command": args.command, "chapter": args.chapter}, ensure_ascii=False))

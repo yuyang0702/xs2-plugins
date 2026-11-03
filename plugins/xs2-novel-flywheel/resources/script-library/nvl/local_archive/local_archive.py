@@ -9,8 +9,11 @@ opens a database or creates an external identifier.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +30,15 @@ INDEX_PATHS = {
     "hooks": "archive/hooks.json",
     "debts": "archive/debts.json",
 }
+
+
+@lru_cache(maxsize=1)
+def _policy():
+    entry = Path(__file__).resolve().parents[2] / "xs2/prose_policy/prose_policy.py"
+    spec = importlib.util.spec_from_file_location("xs2_archive_prose_policy", entry)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _workspace_path(raw_path: str) -> Path:
@@ -154,7 +166,7 @@ def _named_items(value: Any, key: str) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _build_character_cache() -> None:
+def _build_character_cache(policy_runtime="", policy_characters_file="") -> None:
     skeleton = _read_json("cache/character/skeleton.json")
     if not isinstance(skeleton, dict) or not isinstance(
         skeleton.get("characters"), list
@@ -168,11 +180,8 @@ def _build_character_cache() -> None:
         if beliefs_path.is_file()
         else {}
     )
-    voices = (
-        _named_items(_read_json("cache/character/voice.json"), "characters")
-        if voice_path.is_file()
-        else {}
-    )
+    voice_document = _read_json("cache/character/voice.json") if voice_path.is_file() else {}
+    voices = _named_items(voice_document, "characters")
 
     characters = []
     for base in skeleton["characters"]:
@@ -194,9 +203,26 @@ def _build_character_cache() -> None:
     if not characters:
         raise ValueError("角色本地存档中没有有效角色")
     _write_json("cache/sync/characters.json", {"characters": characters})
+    if policy_runtime and policy_characters_file == "cache/sync/characters.json" and voices:
+        _effective_character_cache(policy_runtime, voice_document, characters)
 
 
-def _render_near_term_context() -> None:
+def _effective_character_cache(directory, voice_document, characters):
+    policy, root, task_id = _policy(), Path.cwd(), os.environ.get("TASK_ID")
+    renderer = Path(__file__).resolve().parents[1] / "json_to_md/json_to_md.py"
+    spec = importlib.util.spec_from_file_location("xs2_archive_voice_renderer", renderer)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    effective = policy.voice_mirror(root, directory, voice_document, module.render_voice_char, task_id=task_id)
+    if effective != voice_document:
+        voices = _named_items(effective, "characters")
+        data = {"characters": [{**row, "voice": voices.get(row["name"], {})} for row in characters]}
+        alias = policy.runtime_file(root, directory, "characters.json",
+                                    json.dumps(data, ensure_ascii=False, indent=2) + "\n", task_id=task_id)
+        print(f"<WF_VAR>pp_characters_json_file:{alias}</WF_VAR>")
+
+
+def _render_near_term_context(policy_runtime="", policy_near_term_file="") -> None:
     source_path = _workspace_path("cache/no/near_term.json")
     if source_path.is_file():
         data = _read_json("cache/no/near_term.json")
@@ -222,6 +248,12 @@ def _render_near_term_context() -> None:
             "cache/sync/near_term_we.md",
             outline_path.read_text(encoding="utf-8"),
         )
+        if policy_runtime and policy_near_term_file == "cache/sync/near_term_we.md":
+            policy, root, task_id = _policy(), Path.cwd(), os.environ.get("TASK_ID")
+            original = "outline/near_term_outline.md"
+            alias = policy.runtime_alias(root, policy_runtime, original, task_id=task_id)
+            if alias != original:
+                print(f"<WF_VAR>pp_near_term_we_file:{alias}</WF_VAR>")
 
 
 def _title(raw_path: str) -> str:
@@ -300,8 +332,25 @@ def _prepare(args: argparse.Namespace) -> None:
     _render_indexes()
     if args.context:
         _build_world_cache()
-        _build_character_cache()
-        _render_near_term_context()
+        runtime = getattr(args, "policy_runtime", "").strip()
+        _build_character_cache(runtime, getattr(args, "policy_characters_file", ""))
+        _render_near_term_context(runtime, getattr(args, "policy_near_term_file", ""))
+
+
+def _rebind(args: argparse.Namespace) -> None:
+    directory = getattr(args, "policy_runtime", "").strip()
+    if not directory or not getattr(args, "policy_rebind", []):
+        return
+    policy, root, task_id = _policy(), Path.cwd(), os.environ.get("TASK_ID")
+    for binding in args.policy_rebind:
+        key, sep, source = binding.partition("=")
+        if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
+            raise ValueError("无效的工作流叙述资料别名。")
+        alias = policy.runtime_alias(root, directory, source.replace("\\", "/"), task_id=task_id)
+        # Avoid placing user-controlled relative paths in the stdout tag protocol.
+        # All rebound files here have a fixed producer path in the workflow.
+        if alias and re.fullmatch(r"[A-Za-z0-9_./-]+", alias):
+            print(f"<WF_VAR>{key}:{alias}</WF_VAR>")
 
 
 def _checkpoint(args: argparse.Namespace) -> None:
@@ -318,6 +367,7 @@ def _checkpoint(args: argparse.Namespace) -> None:
         changed = True
     if changed:
         _render_indexes()
+    _rebind(args)
 
 
 def _post_hoc(args: argparse.Namespace) -> None:
@@ -352,6 +402,7 @@ def _post_hoc(args: argparse.Namespace) -> None:
 
 def _render(args: argparse.Namespace) -> None:
     _render_files(args.inputs, args.outputs)
+    _rebind(args)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -361,6 +412,9 @@ def _parser() -> argparse.ArgumentParser:
     prepare = commands.add_parser("prepare", help="检查并准备本地工作区")
     prepare.add_argument("--require", default="", help="必须存在的相对文件，逗号分隔")
     prepare.add_argument("--context", action="store_true", help="构建章节生产上下文")
+    prepare.add_argument("--policy-runtime", default="")
+    prepare.add_argument("--policy-near-term-file", default="")
+    prepare.add_argument("--policy-characters-file", default="")
     prepare.set_defaults(handler=_prepare)
 
     checkpoint = commands.add_parser("checkpoint", help="校验并索引阶段产物")
@@ -371,11 +425,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     checkpoint.add_argument("--merge-hooks", default="", help="要合并的伏笔 JSON")
     checkpoint.add_argument("--merge-debts", default="", help="要合并的债务 JSON")
+    checkpoint.add_argument("--policy-runtime", default="")
+    checkpoint.add_argument("--policy-rebind", action="append", default=[])
     checkpoint.set_defaults(handler=_checkpoint)
 
     render = commands.add_parser("render", help="将本地 JSON 渲染为 Markdown")
     render.add_argument("--inputs", required=True, help="输入 JSON，逗号分隔")
     render.add_argument("--outputs", required=True, help="输出 Markdown，逗号分隔")
+    render.add_argument("--policy-runtime", default="")
+    render.add_argument("--policy-rebind", action="append", default=[])
     render.set_defaults(handler=_render)
 
     post_hoc = commands.add_parser("post-hoc", help="归档章节后验结果")

@@ -198,7 +198,7 @@ def correction_feedback(root, state, result):
 
 
 
-def prepare_execution(root, chapter, target='', scope='content'):
+def prepare_execution(root, chapter, target='', scope='content', *, policy_runtime='', task_id=None):
     """Freeze the current body and both feedback sources before the final editor."""
     relative = prepare_guidance(root, chapter, target)
     outputs = {'length_context_file': relative, 'polish_pass': 'content', 'length_execution_context': '',
@@ -241,7 +241,17 @@ def prepare_execution(root, chapter, target='', scope='content'):
         raise ValueError('字数定向返修前正文已变化，请重新核对')
     binding = {'chapter_number': chapter, 'author_feedback_file': prior, 'receipt': receipt,
                'narrative_pov': state.get('values', {}).get('narrative_pov', 'third_person')}
-    identity = hashlib.sha256(json.dumps(binding, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    story_context_path = 'cache/story-support/context.md'
+    identity_data = binding
+    if policy_runtime:
+        import importlib.util
+        entry = Path(__file__).resolve().parents[1] / "prose_policy/prose_policy.py"
+        spec = importlib.util.spec_from_file_location("xs2_length_prose_policy", entry)
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        story_context_path = policy.runtime_common(root, policy_runtime, task_id=task_id)
+        identity_data = {**binding, "effective_context": story_context_path}
+    identity = hashlib.sha256(json.dumps(identity_data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     folder = f"cache/quality/{chapter}/focused/{result['body_sha256'][:12]}-{identity[:12]}"
     base = folder + '/length_base.json'
     context = folder + '/execution.md'
@@ -262,7 +272,7 @@ def prepare_execution(root, chapter, target='', scope='content'):
     author = safe_path(root, source).read_text(encoding='utf-8-sig') if source else ''
     delivery = '执行要求：按上述意见修改完整正文，不以计划代替正文；维护既定事实、人物、视角与本书风格。只处理本章，短篇收束全文，长篇普通章不提前完结全书。读者复评要检查修改是否落实，独立判断，不因采用方案而默认通过。'
     author = '\n'.join(line for line in author.splitlines() if line.strip() != delivery)
-    shared_file = safe_path(root, 'cache/story-support/context.md')
+    shared_file = safe_path(root, story_context_path)
     shared_bytes = shared_file.read_bytes() if shared_file.is_file() else None
     shared = shared_bytes.decode('utf-8-sig') if shared_bytes is not None else ''
     instruction += ('\n【当前正文；仅供定位与查重，不得交付整章】\n' + body.decode('utf-8-sig')
@@ -284,9 +294,6 @@ def prepare_execution(root, chapter, target='', scope='content'):
              system_path: hashlib.sha256(safe_path(root, system_path).read_bytes()).hexdigest()}
     if source:
         files[source] = receipt['source_sha256']
-    # story_support.context has a fixed plugin output contract (not a user path option).
-    story_context_path = 'cache/story-support/context.md'
-    story_context = safe_path(root, story_context_path)
     if shared_bytes is not None:
         files[story_context_path] = hashlib.sha256(shared_bytes).hexdigest()
     else:

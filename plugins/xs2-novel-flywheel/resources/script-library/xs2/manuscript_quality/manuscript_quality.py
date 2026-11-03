@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--review-result', default=None)
     parser.add_argument('--review-binding', default='')
     parser.add_argument('--review-binding-sha', default='')
+    parser.add_argument('--policy-runtime', default='')
     args = parser.parse_args()
     root = Path.cwd().resolve();q = quality()
     chapter = q.chapter_number(args.chapter)
@@ -37,7 +38,8 @@ def main():
         elif args.action == 'focused-ready':
             outputs = q.confirm_execution(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha)
         else:
-            outputs = q.prepare_execution(root, chapter, args.target, args.scope)
+            outputs = q.prepare_execution(root, chapter, args.target, args.scope,
+                                          policy_runtime=args.policy_runtime.strip(), task_id=os.environ.get('TASK_ID'))
         for key, value in outputs.items():
             # The host's WF_VAR parser accepts a whitespace payload for empty values.
             print('<WF_VAR>' + key + ':' + (value or ' ') + '</WF_VAR>')
