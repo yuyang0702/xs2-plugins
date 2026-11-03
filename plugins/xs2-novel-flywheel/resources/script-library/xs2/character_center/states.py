@@ -6,6 +6,11 @@ from .cards import _relation, source_path
 from .dependencies import sibling
 
 
+SNAPSHOT = {'location', 'physical', 'resources', 'emotion', 'goal', 'knowledge', 'misbelief', 'current_state'}
+DRIVES = {'goal', 'bottom_line', 'desire', 'want', 'fear', 'current_goal', 'motivation'}
+RELATIONSHIP = {'target', 'change', 'nature', 'status', 'meaning_to_character', 'hidden_tension', 'default_attitude'}
+
+
 def _mapping(value):
     return value if isinstance(value, dict) else {}
 
@@ -16,6 +21,35 @@ def _rows(value):
 
 def _string(value):
     return value if isinstance(value, str) else ''
+
+
+def _fields(value, allowed, *, lists=()):
+    if not isinstance(value, dict):
+        raise ValueError('人物状态需要明确的键值结构。')
+    fields = {}
+    for key in allowed & value.keys():
+        item = value[key]
+        if isinstance(item, str) or (key in lists and isinstance(item, list)
+                                    and all(isinstance(member, str) for member in item)):
+            fields[key] = item
+        elif item is not None:
+            raise ValueError('人物状态字段格式无效。')
+    return fields
+
+
+def _project_row(row):
+    list_keys = ('resources', 'knowledge', 'misbelief')
+    state = _fields(row.get('snapshot', {}), SNAPSHOT, lists=list_keys)
+    drives = _fields(row.get('drives', {}), DRIVES)
+    attitude = _fields(row, {'knowledge', 'misbelief'}, lists=list_keys) | state
+    relationships = row.get('relationships', [])
+    if not isinstance(relationships, list):
+        raise ValueError('人物关系状态格式无效。')
+    relations = [_fields(relation, RELATIONSHIP) for relation in relationships]
+    if any(not relation.get('target', '').strip() for relation in relations):
+        raise ValueError('人物关系缺少目标。')
+    return dict(snapshot=state, drives=drives, knowledge=attitude.get('knowledge', []),
+                beliefs=attitude.get('misbelief', []), relationships=relations)
 
 
 def chapter_id(value):
@@ -59,13 +93,12 @@ def add_state(root, view, chapter=''):
             name = _string(row.get('name'))
             if name not in people or occurrences[name] != 1 or not (proof := _evidence(root, number, row, valid, story)):
                 continue
-            state = _mapping(row.get('snapshot'))
-            drives = _mapping(row.get('drives'))
-            relationships = [item for item in _rows(row.get('relationships')) if _string(item.get('target'))]
-            people[name]['states'].append(dict(chapter=number, **proof, snapshot=state, drives=drives,
-                                               knowledge=state.get('knowledge', row.get('knowledge', [])),
-                                               beliefs=state.get('misbelief', row.get('misbelief', [])),
-                                               relationships=relationships))
+            try:
+                projected = _project_row(row)
+            except ValueError:
+                continue
+            if any(projected.values()):
+                people[name]['states'].append(dict(chapter=number, **proof, **projected))
         facts = []
         for row in _rows(_mapping(document.get('world')).get('facts')):
             if _string(row.get('description')) and (proof := _evidence(root, number, row, valid, story)):

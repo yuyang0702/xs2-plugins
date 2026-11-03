@@ -1,8 +1,9 @@
 """Freeze model inputs and keep adoption separate from optional suggestions."""
 from datetime import datetime, timezone
 import json
+import re
 
-from .cards import digest, inventory, link_relations, source_path, workspace
+from .cards import FIELD, _lines, digest, inventory, link_relations, source_path, workspace
 from .dependencies import sibling
 from .edits import DIRECTORY, atomic, encode, locked, preview
 from .states import add_state, chapter_id
@@ -10,6 +11,9 @@ from .states import add_state, chapter_id
 
 PURPOSES = {'character_edit', 'dialogue_trial'}
 PREFERENCES = DIRECTORY + '/preferences.json'
+SCENE = re.compile(r'^场景(?:[ \t]*[0-9]+)?[ \t]*[：:][ \t]*(.+)$')
+HEADING = re.compile(r'^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?$')
+CAST = {'出场人物', '参与人物', '人物', '角色'}
 
 
 def _bounded(value, limit, label):
@@ -42,27 +46,41 @@ def _context(root, chapter, ids):
              f'story/{chapter}/chapter.md')
     data = {name: _read(root, name) for name in files}
     story = sibling('story_support')
-    past_facts = {'characters': [{'name': person['name'], 'states': person['states'][-2:],
-                                   'relationships': [rel for rel in person['relationships']
-                                                     if rel['provenance'] == 'confirmed_state']}
-                                  for person in selected], 'world_facts': view['world_facts']}
+    def confirmed_facts(include_current):
+        characters = [{'name': person['name'], 'states': [
+            state for state in person['states'] if include_current or state['chapter'] < chapter][-2:]}
+                      for person in selected]
+        return {'characters': characters, 'world_facts': [
+            fact for fact in view['world_facts'] if include_current or fact['source_chapter'] < chapter]}
+
+    past_facts = confirmed_facts(True)
     binding = digest(encode([str(root), chapter, sorted(ids), view['revision'], preference['revision'],
                              {name: digest(raw) if raw is not None else None for name, raw in data.items()},
                              past_facts]))
     context_files = {}
+    outline = 'outline/near_term_outline.md'
+    scoped_outline = ''
     for name, raw in data.items():
         if raw is None:
             continue
         original = raw.decode('utf-8-sig')
         value = policy.effective_text(root, name, original)
-        if name == 'outline/near_term_outline.md':
+        if name == outline:
             value = story.chapter_outline(root, chapter, value)
+            scoped_outline = value
         context_files[name] = value[:6000]
     context = dict(confirmed=past_facts, policy=preference['instructions'], files=context_files,
                    selected_cards=[dict(name=person['name'],
                                         card=[raw | {'text': raw['text'][:5000]} for raw in person['raw']])
                                    for identity in ids if (person := people.get(identity))])
-    return view, selected, binding, context
+    # Generation may publish a guide/body for this same chapter. An accepted
+    # expressive preference follows the matching plan and pre-chapter context.
+    generated = {f'story/{chapter}/single_chapter_guide.md', f'story/{chapter}/chapter.md'}
+    guidance_files = {name: digest(raw) if raw is not None else None for name, raw in data.items() if name not in generated}
+    guidance_files[outline] = digest(scoped_outline.encode())
+    guidance_binding = digest(encode([str(root), chapter, sorted(ids), view['revision'], preference['revision'],
+                                     guidance_files, confirmed_facts(False)]))
+    return view, selected, binding, guidance_binding, context
 
 
 def freeze(root, payload):
@@ -78,7 +96,7 @@ def freeze(root, payload):
         if (not isinstance(ids, list) or not 1 <= len(ids) <= 6
                 or any(not isinstance(item, str) for item in ids) or len(set(ids)) != len(ids)):
             raise ValueError('请选择 1–6 位不重复的人物。')
-    view, people, binding, context = _context(root, chapter, ids)
+    view, people, binding, guidance_binding, context = _context(root, chapter, ids)
     if view['revision'] != payload.get('expected_revision'):
         raise ValueError('人物档案已更新，请刷新后重新分析。')
     target = dict(chapter=chapter, character_ids=ids, revision=view['revision'], binding=binding)
@@ -94,9 +112,11 @@ def freeze(root, payload):
         system = contract + '只建议 selected_field 的单行新写法（最多 12000 字），格式为 {"replacement":"…"}。'
     else:
         target.update(scene=_bounded(payload.get('scene'), 4000, '场景'),
-                      baseline=_bounded(payload.get('baseline'), 12000, '对照原文'))
-        context.update(scene=target['scene'], baseline=target['baseline'],
-                       scoped_preferences=trial_preferences(root, chapter, ids, target['scene']))
+                      baseline=_bounded(payload.get('baseline'), 12000, '对照原文'),
+                      guidance_binding=guidance_binding, entry_id=payload.get('_request_id', ''))
+        guidance = trial_preferences(root, chapter, ids, target['scene'], exclude=target['entry_id'])
+        target['preference_digest'] = digest(encode(guidance))
+        context.update(scene=target['scene'], baseline=target['baseline'], scoped_preferences=guidance)
         system = (contract + '试写同一场景的另一种表达，保留 baseline 的事实、结果、视角和大致篇幅。'
                   '格式为 {"candidate":"…","checks":["待作者核对之处"]}，最多八条核对点。')
     return {'target': target, 'system': system, 'user': json.dumps({'说明': question, **context}, ensure_ascii=False)}
@@ -104,8 +124,23 @@ def freeze(root, payload):
 
 def is_current(root, target):
     try:
-        _, _, binding, _ = _context(workspace(root), target['chapter'], target['character_ids'])
-        return binding == target['binding']
+        root = workspace(root)
+        _, _, binding, _, _ = _context(root, target['chapter'], target['character_ids'])
+        if binding != target['binding']:
+            return False
+        if 'scene' in target:
+            guidance = trial_preferences(root, target['chapter'], target['character_ids'], target['scene'],
+                                         exclude=target['entry_id'])
+            return digest(encode(guidance)) == target['preference_digest']
+        return True
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+
+
+def _guidance_current(root, target):
+    try:
+        _, _, _, binding, _ = _context(workspace(root), target['chapter'], target['character_ids'])
+        return binding == target['guidance_binding']
     except (KeyError, TypeError, ValueError, OSError):
         return False
 
@@ -142,7 +177,15 @@ def finish(root, target, purpose, reply):
 def _preferences(root):
     data = _read(root, PREFERENCES)
     rows = json.loads(data) if data is not None else []
-    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict) or not isinstance(row.get('preference'), dict)
+        or not isinstance(row.get('binding'), dict)
+        or any(not isinstance(row['preference'].get(key), str)
+               for key in ('entry_id', 'chapter', 'scene', 'reason', 'carry_forward'))
+        or not isinstance(row['preference'].get('character_ids'), list)
+        or any(not isinstance(identity, str) for identity in row['preference']['character_ids'])
+        for row in rows
+    ):
         raise ValueError('试读认可记录格式无效。')
     return rows
 
@@ -152,6 +195,8 @@ def accept_trial(root, entry, preferred, reason, carry_forward):
     if entry.get('purpose') != 'dialogue_trial' or entry.get('status') != 'completed' or not entry.get('trial'):
         raise ValueError('请选择已完成的场景试读。')
     target = entry.get('character_source', {})
+    if target.get('entry_id') != entry.get('id'):
+        raise ValueError('试读记录与其请求不匹配。')
     if preferred not in {'baseline', 'candidate'}:
         raise ValueError('请选择希望采用的对照版本。')
     reason = _bounded(reason, 2000, '采用理由')
@@ -168,33 +213,71 @@ def accept_trial(root, entry, preferred, reason, carry_forward):
         preference = {key: target[key] for key in ('chapter', 'character_ids', 'scene')}
         preference.update(entry_id=entry['id'], preferred=preferred, reason=reason, carry_forward=carry_forward,
                           created_at=datetime.now(timezone.utc).isoformat())
-        binding = {key: target[key] for key in ('chapter', 'character_ids', 'binding')}
+        binding = {key: target[key] for key in ('chapter', 'character_ids', 'guidance_binding')}
+        preference['production_match'] = _plan_matches(root, _production_plan(root, target['chapter']), preference)
         atomic(source_path(root, PREFERENCES), encode([{'preference': preference, 'binding': binding}, *records]))
     return preference
 
 
-def trial_preferences(root, chapter, ids, scene):
+def trial_preferences(root, chapter, ids, scene, *, exclude=''):
     """Supply only author guidance to subsequent matching scene trials."""
     return [{key: preference[key] for key in ('reason', 'carry_forward')}
             for row in _preferences(root)
             if (preference := row['preference'])['chapter'] == chapter
+            and preference['entry_id'] != exclude
             and preference['scene'] == scene and set(preference['character_ids']) == set(ids)
-            and is_current(root, row['binding'])][:8]
+            and _guidance_current(root, row['binding'])][:8]
 
 
-def planned_preferences(root, chapter, plan):
+def _production_plan(root, chapter):
+    story, policy = sibling('story_support'), sibling('prose_policy')
+    adopted = story.load(root, f'planning/chapters/{chapter}.json')
+    if adopted:
+        try:
+            story.verify(root, adopted['source_hashes'])
+            return story.render_plan(adopted)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return story.chapter_outline(root, chapter, policy.effective_text(root, 'outline/near_term_outline.md'))
+
+
+def _scene_casts(plan):
+    scenes, active = {}, None
+    for line, _ in _lines(plan, 0):
+        if heading := HEADING.fullmatch(line):
+            active = None
+            if scene := SCENE.fullmatch(heading[2]):
+                active = []
+                scenes.setdefault(scene[1].strip(), []).append(active)
+            continue
+        if active is not None and (field := FIELD.fullmatch(line)):
+            label = (field['bold'] or field['bold_inside'] or field['label']).strip()
+            if label in CAST:
+                active.append([name.strip() for name in re.split(r'[、,，;；]', field['value'])])
+    return {title: parts[0][0] for title, parts in scenes.items()
+            if len(parts) == 1 and len(parts[0]) == 1}
+
+
+def _plan_matches(root, plan, preference):
+    cast = _scene_casts(plan).get(preference['scene'], [])
+    names = {person['id']: person['name'] for person in inventory(root)[0]['characters']}
+    selected = [names.get(identity) for identity in preference['character_ids']]
+    return bool(cast) and len(cast) == len(selected) and set(cast) == set(selected)
+
+
+def planned_preferences(root, chapter):
     """Use author guidance only when this chapter plan identifies its scene and cast."""
     root = workspace(root)
     try:
         rows = _preferences(root)
     except (ValueError, OSError):
         return []
-    if not rows or not plan:
+    if not rows:
         return []
+    plan = _production_plan(root, chapter)
     people = {person['id']: person['name'] for person in inventory(root)[0]['characters']}
     return [dict(scene=preference['scene'], people=[people[identity] for identity in preference['character_ids']],
                  carry_forward=preference['carry_forward'])
             for row in rows if (preference := row['preference'])['chapter'] == chapter
-            and preference['scene'] in plan
-            and all(identity in people and people[identity] in plan for identity in preference['character_ids'])
-            and is_current(root, row['binding'])][:8]
+            and _plan_matches(root, plan, preference)
+            and _guidance_current(root, row['binding'])][:8]

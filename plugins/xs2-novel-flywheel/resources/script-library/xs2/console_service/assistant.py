@@ -223,18 +223,24 @@ class NovelAssistantJobs:
         if check_freshness and self.character_loader:
             for entry in entries:
                 if entry.get('status') == 'completed' and entry.get('purpose') in CHARACTER_PURPOSES:
-                    entry['stale'] = not self.character_loader().is_current(root, entry.get('character_source', {}))
+                    center = self.character_loader()
+                    entry['stale'] = not center.is_current(root, entry.get('character_source', {}))
+                    if entry.get('suggestion') and not center.authentic_preview(root, entry['suggestion']):
+                        entry['stale'] = True
         return entries
 
     def start(self, root: Path, request_id: str, payload: dict) -> dict:
         root = root.resolve()
         entries = self.history(root)
+        purpose = payload.get('purpose', 'general')
         existing = next((item for item in entries if item["id"] == request_id), None)
         if existing:
+            if existing.get('purpose', 'general') != purpose:
+                raise ValueError('该请求编号已用于其他分析，请重新发起请求。')
             return existing
         active = next((item for item in entries if item.get("status") == "running"), None)
         if active:
-            if payload.get('purpose') in CHARACTER_PURPOSES:
+            if purpose in CHARACTER_PURPOSES or active.get('purpose', 'general') != purpose:
                 raise ValueError('本书已有正在运行的助手分析。')
             return active
         entry = {"id": request_id, "question": payload["question"], "stage": payload.get("stage", ""),
@@ -246,7 +252,7 @@ class NovelAssistantJobs:
         if entry['purpose'] in CHARACTER_PURPOSES:
             if not self.character_loader or not payload.get('_model_override'):
                 raise ValueError('当前人物功能没有可用的写手模型。')
-            frozen = self.character_loader().freeze(root, payload)
+            frozen = self.character_loader().freeze(root, payload | {'_request_id': request_id})
             entry['character_source'] = frozen['target']
             entry['chapter'] = frozen['target']['chapter']
             payload = payload | {'_character_task': frozen}
@@ -284,7 +290,8 @@ class NovelAssistantJobs:
         context["之前的讨论"] = [{"问题": item["question"], "回答": item["reply"][:6000],
                                  "顾问方案": item.get('advisor_sections', {})}
                                  for item in self.history(root)
-                                 if item.get("status") == "completed"
+                                     if item.get("status") == "completed"
+                                     and item.get('purpose') not in CHARACTER_PURPOSES
                                  and item.get('scope', 'chapter') == payload.get('scope', 'chapter')
                                  and (payload.get('scope') == 'book'
                                       or (payload.get('scope') == 'volume' and item.get('volume', '1') == str(payload.get('project', {}).get('values', {}).get('volume_number', '1')))

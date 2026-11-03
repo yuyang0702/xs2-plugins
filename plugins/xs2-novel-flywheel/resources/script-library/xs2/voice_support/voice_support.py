@@ -1,9 +1,33 @@
 """Plugin-owned voice documents. Templates do not infer character psychology."""
 from pathlib import Path
+from functools import lru_cache, wraps
 import hashlib
+import importlib.util
 import re
 import tempfile
 import unicodedata
+
+
+@lru_cache(maxsize=1)
+def _character_edits():
+    entry = Path(__file__).resolve().parent.parent / 'character_center' / 'character_center.py'
+    if not entry.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location('voice_character_center', entry)
+    center = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(center)
+    return center
+
+
+def _serial_mutation(operation):
+    @wraps(operation)
+    def run(root, *args, **kwargs):
+        center = _character_edits()
+        if center is None:
+            return operation(root, *args, **kwargs)
+        with center.legacy_mutation(root):
+            return operation(root, *args, **kwargs)
+    return run
 
 
 def _file(root: Path, name: str) -> Path:
@@ -131,6 +155,7 @@ def _check_revision(root, expected):
         raise ValueError('角色声音或人物档案已更新，请保留当前编辑，刷新后重新核对再保存。')
 
 
+@_serial_mutation
 def save(root: Path, content: str, expected_revision=None) -> dict:
     _validate_content(content)
     _check_revision(root, expected_revision)
@@ -139,6 +164,7 @@ def save(root: Path, content: str, expected_revision=None) -> dict:
     return {'status': 'success', 'file_path': str(target)}
 
 
+@_serial_mutation
 def save_character(root: Path, character_id: str, content: str, expected_revision: str) -> dict:
     _validate_content(content)
     if not expected_revision:
@@ -181,6 +207,7 @@ def save_character(root: Path, character_id: str, content: str, expected_revisio
     return {'status': 'success', 'character_id': saved_id, 'file_path': str(target)}
 
 
+@_serial_mutation
 def generate(root: Path) -> dict:
     target = _file(root, 'character_voice.md')
     if target.exists():

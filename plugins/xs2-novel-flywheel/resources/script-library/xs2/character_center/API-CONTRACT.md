@@ -15,7 +15,7 @@
 ## 局部修改与历史
 
 - `POST /api/humanware/character-preview` 送 `{workflow_id,workspace,character_id,section_id,source_id,expected_revision,replacement}`，expected_revision 使用 characters 的 revision。回退可用 `{workflow_id,workspace,character_id,expected_revision,history_id}` 送同一入口。
-- 返回 `{preview_id,revision,source_revision,source_id,character_id,section_id,before,after,line,impact,history_id}`。impact 是文本，普通预览的 history_id 为 null。助手建议的预览另带 `assistant_source`，以便确认时复查试写依据。该对象原样回传。
+- 返回 `{preview_id,revision,source_revision,source_id,character_id,section_id,before,after,line,impact,history_id}`。impact 是文本，普通预览的 history_id 为 null。助手建议的预览另带 `assistant_source`，以便确认时复查试写依据。该对象原样回传。凭证由当前服务进程签名，服务重启或升级后须重新预览。
 - `POST /api/humanware/character-apply` 送 `{workflow_id,workspace,expected_revision,preview}`，preview 是未改动的完整预览。返回 `{status:"success",revision,entry}`。
 - `GET /api/humanware/character-history` 接受可省略的 character_id。返回 `{entries}`，每条为 `{id,created_at,character_id,section_id,source_id,before,after,revision_before,revision_after,source_revision_before,source_revision_after,restored_from}`。最新记录在前。
 
@@ -29,7 +29,7 @@
 
 - `POST /api/novel-console/assistant` 送 `{workflow_id,workspace,request_id,purpose,question,chapter,character_id?,section_id?,character_ids?,baseline?,scene?,expected_revision}`。request_id 是 UUID，同次提交重发沿用 ID，失败后主动重试使用新 ID。character_edit 需要 character_id、section_id，dialogue_trial 需要 character_ids、baseline、scene。expected_revision 为人物总修订；chapter 为选择的章节。
 - 返回 `{success:true,entry}`。轮询 `GET /api/novel-console/assistant/history?…` 得 `{entries}`。沿用助手条目的 id、purpose、chapter、status（running/completed/failed）、created_at、finished_at、attempt、message、error_code、model、elapsed_seconds。成功 character_edit 的 suggestion 是完整人物预览，正常确认流程采用。成功 dialogue_trial 的 trial 为 `{chapter,character_ids,scene,baseline,candidate,checks}`，checks 是文本数组。已过期的完成结果在读取时带 `stale:true`。
-- `POST /api/novel-console/assistant/trial-accept` 送 `{workflow_id,workspace,entry_id,preferred,reason,carry_forward}`，返回 `{status:"success",preference}`。preference 为 `{entry_id,chapter,character_ids,scene,preferred,reason,carry_forward,created_at}`。preferred 为 baseline 或 candidate。认可仅保存这一场景的表达参考。
+- `POST /api/novel-console/assistant/trial-accept` 送 `{workflow_id,workspace,entry_id,preferred,reason,carry_forward}`，返回 `{status:"success",preference}`。preference 为 `{entry_id,chapter,character_ids,scene,preferred,reason,carry_forward,created_at,production_match}`。preferred 为 baseline 或 candidate。`production_match=false` 表示已保存为同场景后续试读参考，目前大纲没有可唯一定位的场景及出场人物。生产使用需由本章大纲以 `### 场景：收伞` 一类的标题和同段 `出场人物：阿杏、掌柜` 精确绑定。
 
 示例原件 `meta/character_voice.md` 内容如下。查询阿杏后可选中“表达倾向”，预览把原文替换为“与熟人说到手艺时会多解释几句”，再带同一预览和版本确认。
 

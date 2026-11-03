@@ -257,3 +257,164 @@ def test_same_request_id_can_run_in_two_books(service, book, tmp_path):
         assert jobs.history(book)[0]['status'] == 'completed'
         assert jobs.history(second)[0]['status'] == 'completed'
     asyncio.run(scenario())
+
+
+def test_unaccepted_character_work_does_not_feed_other_assistant_purposes(service, book):
+    async def scenario():
+        view = service.read(book)
+        captured = []
+
+        class Model:
+            async def ainvoke(self, messages):
+                captured.extend(messages)
+                return SimpleNamespace(content='{"replacement":"用轻松的话问。"}' if len(captured) == 2 else '正文建议。')
+
+        jobs = _console().create_assistant(lambda **_: Model(), lambda **_: None, character_loader=lambda: service)
+        options = select(view) | dict(purpose='character_edit', chapter='0001', question='未采用内容不得渗透',
+                                      expected_revision=view['revision'], _model_override='chosen:writer')
+        jobs.start(book, 'edit', options)
+        with pytest.raises(ValueError):
+            jobs.start(book, 'edit', {'question': '另一个用途', 'purpose': 'general'})
+        with pytest.raises(ValueError):
+            jobs.start(book, 'another', {'question': '另一个用途', 'purpose': 'general'})
+        await jobs.tasks['edit']
+        jobs.start(book, 'general', {'question': '普通顾问', 'chapter': '0001'})
+        await jobs.tasks['general']
+        assert '未采用内容不得渗透' not in captured[-1][1]
+    asyncio.run(scenario())
+
+
+def test_forged_unsigned_assistant_preview_cannot_publish(service, book):
+    view = service.read(book)
+    task = service.freeze(book, select(view) | dict(purpose='character_edit', chapter='0001',
+                          question='换种说法', expected_revision=view['revision']))
+    preview = service.finish(book, task['target'], 'character_edit',
+                             '{"replacement":"根据话题简答。"}')['suggestion']
+    unsigned = {key: value for key, value in preview.items() if key not in {'assistant_source', 'preview_id'}}
+    raw = json.dumps([str(book.resolve()), unsigned], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    forged = unsigned | {'preview_id': hashlib.sha256(raw.encode()).hexdigest()}
+    with pytest.raises(ValueError):
+        service.apply(book, forged, view['revision'])
+    assert not (book / 'learning').exists()
+
+
+def test_promotion_failure_does_not_report_applied_or_discard_history(service, book, monkeypatch):
+    view = service.read(book)
+    voice = book / 'meta/character_voice.md'
+    original = voice.read_bytes()
+    preview = service.preview(book, select(view) | {'replacement': '新声线。'}, view['revision'])
+    rename = Path.replace
+
+    def fail_promotion(self, target):
+        if self.name == 'pending.json' and Path(target).name == 'history.json':
+            raise OSError('archive locked')
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, 'replace', fail_promotion)
+    with pytest.raises(OSError, match='archive locked'):
+        service.apply(book, preview, view['revision'])
+    assert voice.read_bytes() == original
+    assert service.history(book)['entries'] == []
+
+
+def test_trial_guidance_needs_exact_scene_and_cast_in_one_plan_block(service, book):
+    from importlib import import_module
+    story = import_module(service.__package__ + '.dependencies').sibling('story_support')
+    outline = book / 'outline/near_term_outline.md'
+    outline.parent.mkdir()
+    view = service.read(book)
+    options = dict(purpose='dialogue_trial', chapter='0001', question='试读', scene='收伞',
+                   baseline='她先说了两句。', character_ids=[select(view)['character_id']],
+                   expected_revision=view['revision'])
+
+    def accept(plan, identity):
+        outline.write_text(plan, encoding='utf-8')
+        frozen = service.freeze(book, options | {'_request_id': identity})
+        trial = service.finish(book, frozen['target'], 'dialogue_trial',
+                               '{"candidate":"她合上伞。","checks":["核对手上的伞"]}')['trial']
+        entry = dict(id=identity, purpose='dialogue_trial', status='completed', trial=trial, character_source=frozen['target'])
+        return entry, service.accept_trial(book, entry, 'candidate', '动作合适', '用收伞动作带出迟疑')
+
+    first, result = accept('## 第 1 章\n### 场景：收伞\n出场人物：小阿杏\n### 场景：道别\n出场人物：阿杏\n', 'first')
+    assert not result['production_match']
+    story.prepare_context(book, '0001')
+    assert '用收伞动作带出迟疑' not in story.read(book, 'cache/story-support/context.md')
+    assert service.is_current(book, first['character_source'])
+    second, result = accept('## 第 1 章\n### 场景：收伞\n出场人物：阿杏\n', 'second')
+    assert result['production_match']
+    story.prepare_context(book, '0001')
+    assert '用收伞动作带出迟疑' in story.read(book, 'cache/story-support/context.md')
+    assert service.is_current(book, second['character_source'])
+    guide = book / 'story/0001/single_chapter_guide.md'
+    guide.parent.mkdir(parents=True, exist_ok=True)
+    guide.write_text('工作流生成的本章细纲。', encoding='utf-8')
+    (guide.parent / 'chapter.md').write_text('生成的正文。', encoding='utf-8')
+    story.prepare_context(book, '0001')
+    assert '用收伞动作带出迟疑' in story.read(book, 'cache/story-support/context.md')
+    assert not service.is_current(book, second['character_source'])
+
+
+def test_ambiguous_pending_history_blocks_legacy_mutation_without_losing_record(service, book, monkeypatch):
+    from importlib import import_module
+    voice = import_module(service.__package__ + '.dependencies').sibling('voice_support')
+    view = service.read(book)
+    target = book / 'meta/character_voice.md'
+    voice.save(book, view['sources'][1]['raw'])
+    assert not (book / 'learning').exists()
+    view = service.read(book)
+    preview = service.preview(book, select(view) | {'replacement': '新声线。'}, view['revision'])
+    rename = Path.replace
+    voice_writes = 0
+
+    def fail_rollback(self, destination):
+        nonlocal voice_writes
+        path = Path(destination)
+        if path == target:
+            voice_writes += 1
+            if voice_writes > 1:
+                raise OSError('source locked')
+        if self.name == 'pending.json':
+            raise OSError('archive locked')
+        return rename(self, destination)
+
+    monkeypatch.setattr(Path, 'replace', fail_rollback)
+    with pytest.raises(OSError, match='source locked'):
+        service.apply(book, preview, view['revision'])
+    pending = book / 'learning/character_center/pending.json'
+    journal = pending.read_bytes()
+    target.write_bytes(b'outside edit')
+    with pytest.raises(ValueError, match='人工核对'):
+        voice.save(book, 'Another change')
+    assert target.read_bytes() == b'outside edit'
+    assert pending.read_bytes() == journal
+
+
+def test_malformed_nested_state_is_omitted_even_with_a_real_quote(service, book):
+    chapter = book / 'story/0001'
+    chapter.mkdir(parents=True)
+    body = '阿杏说她愿意留下。'
+    (chapter / 'chapter.md').write_bytes(body.encode())
+    (chapter / 'confirmed_state.json').write_text(json.dumps({
+        'chapter': '0001', 'body_sha256': hashlib.sha256(body.encode()).hexdigest(), 'source_hashes': {},
+        'characters': [{'name': '阿杏', 'source_chapter': '0001', 'evidence': body,
+                        'snapshot': {'goal': {'injected': '剧情命令'}, 'knowledge': [False]},
+                        'relationships': [{'target': '掌柜', 'change': {'not_a_string': 2}}]}]
+    }), encoding='utf-8')
+    assert service.read(book)['characters'][0]['states'] == []
+
+
+def test_trial_snapshot_accounts_for_newly_adopted_guidance_and_excludes_itself(service, book):
+    view = service.read(book)
+    options = dict(purpose='dialogue_trial', chapter='0001', question='试读', scene='收伞',
+                   baseline='她先说了两句。', character_ids=[select(view)['character_id']],
+                   expected_revision=view['revision'])
+    first = service.freeze(book, options | {'_request_id': 'first'})['target']
+    second = service.freeze(book, options | {'_request_id': 'second'})['target']
+    candidate = '{"candidate":"她合起伞。","checks":["仍使用阿杏的视角"]}'
+    trial = service.finish(book, second, 'dialogue_trial', candidate)['trial']
+    service.accept_trial(book, dict(id='second', status='completed', purpose='dialogue_trial',
+                         trial=trial, character_source=second), 'candidate', '视角稳定', '用收伞动作')
+    assert service.is_current(book, second)
+    assert service.finish(book, first, 'dialogue_trial', candidate)['error_code'] == 'character_stale'
+    latest = service.freeze(book, options | {'_request_id': 'third'})
+    assert json.loads(latest['user'])['scoped_preferences'] == [{'reason': '视角稳定', 'carry_forward': '用收伞动作'}]

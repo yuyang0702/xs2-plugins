@@ -627,8 +627,7 @@ def prepare_context(root, chapter, check=False, *, task_id=None):
             center_spec = importlib.util.spec_from_file_location('xs2_story_character_center', entry)
             center = importlib.util.module_from_spec(center_spec)
             center_spec.loader.exec_module(center)
-            planned = render_plan(adopted) if adopted and not adopted_note else chapter_outline(root, chapter)
-            guidance = center.planned_preferences(root, chapter, planned)
+            guidance = center.planned_preferences(root, chapter)
             if guidance:
                 text += '\n\n## 作者采用的场景表达参考\n仅限下列场景和人物。按情境参考，不复述样句，不作为人物或世界事实。\n'
                 text += readable(guidance)
