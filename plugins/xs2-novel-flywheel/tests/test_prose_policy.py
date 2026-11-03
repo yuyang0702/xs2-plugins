@@ -472,3 +472,15 @@ def test_local_archive_loads_policy_from_the_exact_prepared_sibling(tmp_path, nv
     book = tmp_path / "book"
     book.mkdir()
     assert module._policy().read(book)["mode"] == "inherit"
+def test_override_only_withdrawal_preserves_saved_mode_and_checks_revision(book):
+    service = policy()
+    old = approve(service, book)
+    saved = service.save(book, {"mode": "inherit"}, old["revision"])
+    with pytest.raises(ValueError, match="叙述偏好已变化"):
+        service.save(book, {"overrides": []}, old["revision"])
+    assert service.read(book) == saved
+    withdrawn = service.save(book, {"overrides": []}, saved["revision"])
+    assert withdrawn["mode"] == "inherit" and withdrawn["overrides"] == []
+    active = approve(service, book)
+    still_active = service.save(book, {"overrides": []}, active["revision"])
+    assert still_active["mode"] == "narrative_led" and still_active["overrides"] == []

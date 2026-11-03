@@ -29,6 +29,7 @@
 
 - `POST /api/novel-console/assistant` 送 `{workflow_id,workspace,request_id,purpose,question,chapter,character_id?,section_id?,character_ids?,baseline?,scene?,expected_revision}`。request_id 是 UUID，同次提交重发沿用 ID，失败后主动重试使用新 ID。character_edit 需要 character_id、section_id，dialogue_trial 需要 character_ids、baseline、scene。expected_revision 为人物总修订；chapter 为选择的章节。
 - 返回 `{success:true,entry}`。轮询 `GET /api/novel-console/assistant/history?…` 得 `{entries}`。沿用助手条目的 id、purpose、chapter、status（running/completed/failed）、created_at、finished_at、attempt、message、error_code、model、elapsed_seconds。成功 character_edit 的 suggestion 是完整人物预览，正常确认流程采用。成功 dialogue_trial 的 trial 为 `{chapter,character_ids,scene,baseline,candidate,checks}`，checks 是文本数组。已过期的完成结果在读取时带 `stale:true`。
+- 已保存的人物助手条目包含冻结的 character_source。恢复记录时用其 chapter、revision、character_ids 绑定范围。字段建议还含 character_id、section_id、source_id；场景试读还含 scene。读取历史不会重新提交分析。选择运行中的记录后按其请求 ID 查询，已失效的结果需重新分析或重新预览。
 - `POST /api/novel-console/assistant/trial-accept` 送 `{workflow_id,workspace,entry_id,preferred,reason,carry_forward}`，返回 `{status:"success",preference}`。preference 为 `{entry_id,chapter,character_ids,scene,preferred,reason,carry_forward,created_at,production_match}`。preferred 为 baseline 或 candidate。`production_match=false` 表示已保存为同场景后续试读参考，目前大纲没有可唯一定位的场景及出场人物。生产使用需由本章大纲以 `### 场景：收伞` 一类的标题和同段 `出场人物：阿杏、掌柜` 精确绑定。
 
 示例原件 `meta/character_voice.md` 内容如下。查询阿杏后可选中“表达倾向”，预览把原文替换为“与熟人说到手艺时会多解释几句”，再带同一预览和版本确认。

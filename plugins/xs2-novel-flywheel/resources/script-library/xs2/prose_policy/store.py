@@ -195,18 +195,18 @@ def _selection(root, payload, doc, revision):
 def save(root, payload, expected_revision):
     root = workspace(root)
     if (not isinstance(payload, dict) or set(payload) - {"mode", "overrides"}
-            or not isinstance(payload.get("mode"), str) or payload["mode"] not in MODES):
+            or ("mode" in payload and (not isinstance(payload["mode"], str) or payload["mode"] not in MODES))):
         raise ValueError("叙述模式仅支持 inherit 或 narrative_led。")
     doc, revision = _load(root)
     _expect_revision(expected_revision, revision)
     overrides = _selection(root, payload, doc, revision)
-    if payload["mode"] == doc["mode"] and overrides == doc["overrides"]:
+    if payload.get("mode", doc["mode"]) == doc["mode"] and overrides == doc["overrides"]:
         return _view(root, doc, revision)
     with _write_lock(root):
         doc, revision = _load(root)
         _expect_revision(expected_revision, revision)
         overrides = _selection(root, payload, doc, revision)
-        updated = {"schema": 1, "mode": payload["mode"], "overrides": overrides,
+        updated = {"schema": 1, "mode": payload.get("mode", doc["mode"]), "overrides": overrides,
                    "history": [*doc["history"], {
                        "superseded_at": datetime.now(timezone.utc).isoformat(),
                        "revision": revision, "mode": doc["mode"], "overrides": doc["overrides"],
