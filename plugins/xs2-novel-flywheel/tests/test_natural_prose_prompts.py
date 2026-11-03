@@ -159,3 +159,38 @@ def test_rhythm_statistic_alone_cannot_become_an_automatic_rewrite_order():
     }]}, body)
     assert review["blocking_issues"] == []
     assert review["issues"][0]["evidence_status"] == "unverified"
+
+
+@pytest.mark.parametrize('agent,section_name', [
+    ('novel-single-writer', 'sw_self_edit'),
+    ('novel-dialogue-writer', 'natural_prose_contract'),
+    ('novel-storyboard-integrator', 'niw_polish'),
+    ('novel-self-critic', 'nsc_dimensions'),
+    ('xs2-reader-sim', 'payoff_and_naturalness'),
+    ('novel-polisher', 'natural_prose_contract'),
+    ('novel-professional-polisher', 'natural_prose_contract'),
+])
+def test_cross_paragraph_semantic_audit_reaches_each_production_role_once(monkeypatch, agent, section_name):
+    """Check effective role/self-edit delivery, not the literary score of any sample."""
+    import copy
+    from src.agent.definition import AgentDefinition
+    from src.session.prompt_builder import PromptBuilder
+
+    agents = json.loads((RESOURCES / 'agents.json').read_text(encoding='utf-8'))['agents']
+    prompts = json.loads((RESOURCES / 'prompts.json').read_text(encoding='utf-8'))['agents']
+    definition = AgentDefinition(agent_type=agent, **agents[agent])
+    monkeypatch.setattr('src.agent.definition.get_agent_definition', lambda _: definition)
+    sections = prompts[definition.prompt_template]['sections']
+    section = next(s for s in sections if s['name'] == section_name)
+    marker = '## 跨段语义回读'
+    assert marker in section['content'], (agent, section_name)
+    assert section.get('enabled', True)
+
+    class Resources:
+        def get_sections(self, template):
+            assert template == definition.prompt_template
+            return copy.deepcopy(sections)
+
+    actual = PromptBuilder(Resources()).build(agent, is_workflow=True, include_skills=False, include_rules=False)
+    assert section['content'] in actual
+    assert actual.count(marker) == 1

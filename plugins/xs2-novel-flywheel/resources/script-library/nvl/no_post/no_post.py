@@ -59,6 +59,33 @@ def render_full(data):
     return clean("\n".join(lines)) + "\n"
 
 
+
+def validate_output(data, expected_volume=None):
+    """Reject unusable output before any published outline or cache is changed."""
+    from jsonschema import Draft202012Validator
+    # Historical renderers accept missing descriptive fields and render placeholders.
+    # The generating node requires usable text; retain old archived input compatibility.
+    schema = json.loads(json.dumps(OUTPUT_SCHEMA))
+    schema["properties"]["chapters"]["items"]["required"] = ["number"]
+    Draft202012Validator(schema).validate(data)
+    if data.get("volume_number") is not None and expected_volume is not None and data["volume_number"] != expected_volume:
+        raise ValueError("大纲卷号与请求卷号不一致")
+    chapter_range = data.get("chapter_range")
+    if chapter_range and chapter_range["start"] > chapter_range["end"]:
+        raise ValueError("章节范围起点不得大于终点")
+    chapters = data["chapters"]
+    numbers = [chapter["number"] for chapter in chapters]
+    if numbers != sorted(set(numbers)):
+        raise ValueError("章节号必须递增且不重复")
+    if chapter_range and numbers and (numbers[0] < chapter_range["start"] or numbers[-1] > chapter_range["end"]):
+        raise ValueError("章节号超出声明范围")
+    if any(point["chapter"] not in numbers for point in data.get("decision_points", []) if "chapter" in point):
+        raise ValueError("决策点章节不在本次规划章节中")
+
+
+OUTPUT_SCHEMA = {'type': 'object', 'properties': {'volume_number': {'type': 'integer', 'minimum': 1}, 'is_new_volume': {'type': 'boolean'}, 'arc_name': {'type': 'string'}, 'chapter_range': {'type': 'object', 'properties': {'start': {'type': 'integer', 'minimum': 1}, 'end': {'type': 'integer', 'minimum': 1}}, 'required': ['start', 'end']}, 'chapters': {'type': 'array', 'items': {'type': 'object', 'properties': {'number': {'type': 'integer', 'minimum': 1}, 'title': {'type': 'string', 'minLength': 1}, 'summary': {'type': 'string', 'minLength': 1}, 'rhythm': {'type': 'string'}, 'time_advance': {'type': 'string'}}, 'required': ['number', 'title', 'summary']}}, 'character_arcs': {'type': 'array', 'items': {'type': 'object', 'properties': {'name': {'type': 'string'}, 'from': {'type': 'string'}, 'to': {'type': 'string'}, 'change': {'type': 'string'}}, 'required': []}}, 'decision_points': {'type': 'array', 'items': {'type': 'object', 'properties': {'chapter': {'type': 'integer', 'minimum': 1}, 'character': {'type': 'string'}, 'choice': {'type': 'string'}, 'impact': {'type': 'string'}}, 'required': []}}}, 'required': ['chapters'], 'anyOf': [{'properties': {'chapters': {'maxItems': 0}}}, {'required': ['volume_number'], 'properties': {'chapters': {'minItems': 1}}}]}
+
+
 def main():
     parser = argparse.ArgumentParser(description="NO 输出渲染")
     parser.add_argument("--input", required=True, help="no_output.json 路径")
@@ -67,6 +94,7 @@ def main():
     args = parser.parse_args()
 
     data = load_json(args.input)
+    validate_output(data, args.volume_number)
     chapters = data.get("chapters", [])
     if args.scope == "short_full" and chapters:
         if len(chapters) > 1:
@@ -85,6 +113,22 @@ def main():
     if not chapters:
         print("[OK] 无新增章，跳过")
         return
+
+    volume_path = "cache/vo/volume.json"
+    if os.path.isfile(volume_path):
+        volume = load_json(volume_path)
+        if volume.get("volume_number") != data.get("volume_number"):
+            raise ValueError("近纲卷号与已确认卷纲不一致")
+        bounds = volume.get("chapter_range", {})
+        if chapters[0]["number"] < bounds.get("start", 1) or chapters[-1]["number"] > bounds.get("end", chapters[-1]["number"]):
+            raise ValueError("近纲章节号超出已确认卷纲范围")
+    previous_path = "cache/no/near_term.json"
+    if not data.get("is_new_volume", False) and os.path.isfile(previous_path):
+        previous = load_json(previous_path)
+        if previous.get("volume_number") == data.get("volume_number"):
+            previous_numbers = [chapter["number"] for chapter in previous.get("chapters", [])]
+            if previous_numbers and chapters[0]["number"] <= max(previous_numbers):
+                raise ValueError("追加近纲不得重复或倒退既有章节号")
 
     outpath = "outline/near_term_outline.md"
     os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)

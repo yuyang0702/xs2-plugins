@@ -15,6 +15,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 
@@ -85,8 +86,60 @@ def load_json(path: str) -> dict:
 #  character 模式：角色渲染
 # ═══════════════════════════════════════════════════════════
 
+def _v2_text(value):
+    if isinstance(value, str):
+        if any(re.match(r'^[ \t]{0,3}#{1,6}(?:[ \t]|$)', line) for line in value.splitlines()):
+            raise ValueError('v2角色文本不能包含Markdown标题；请改为普通段落，角色分段由渲染器生成')
+        if any(re.match(r'^[ \t]{0,3}(?:`{3,}|~{3,})', line) for line in value.splitlines()):
+            raise ValueError('v2角色文本不能包含Markdown代码围栏；请改为普通段落，避免隐藏后续角色')
+    elif isinstance(value, dict):
+        for item in value.values():
+            _v2_text(item)
+    elif isinstance(value, list):
+        for item in value:
+            _v2_text(item)
+
+
+def _v2_identity(record, *, require_name=False):
+    if require_name or 'name' in record:
+        name = record.get('name')
+        if (not isinstance(name, str) or not name.strip() or len(name) > 60
+                or re.search(r'[\x00-\x1f\x85\u2028\u2029/\\<>:"|?*#]', name) or name.strip() in {'.', '..'}):
+            raise ValueError('v2人物姓名name必须是非空安全字符串，不能包含路径或标题字符')
+    aliases = record.get('aliases', [])
+    if not isinstance(aliases, list) or any(not isinstance(alias, str) or not alias.strip()
+            or re.search(r'[\x00-\x1f\x85\u2028\u2029]', alias) for alias in aliases):
+        raise ValueError('v2的aliases必须是非空单行字符串数组')
+    if 'true_name' in record and (not isinstance(record['true_name'], str)
+            or re.search(r'[\x00-\x1f\x85\u2028\u2029]', record['true_name'])):
+        raise ValueError('v2的true_name必须是单行字符串；真名未知可留空')
+
+
+def _card_v2(record: dict) -> bool:
+    if 'card_schema' not in record:
+        return False
+    if record['card_schema'] != 'xs2.character.v2':
+        raise ValueError('不支持的card_schema；请使用xs2.character.v2或保留无版本旧档')
+    if 'boundary' in record:
+        raise ValueError('v2不能混用旧boundary；请明确区分personality与plot_constraints')
+    for key in ('facts', 'plot_constraints'):
+        entries = record.get(key)
+        if not isinstance(entries, list) or any(not isinstance(entry, str) or not entry.strip() for entry in entries):
+            raise ValueError(f'v2的{key}必须是非空字符串组成的数组（数组可为空）')
+    if not isinstance(record.get('personality'), str) or not record['personality'].strip():
+        raise ValueError('v2的personality必须是非空字符串')
+    _v2_identity(record)
+    _v2_text(record)
+    return True
+
+
 def render_character(name: str, true_name: str, aliases: list, skeleton: dict, beliefs: list, deep: dict) -> str:
     """将单个角色的所有维度渲染为 Markdown section。"""
+    skeleton_v2, deep_v2 = _card_v2(skeleton), _card_v2(deep)
+    if skeleton_v2:
+        _v2_identity(skeleton, require_name=True)
+        _v2_identity({'name': name, 'true_name': true_name, 'aliases': aliases}, require_name=True)
+    versioned = [record for record, is_v2 in ((skeleton, skeleton_v2), (deep, deep_v2)) if is_v2]
     # 标题：name 为主，有别名时追加
     header = name
     if aliases:
@@ -103,6 +156,27 @@ def render_character(name: str, true_name: str, aliases: list, skeleton: dict, b
         parts.append(f"> 真名：{true_name}")
     elif not true_name:
         parts.append("> 真名未知")
+
+    facts = []
+    for record in (skeleton, deep):
+        for fact in record.get('facts', []):
+            if fact not in facts:
+                facts.append(fact)
+    if versioned or facts:
+        parts.append(_h(3, "已确认事实"))
+        parts.extend(f"- {fact}" for fact in facts)
+    if versioned:
+        parts.append(_h(3, "性格与关系"))
+        if skeleton_v2:
+            parts.append(f"- 骨架性格参考：{skeleton['personality']}")
+        if deep_v2 and (not skeleton_v2 or deep['personality'] != skeleton['personality']):
+            parts.append(f"- 深化性格参考：{deep['personality']}")
+    for key, label in [('role', '身份'), ('want', '当前欲望'), ('fear', '顾虑'),
+                       ('boundary', '价值底线'), ('contradiction', '内在矛盾')]:
+        value = skeleton.get(key)
+        if value:
+            display = '；'.join(value) if isinstance(value, list) else value
+            parts.append(f"- {label}：{display}")
 
     # ── A 层：世界烙印 ──
     sk = skeleton
@@ -150,7 +224,7 @@ def render_character(name: str, true_name: str, aliases: list, skeleton: dict, b
     parts.append(f"- 暴露后果：{sec.get('exposure_consequence', '—')}")
 
     bl = deep.get("bottom_line", {})
-    parts.append(_h(4, "不可触碰的底线"))
+    parts.append(_h(4, "个人价值倾向（依当前情境理解）" if deep_v2 else "不可触碰的底线"))
     parts.append(f"- 触犯条件：{bl.get('condition', '—')}")
     parts.append(f"- 来源：{bl.get('source', '—')}")
     parts.append(f"- 反应：{bl.get('reaction_when_crossed', '—')}")
@@ -178,8 +252,8 @@ def render_character(name: str, true_name: str, aliases: list, skeleton: dict, b
         rows = []
         for r in rels:
             rows.append([
-                r.get("target", ""),
-                r.get("nature", ""),
+                r.get("target", r.get("with", "")),
+                r.get("nature", r.get("dynamic", "")),
                 r.get("meaning_to_character", ""),
                 r.get("hidden_tension", ""),
                 r.get("default_attitude", ""),
@@ -191,6 +265,15 @@ def render_character(name: str, true_name: str, aliases: list, skeleton: dict, b
     parts.append(f"- 成长方向：{ap.get('growth_direction', '—')}")
     parts.append(f"- 堕落方向：{ap.get('corruption_direction', '—')}")
     parts.append(f"- 关键抉择：{ap.get('key_choice', '—')}")
+
+    if versioned:
+        parts.append(_h(3, "作者情节边界"))
+        constraints = []
+        for record in versioned:
+            for constraint in record['plot_constraints']:
+                if constraint not in constraints:
+                    constraints.append(constraint)
+        parts.extend(f"- {constraint}" for constraint in constraints)
 
     return "\n\n".join(parts)
 
@@ -211,12 +294,12 @@ def render_voice_char(char: dict) -> str:
 
     sf = char.get("syntax_fingerprint", {})
     if sf:
-        parts.append(_h(3, "句法指纹"))
+        parts.append(_h(3, "表达倾向（非固定台词）"))
         if sf.get("sentence_preference"):
             parts.append(f"- 长短句偏好：{sf['sentence_preference']}")
         catchphrases = sf.get("catchphrases", [])
         if catchphrases:
-            parts.append(f"- 口头禅：{'、'.join(catchphrases)}")
+            parts.append(f"- 已有惯用表达（不要求重复）：{'、'.join(catchphrases)}")
         if sf.get("pause_habit"):
             parts.append(f"- 停顿习惯：{sf['pause_habit']}")
         if sf.get("dominant_sentence_type"):
@@ -227,21 +310,40 @@ def render_voice_char(char: dict) -> str:
         parts.append(_h(3, "认知偏差"))
         parts.append(_p(cb))
 
-    fs = char.get("forbidden_speech", [])
-    if fs:
-        parts.append(_h(3, "禁止说的话"))
-        for item in fs:
+    legacy_constraints = [*(char.get("forbidden_speech") or []), *(char.get("avoid") or [])]
+    if legacy_constraints:
+        parts.append(_h(3, "旧档表达约束（原文保留）"))
+        for item in legacy_constraints:
             parts.append(f"- {item}")
 
     ep = char.get("emotion_patterns", {})
     if ep:
-        parts.append(_h(3, "情绪表达模式"))
+        parts.append(_h(3, "情绪下可能的表达（依当前情境）"))
         if ep.get("anger"):
             parts.append(f"- 愤怒时：{ep['anger']}")
         if ep.get("nervous"):
             parts.append(f"- 紧张时：{ep['nervous']}")
         if ep.get("lying"):
             parts.append(f"- 撒谎时：{ep['lying']}")
+
+    for key, label in [("preferences", "表达倾向（非固定台词）"),
+                       ("when_adaptable", "可随情境调整"), ("boundaries", "明确表达边界")]:
+        entries = char.get(key, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"{label}必须是数组")
+        if entries:
+            parts.append(_h(3, label))
+            for entry in entries:
+                if key == "when_adaptable" and isinstance(entry, dict):
+                    if set(entry) != {"condition", "reaction"} or any(
+                        not isinstance(entry[field], str) or not entry[field].strip()
+                        for field in ("condition", "reaction")
+                    ):
+                        raise ValueError("可随情境调整条目必须包含非空condition和reaction")
+                    entry = entry["condition"].strip() + "：" + entry["reaction"].strip()
+                if not isinstance(entry, str) or not entry.strip():
+                    raise ValueError(f"{label}条目必须是非空字符串或有效情境对象")
+                parts.append(f"- {entry}")
 
     return "\n\n".join(parts)
 
@@ -299,6 +401,15 @@ def main():
         beliefs = []
         if os.path.exists(beliefs_path):
             beliefs = load_json(beliefs_path).get("beliefs", [])
+
+        # Validate the entire v2 skeleton set before looking up any deep file.
+        versioned = [_card_v2(char) for char in characters]
+        names = [char.get('name').strip() for char in characters if isinstance(char.get('name'), str)]
+        for char, is_v2 in zip(characters, versioned):
+            if is_v2:
+                _v2_identity(char, require_name=True)
+                if names.count(char['name'].strip()) != 1:
+                    raise ValueError('v2人物姓名重复；请使用不同name区分角色')
 
         for char in characters:
             name = char.get("name", "")

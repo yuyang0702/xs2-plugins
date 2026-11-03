@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,7 +29,13 @@ def build_manuscript(output: str, manifest: str) -> dict[str, object]:
         if not content:
             continue
         chapter = path.parent.name
-        sections.append(f"# 第{chapter}章\n\n{content}")
+        first = content.splitlines()[0].strip()
+        heading = re.sub(r'^#{1,6}\s*', '', first)
+        has_title = bool(re.match(r'^第[一二三四五六七八九十百千零〇两0-9]+[章回节卷](?:\s|[·：:、.]|$)', heading))
+        if has_title:
+            sections.append(content if first.startswith('#') else '# ' + content)
+        else:
+            sections.append(f"# 第{chapter}章\n\n{content}")
         exported.append({"chapter": chapter, "path": path.relative_to(root).as_posix(), "characters": len(content)})
     target.write_text("\n\n---\n\n".join(sections) + ("\n" if sections else ""), encoding="utf-8")
     report = {

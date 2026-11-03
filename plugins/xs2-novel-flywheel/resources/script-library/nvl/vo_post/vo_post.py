@@ -100,6 +100,24 @@ def replace_volume_section(existing, vn, md):
         return existing.rstrip("\n") + "\n\n" + md, "追加"
 
 
+
+def validate_output(data, expected_volume=None):
+    """Reject unusable output before any published outline or cache is changed."""
+    from jsonschema import Draft202012Validator
+    # Legacy archived render inputs may omit the optional display title.
+    schema = json.loads(json.dumps(OUTPUT_SCHEMA))
+    schema["required"] = ["volume_number", "chapter_range"]
+    Draft202012Validator(schema).validate(data)
+    if data.get("volume_number") is not None and expected_volume is not None and data["volume_number"] != expected_volume:
+        raise ValueError("大纲卷号与请求卷号不一致")
+    chapter_range = data.get("chapter_range")
+    if chapter_range and chapter_range["start"] > chapter_range["end"]:
+        raise ValueError("章节范围起点不得大于终点")
+
+
+OUTPUT_SCHEMA = {'type': 'object', 'properties': {'volume_number': {'type': 'integer', 'minimum': 1}, 'title': {'type': 'string', 'minLength': 1}, 'chapter_range': {'type': 'object', 'properties': {'start': {'type': 'integer', 'minimum': 1}, 'end': {'type': 'integer', 'minimum': 1}}, 'required': ['start', 'end']}, 'positioning': {'type': 'string'}, 'acts': {'type': 'object', 'properties': {'establish': {'type': 'object', 'properties': {'chapters': {'type': 'string'}, 'content': {'type': 'string'}}, 'required': []}, 'confront': {'type': 'object', 'properties': {'chapters': {'type': 'string'}, 'content': {'type': 'string'}}, 'required': []}, 'resolve': {'type': 'object', 'properties': {'chapters': {'type': 'string'}, 'content': {'type': 'string'}}, 'required': []}}, 'required': []}, 'conflicts': {'type': 'object', 'properties': {'external': {'type': 'string'}, 'internal': {'type': 'string'}, 'underlying': {'type': 'string'}}, 'required': []}, 'nodes': {'type': 'array', 'items': {'type': 'object', 'properties': {'id': {'type': 'string'}, 'description': {'type': 'string'}, 'consequence': {'type': 'string'}}, 'required': []}}, 'characters': {'type': 'array', 'items': {'type': 'object', 'properties': {'name': {'type': 'string'}, 'identity': {'type': 'string'}, 'narrative_function': {'type': 'string'}}, 'required': []}}, 'ending': {'type': 'object', 'properties': {'character_state': {'type': 'string'}, 'suspense': {'type': 'string'}, 'emotional_aftertaste': {'type': 'string'}}, 'required': []}, 'style_tone': {'type': 'string'}}, 'required': ['volume_number', 'title', 'chapter_range']}
+
+
 def main():
     parser = argparse.ArgumentParser(description="VO 输出渲染追加/替换")
     parser.add_argument("--input", required=True, help="vo_output.json 路径")
@@ -108,6 +126,7 @@ def main():
     args = parser.parse_args()
 
     data = load_json(args.input)
+    validate_output(data, args.volume_number)
     if args.scope == "short_full":
         data["chapter_range"] = {"start": 1, "end": 1}
         for act in data.get("acts", {}).values():

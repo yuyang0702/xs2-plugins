@@ -1,7 +1,7 @@
 {
   "workflow_id": "build",
   "name": "世界观构建管线",
-  "version": 4,
+  "version": 5,
   "nodes": [
     {
       "id": "agent_corelaws",
@@ -24,7 +24,9 @@
       "save_output_to_file": true,
       "output_file_path": "world/core_laws.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "agent_spacetime",
@@ -47,7 +49,9 @@
       "save_output_to_file": true,
       "output_file_path": "world/space_time.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "agent_society",
@@ -70,7 +74,9 @@
       "save_output_to_file": true,
       "output_file_path": "world/society.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "agent_historyculture",
@@ -93,7 +99,9 @@
       "save_output_to_file": true,
       "output_file_path": "world/history_culture.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "agent_existence",
@@ -116,7 +124,9 @@
       "save_output_to_file": true,
       "output_file_path": "world/existence.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "agent_information",
@@ -139,7 +149,9 @@
       "save_output_to_file": true,
       "output_file_path": "world/information.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "script_merge_world",
@@ -366,7 +378,9 @@
       "enable_complete_node_task": false,
       "save_output_to_file": true,
       "output_file_path": "cache/short/world.json",
-      "output_variable": ""
+      "output_variable": "",
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "script_short_world",

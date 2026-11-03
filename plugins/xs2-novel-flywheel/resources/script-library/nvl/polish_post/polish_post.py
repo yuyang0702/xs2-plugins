@@ -7,6 +7,7 @@ infer literary quality or authorship from syntax, words, or statistics.
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -55,9 +56,23 @@ def normalize_critique(data: object, chapter: str) -> dict:
             and bool(excerpts)
             and all(isinstance(quote, str) and quote.strip() for quote in excerpts)
         )
-        grounded = has_excerpts and all(
-            re.sub(r"\s+", " ", quote).strip() in source for quote in excerpts
-        )
+        matches, repairs = [], []
+        if has_excerpts:
+            pairs = {"“": "”", "‘": "’", '"': '"', "'": "'"}
+            for quote_index, quote in enumerate(excerpts):
+                exact = re.sub(r"\s+", " ", quote).strip()
+                matched = exact in source
+                if not matched and len(exact) > 2 and pairs.get(exact[0]) == exact[-1]:
+                    inner = exact[1:-1].strip()
+                    if inner and inner in source:
+                        matched = True
+                        repairs.append({"index": quote_index, "repair": "paired_outer_quote"})
+                matches.append(matched)
+        grounded = has_excerpts and all(matches)
+        if repairs:
+            issue["evidence_repairs"] = repairs
+        else:
+            issue.pop("evidence_repairs", None)
         has_impact = isinstance(issue.get("impact"), str) and bool(issue["impact"].strip())
         issue["evidence_status"] = "verified" if grounded and has_impact else "unverified"
 
@@ -98,7 +113,39 @@ def normalize_critique(data: object, chapter: str) -> dict:
     return result
 
 
-def _write_text(path: Path, text: str) -> None:
+def focused_commit_check(output, expected_sha, guard_path, guard_sha):
+    """Refuse focused publication after any bound manuscript/feedback edit."""
+    root = Path.cwd().resolve()
+    def safe(relative):
+        candidate = (root / relative).resolve()
+        if not candidate.is_relative_to(root):
+            raise ValueError("focused commit path escapes workspace")
+        return candidate
+    if not expected_sha and not guard_path and not guard_sha:
+        return
+    if not all([expected_sha, guard_path, guard_sha]):
+        raise ValueError("focused commit is missing expected input fingerprints")
+    file = safe(guard_path)
+    if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != guard_sha:
+        raise ValueError("focused commit receipt changed; chapter unchanged")
+    guard = json.loads(file.read_text(encoding="utf-8"))
+    if guard.get("body_sha256") != expected_sha or safe(guard["body_path"]) != output.resolve():
+        raise ValueError("focused commit manuscript receipt mismatch")
+    for relative, digest in guard["files"].items():
+        path = safe(relative)
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError("focused manuscript or author feedback changed; chapter unchanged")
+    state = json.loads(safe(".novel-project.json").read_text(encoding="utf-8-sig"))
+    current = {"chapter_number": str(state.get("values", {}).get("chapter_number", "0001")).zfill(4),
+               "author_feedback_file": str(state.get("values", {}).get("author_feedback_file") or "").strip(),
+               "receipt": state.get("lengthRepairFeedback") or {}}
+    if "narrative_pov" in guard["state_binding"]:
+        current["narrative_pov"] = state.get("values", {}).get("narrative_pov", "third_person")
+    if current != guard["state_binding"]:
+        raise ValueError("focused author feedback selection changed; chapter unchanged")
+
+
+def _write_text(path: Path, text: str, check=None) -> None:
     """Replace only after validation and a complete write have succeeded."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
@@ -108,6 +155,8 @@ def _write_text(path: Path, text: str) -> None:
         ) as temporary:
             temporary_path = Path(temporary.name)
             temporary.write(text)
+        if check is not None:
+            check()
         os.replace(temporary_path, path)
     finally:
         if temporary_path is not None and temporary_path.exists():
@@ -120,6 +169,9 @@ def main():
     parser.add_argument("--output", help="chapter.md output")
     parser.add_argument("--normalize-critique", help="Critic JSON to normalize in place")
     parser.add_argument("--source-chapter", help="Chapter reviewed by the critic")
+    parser.add_argument("--expected-body-sha", default="")
+    parser.add_argument("--focused-guard", default="")
+    parser.add_argument("--focused-guard-sha", default="")
     args = parser.parse_args()
 
     if args.normalize_critique:
@@ -137,7 +189,9 @@ def main():
         body = data.get("body") if isinstance(data, dict) else None
         if not isinstance(body, str) or not body.strip():
             raise ValueError("polisher output must contain a nonempty body string; chapter unchanged")
-        _write_text(Path(args.output), body)
+        check = lambda: focused_commit_check(Path(args.output), args.expected_body_sha, args.focused_guard, args.focused_guard_sha)
+        check()
+        _write_text(Path(args.output), body, check=check)
         print(f"[OK] chapter written ({len(body)} chars)")
 
 

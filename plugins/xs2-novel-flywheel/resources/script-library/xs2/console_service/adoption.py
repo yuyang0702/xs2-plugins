@@ -19,7 +19,7 @@ import unicodedata
 from uuid import UUID
 
 from .assistant import (ADVISOR_COMPLETION_TIMEOUT_SECONDS, HISTORY_PATH, _content_text,
-                        _error_details, _now, _receive_model_reply)
+                        _error_details, _now, _receive_model_reply, _provider_diagnostics, _is_transient_provider_error, _close_model)
 from .dialogue_adaptation import (source_samples, validate_situations, require_coverage,
                                  assert_abstract, DIALOGUE_PATH, build_adaptations)
 
@@ -91,24 +91,6 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
-async def _close_model(model):
-    """Close a request-owned model or its SDK transports without host imports."""
-    direct = getattr(model, 'aclose', None) or getattr(model, 'close', None)
-    targets = [model] if callable(direct) else [getattr(model, key, None) for key in
-                                               ('root_async_client', 'root_client', '_async_client', '_client')]
-    seen = set()
-    for target in targets:
-        if target is None or id(target) in seen:
-            continue
-        seen.add(id(target))
-        close = getattr(target, 'aclose', None) or getattr(target, 'close', None)
-        if callable(close):
-            try:
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                pass
 
 
 def _history_entry(root, identifier):
@@ -523,9 +505,32 @@ class ReferenceAdoptionJobs:
                                      timeout=ADVISOR_COMPLETION_TIMEOUT_SECONDS, provider_retries_enabled=False)
             messages = [('system', COMPATIBILITY_PROMPT), ('human', review_input)]
             deadline = asyncio.get_running_loop().time() + ADVISOR_COMPLETION_TIMEOUT_SECONDS
+            transport_retries = 0
             for attempt in range(2):
-                response = await asyncio.wait_for(_receive_model_reply(llm, messages, lambda: None),
-                    timeout=max(0, deadline - asyncio.get_running_loop().time()))
+                for transport_attempt in range(2):
+                    try:
+                        response = await asyncio.wait_for(_receive_model_reply(llm, messages, lambda: None),
+                            timeout=max(0, deadline - asyncio.get_running_loop().time()))
+                        break
+                    except Exception as error:
+                        job['provider_diagnostics'] = _provider_diagnostics(error, llm)
+                        if transport_retries or not _is_transient_provider_error(error):
+                            raise
+                        transport_retries += 1
+                        remaining = deadline - asyncio.get_running_loop().time()
+                        if remaining <= 2:
+                            raise TimeoutError('Compatibility review deadline exhausted') from error
+                        await _close_model(llm)
+                        llm = None
+                        await asyncio.sleep(2)
+                        with self.lock:
+                            if self.stopping:
+                                raise asyncio.CancelledError()
+                            if self.guard:
+                                self.guard(root)
+                            self._check_binding(root, job, binding)
+                        llm = self.model_factory(model_override=payload.get('_model_override'), streaming=True,
+                            timeout=max(0, deadline - asyncio.get_running_loop().time()), provider_retries_enabled=False)
                 reply = _content_text(getattr(response, 'content', None))
                 try:
                     if not reply:
@@ -569,7 +574,7 @@ class ReferenceAdoptionJobs:
             job.update(status='review_required', summary=str(error) if isinstance(error, ReviewRequired) else '兼容性结论或采用记录无效，尚未采用。')
         except Exception as error:
             code, message = _error_details(error)
-            job.update(status='failed', error_code=code, summary=message)
+            job.update(status='failed', error_code=code, summary=message, provider_diagnostics=_provider_diagnostics(error, llm))
         finally:
             if llm is not None:
                 await _close_model(llm)

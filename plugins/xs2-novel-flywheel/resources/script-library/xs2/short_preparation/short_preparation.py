@@ -35,6 +35,53 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, indent=2) + '\n'
 
 
+def _v2_text(value):
+    if isinstance(value, str):
+        if any(re.match(r'^[ \t]{0,3}#{1,6}(?:[ \t]|$)', line) for line in value.splitlines()):
+            raise ValueError('v2角色文本不能包含Markdown标题；请改为普通段落，角色分段由渲染器生成')
+        if any(re.match(r'^[ \t]{0,3}(?:`{3,}|~{3,})', line) for line in value.splitlines()):
+            raise ValueError('v2角色文本不能包含Markdown代码围栏；请改为普通段落，避免隐藏后续角色')
+    elif isinstance(value, dict):
+        for item in value.values():
+            _v2_text(item)
+    elif isinstance(value, list):
+        for item in value:
+            _v2_text(item)
+
+
+def _v2_identity(item):
+    name = item.get('name')
+    if (not isinstance(name, str) or not name.strip() or len(name) > 60
+            or re.search(r'[\x00-\x1f\x85\u2028\u2029/\\<>:"|?*#]', name) or name.strip() in {'.', '..'}):
+        raise ValueError('v2人物姓名name必须是非空安全字符串，不能包含路径或标题字符')
+    aliases = item.get('aliases', [])
+    if not isinstance(aliases, list) or any(not isinstance(alias, str) or not alias.strip()
+            or re.search(r'[\x00-\x1f\x85\u2028\u2029]', alias) for alias in aliases):
+        raise ValueError('v2的aliases必须是非空单行字符串数组')
+    if 'true_name' in item and (not isinstance(item['true_name'], str)
+            or re.search(r'[\x00-\x1f\x85\u2028\u2029]', item['true_name'])):
+        raise ValueError('v2的true_name必须是单行字符串；真名未知可留空')
+
+
+def _card_v2(item):
+    if 'card_schema' not in item:
+        return False
+    if item['card_schema'] != 'xs2.character.v2':
+        raise ValueError('不支持的card_schema；请使用xs2.character.v2或保留无版本旧档')
+    if 'boundary' in item:
+        raise ValueError('v2不能混用旧boundary；请明确区分personality与plot_constraints')
+    for key in ('facts', 'plot_constraints'):
+        entries = item.get(key)
+        if not isinstance(entries, list):
+            raise ValueError(f'v2的{key}必须是字符串数组（可为空）')
+        for entry in entries:
+            _text(entry, f'v2的{key}条目')
+    _text(item.get('personality'), 'v2的personality')
+    _v2_identity(item)
+    _v2_text(item)
+    return True
+
+
 def _render(value, level=3):
     if isinstance(value, dict):
         return '\n'.join(f'{"#" * min(level, 6)} {key}\n\n{_render(item, level + 1)}'
@@ -102,12 +149,35 @@ def render_characters(root, data):
         if name in names or len(name) > 60 or re.search(r'[\x00-\x1f/\\<>:"|?*#]', name) or name in {'.', '..'}:
             raise ValueError('人物姓名重复或包含不安全字符')
         names.add(name)
+        v2 = _card_v2(item)
         base = {'name': name}
         profiles.extend([f'## {name}', ''])
+        if v2:
+            base.update({key: item[key] for key in ('card_schema', 'facts', 'personality', 'plot_constraints')})
+            profiles.extend(['### 已确认事实', ''])
+            profiles.extend('- ' + fact for fact in item['facts'])
+            profiles.extend(['', '### 性格与关系', '', '- 性格倾向：' + item['personality']])
         for key, label in [('role', '身份'), ('want', '当前欲望'), ('fear', '顾虑'),
-                           ('boundary', '底线'), ('contradiction', '内在矛盾')]:
-            base[key] = _text(item.get(key), f'{name}的{label}')
-            profiles.append(f'- {label}：{base[key]}')
+                           ('boundary', '价值底线'), ('contradiction', '内在矛盾')]:
+            if v2 and key == 'boundary':
+                continue
+            value = item.get(key)
+            if key == 'boundary' and isinstance(value, list):
+                if not value:
+                    raise ValueError(f'轻量准备缺少{name}的{label}')
+                display = '；'.join(_text(entry, f'{name}的{label}') for entry in value)
+            else:
+                display = _text(value, f'{name}的{label}')
+            base[key] = value
+            profiles.append(f'- {label}：{display}')
+        facts = item.get('facts', [])
+        if not isinstance(facts, list):
+            raise ValueError('已确认事实必须是数组')
+        if 'facts' in item and not v2:
+            for fact in facts:
+                _text(fact, '已确认事实')
+            base['facts'] = facts
+            profiles.extend('- 已确认事实：' + fact for fact in base['facts'])
         relationships = item.get('relationships')
         if not isinstance(relationships, list):
             raise ValueError(f'{name}缺少关系资料')
@@ -118,21 +188,36 @@ def render_characters(root, data):
             profiles.append(f'- 与{who}：{dynamic}')
         base['relationships'] = relationships
         profiles.append('')
+        if v2:
+            profiles.extend(['### 作者情节边界', ''])
+            profiles.extend('- ' + constraint for constraint in item['plot_constraints'])
+            profiles.append('')
         voice = item.get('voice')
         if not isinstance(voice, dict):
             raise ValueError(f'{name}缺少声音资料')
         baseline = _text(voice.get('baseline'), f'{name}的说话依据')
-        contexts, avoid = voice.get('by_relationship'), voice.get('avoid')
-        if not isinstance(contexts, list) or not contexts or not isinstance(avoid, list) or not avoid:
+        contexts, avoid = voice.get('by_relationship', []), voice.get('avoid', [])
+        if not isinstance(contexts, list) or not isinstance(avoid, list):
             raise ValueError(f'{name}缺少情境化声音或表达边界')
-        voices.extend([f'## {name}', '', baseline, ''])
+        voices.extend([f'## {name}', '', '表达倾向（非固定台词）：' + baseline, ''])
         for context in contexts:
             if not isinstance(context, dict):
                 raise ValueError('声音情境条目格式无效')
             who, guidance = _text(context.get('with'), '谈话对象/情境'), _text(context.get('guidance'), '声音指导')
-            voices.append(f'- 面对{who}：{guidance}')
+            voices.append(f'- 关系情境参考（可随情境调整），面对{who}：{guidance}')
         for boundary in avoid:
-            voices.append('- 不说/不套用：' + _text(boundary, '表达边界'))
+            voices.append('- 旧档表达约束（原文保留）：' + _text(boundary, '表达边界'))
+        for key, label in [('preferences', '表达倾向（非固定台词）'),
+                           ('when_adaptable', '可随情境调整'), ('boundaries', '明确表达边界')]:
+            entries = voice.get(key, [])
+            if not isinstance(entries, list):
+                raise ValueError(f'{name}的{label}必须是数组')
+            for entry in entries:
+                if key == 'when_adaptable' and isinstance(entry, dict):
+                    if set(entry) != {'condition', 'reaction'}:
+                        raise ValueError('可随情境调整条目必须包含condition和reaction')
+                    entry = _text(entry['condition'], '适用情境') + '：' + _text(entry['reaction'], '可变化的反应')
+                voices.append(f'- {label}：' + _text(entry, label))
         voices.append('')
         bases.append(base)
         voice_records.append({'name': name, **voice})

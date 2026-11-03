@@ -22,6 +22,8 @@ EXPECTED_WORKFLOWS = {
     "style-compatibility-advisor",
 }
 EXPECTED_SCRIPT_LIBRARIES = {
+    "character_review",
+    "manuscript_quality",
     "story_support",
     "manuscript_export",
     "market_rankings",

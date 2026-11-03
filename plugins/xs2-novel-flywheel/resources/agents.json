@@ -157,7 +157,7 @@
       }
     },
     "novel-dialogue-writer": {
-      "description": "对话写手：根据骨架中的对话槽，结合角色声音锚写出有潜台词的自然对白",
+      "description": "对话写手：根据对白槽、人物所知与关系，写出回应当场处境的交谈",
       "prompt_template": "novel-dialogue-writer",
       "tools": null,
       "disallowed_tools": null,
@@ -457,7 +457,7 @@
       }
     },
     "novel-character-deep": {
-      "description": "角色深层维度构建师：为单一角色构建欲望、恐惧、秘密、底线、创伤、矛盾、弧线，产出单个角色 JSON",
+      "description": "角色深层维度构建师：区分事实、人格倾向与剧情边界，为单一角色补充有依据的欲望、顾虑与矛盾",
       "prompt_template": "novel-character-deep",
       "tools": null,
       "disallowed_tools": null,
@@ -541,7 +541,7 @@
       }
     },
     "novel-character-voice": {
-      "description": "角色声线分析师 — 从角色档案中提取每个角色的句法指纹、口头禅、认知偏差和情绪表达模式，产出 character_voice.md",
+      "description": "角色声线分析师：从人格、已知经历与关系提取表达倾向；没有依据时不强造口癖或句式",
       "prompt_template": "novel-character-voice",
       "tools": null,
       "disallowed_tools": null,
@@ -844,6 +844,32 @@
           "type": "json_object"
         }
       }
+    },
+    "xs2-fragment-reviewer": {
+      "description": "局部补写提交前的事实、视角与连续性审查",
+      "prompt_template": "xs2-fragment-reviewer",
+      "tools": null,
+      "disallowed_tools": null,
+      "max_turns": 10,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
+    },
+    "novel-character-semantic-review": {
+      "description": "新人物卡的单次批量语义审核；按作者、世界与锁定来源核对后返回纯JSON",
+      "prompt_template": "novel-character-semantic-review",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 1,
+      "system_prompt_template": "",
+      "include_skills": false,
+      "include_rules": false,
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
     }
   }
 }

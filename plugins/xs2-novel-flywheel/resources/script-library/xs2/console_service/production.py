@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import importlib.util
 import json
+from functools import lru_cache
 from pathlib import Path
 import re
 
@@ -16,6 +18,15 @@ ARTIFACTS = {
     "polish": "story/{chapter}/chapter.md", "reader-sim": "story/{chapter}/reader_report.json",
     "post-hoc": "story/{chapter}/diff_story_confirmed.md", "export": "export/manuscript.md",
 }
+
+
+@lru_cache(maxsize=1)
+def length_quality():
+    path = Path(__file__).with_name('length_quality.py')
+    spec = importlib.util.spec_from_file_location(__name__ + '_length_quality', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def chapter(state):
@@ -45,10 +56,14 @@ def reader_report(root, state):
         raise ValueError("正文在读者评估后有变化，请重新评估。")
     if data.get("verdict") not in {"pass", "revise", "reject"}:
         raise ValueError("读者报告没有有效结论，请重新评估。")
-    return data
+    return length_quality().gate_report(root, number, state.get('values', {}).get('target_word_count', ''), data)
 
 
 def verify_completion(root, state, stage, task):
+    focused = (task.get('node_states') or {}).get('script_focused_commit') or {}
+    if stage == 'polish' and focused.get('status') == 'completed':
+        length_quality().verify_focused_attempt(root, chapter(state), task, focused)
+        return
     artifact = Path(root) / ARTIFACTS[stage].format(chapter=chapter(state))
     if not artifact.is_file() or not artifact.read_text(encoding="utf-8").strip():
         raise ValueError(f"任务结束但缺少有效产物 {artifact.relative_to(root)}，自动流程已暂停。")
@@ -78,6 +93,11 @@ def parameters(state, definition):
         values.update(conflict_plan_mode="short_full", chapter_ending_mode="book_final")
     elif values.get("conflict_plan_mode") not in {"serial_opening", "serial_chapter", "serial_arc"}:
         values["conflict_plan_mode"] = "serial_chapter"
+    if any(variable["key"] == "polish_pass" for variable in definition.get("variables", [])):
+        receipt = state.get('lengthRepairFeedback') or {}
+        values['polish_pass'] = ('length_only' if isinstance(receipt, dict)
+            and receipt.get('path') == str(values.get('author_feedback_file') or '').strip()
+            and receipt.get('chapter_number') == chapter(state) and receipt.get('path') else 'content')
     result = {}
     for variable in definition.get("variables", []):
         key = variable["key"]
@@ -109,7 +129,47 @@ def launch_check(root, state, stage, support=None):
         raise ValueError("本章读者评估尚未通过，不能自动审核或导出。")
 
 
+def _length_cycle(state):
+    cycle = max(0, int(state.get('readerRepairCount') or 0))
+    prior_count = max(0, int(state.get('lengthRepairCount') or 0))
+    total = max(prior_count, int(state.get('lengthRepairTotal') or 0))
+    tracked = state.get('lengthRepairCycle')
+    # Old states used one chapter-wide count. Preserve it in the total while
+    # giving an already-started content revision its first tracked budget.
+    same = (int(tracked) == cycle) if tracked is not None else cycle == 0
+    focused_migration = ((cycle > 0 or state.get('lengthRepairStrategy') in {'fragment-v3', 'fragment-v4', 'fragment-v5'})
+                         and state.get('lengthRepairStrategy') != length_quality().LENGTH_REPAIR_STRATEGY)
+    # An explicit book-only writer selection is a new execution profile. Track
+    # it durably so it receives one bounded budget without erasing history.
+    writer_changed = (state.get('writerModel') or '') != (state.get('lengthRepairModel') or '')
+    return cycle, prior_count if same and not focused_migration and not writer_changed else 0, total
+
+
 def next_action(root, state, stage):
+    if stage == 'polish':
+        result = length_quality().assess(root, chapter(state), state.get('values', {}).get('target_word_count', ''))
+        cycle, count, total = _length_cycle(state)
+        progress = {'lengthRepairCycle': cycle, 'lengthRepairCount': count, 'lengthRepairTotal': total,
+                    'lengthRepairStrategy': length_quality().LENGTH_REPAIR_STRATEGY}
+        if state.get('lengthRepairStrategy') == 'fragment-v5' and length_quality().LENGTH_REPAIR_STRATEGY == 'fragment-v6':
+            progress['lengthRepairMigration'] = {'from': 'fragment-v5', 'to': 'fragment-v6', 'cycle': cycle,
+                                               'total_before': total, 'reason': '按真实缺口冻结连续多段源窗口，替代单句过量扩写契约'}
+        if state.get('writerModel') or 'lengthRepairModel' in state:
+            progress['lengthRepairModel'] = state.get('writerModel') or ''
+        if result['status'] in {'short', 'long'}:
+            limit = max(1, min(3, int(state.get('autoLengthRepairLimit') or 2)))
+            if count >= limit:
+                return {'action': 'pause', 'reason': f"字数自动校正已达上限，实测{result['actual']}实字，目标{result['lower']}—{result['upper']}；未放行审核和导出。",
+                        'updates': {**progress, 'lengthCheck': result}}
+            feedback = length_quality().correction_feedback(root, {**state, 'lengthRepairCount': count}, result)
+            return {'action': 'advance', 'stage': 'polish', 'reset': list(PRODUCTION[1:]),
+                    'updates': {**progress, 'lengthRepairCount': count + 1, 'lengthRepairTotal': total + 1, 'lengthCheck': result,
+                                'lengthRepairFeedback': feedback,
+                                'values': {**state.get('values', {}), 'author_feedback_file': feedback['path']}}}
+        length_quality().prepare_guidance(root, chapter(state), state.get('values', {}).get('target_word_count', ''))
+        source = length_quality().original_feedback(root, state)
+        return {'action': 'advance', 'stage': 'reader-sim', 'updates': {**progress, 'lengthCheck': result,
+                'lengthRepairFeedback': {}, 'values': {**state.get('values', {}), 'author_feedback_file': source}}}
     if stage == "reader-sim":
         report = reader_report(root, state)
         if state.get("assessmentOnly"):
@@ -138,7 +198,9 @@ def next_action(root, state, stage):
                       "latest_chapter": chapter(state), "chapter_ending_mode": "continue", "author_feedback_file": "",
                       "human_intent": "", "world_intent": ""}
             return {"action": "advance", "stage": "mvp", "reset": list(PRODUCTION),
-                    "updates": {"values": values, "autoChapterStarted": started + 1, "readerRepairCount": 0}}
+                    "updates": {"values": values, "autoChapterStarted": started + 1, "readerRepairCount": 0,
+                                "lengthRepairCount": 0, "lengthRepairTotal": 0, "lengthRepairCycle": 0, "lengthRepairStrategy": length_quality().LENGTH_REPAIR_STRATEGY,
+                                "lengthCheck": {}, "lengthRepairFeedback": {}}}
         return {"action": "finish", "reason": "本次指定范围已完成并导出。"}
     if stage not in STAGES:
         return {"action": "pause", "reason": "当前步骤不属于自动创作流程。"}
@@ -152,16 +214,46 @@ def repair_request(state):
 
 
 def repair_ready(state, feedback_path):
+    cycle = int(state.get("readerRepairCount") or 0) + 1
+    _, _, total = _length_cycle(state)
     return {"action": "advance", "stage": "polish", "reset": ["polish", "reader-sim", "post-hoc", "export"],
             "updates": {"values": {**state.get("values", {}), "author_feedback_file": feedback_path},
-                        "readerRepairCount": int(state.get("readerRepairCount") or 0) + 1,
-                        "autoRepairPlanId": ""}}
+                        "readerRepairCount": cycle, "lengthRepairCount": 0,
+                        "lengthRepairCycle": cycle, "lengthRepairTotal": total, "lengthRepairStrategy": length_quality().LENGTH_REPAIR_STRATEGY,
+                        "autoRepairPlanId": "", "lengthRepairFeedback": {}}}
 
 
 def model_overrides(state, definition, stage):
+    eligible = [node for node in definition.get("nodes", [])
+                if node.get("node_type", "agent") == "agent" and node["id"] != "agent_fragment_review"
+                and not ((node.get("var_bindings") or {}).get("model_override") or {}).get("var_key")
+                and "{{" not in node.get("agent_type", "") and "{{" not in (node.get("model_override") or "")]
+    selected = {}
+    writer = state.get('writerModel')
+    body_nodes = {'mvp': {'agent_sw', 'agent_nw', 'agent_dw', 'agent_aw', 'agent_tw', 'agent_iw', 'agent_dsw'},
+                  'polish': {'agent_pl', 'agent_pp'}}
+    if writer and stage in body_nodes:
+        selected.update({node['id']: writer for node in eligible if node['id'] in body_nodes[stage]})
     model = state.get("repairModel")
-    if not model or stage not in {"polish", "reader-sim"} or not (state.get("repairReviewOnly") or state.get("readerRepairCount")):
+    if model and stage in {"polish", "reader-sim"} and (state.get("repairReviewOnly") or state.get("readerRepairCount")):
+        selected.update({node['id']: model for node in eligible})
+    return selected or None
+
+
+def model_params_overrides(state, definition, stage):
+    """Book-only parameters follow the explicitly selected body writer model."""
+    from copy import deepcopy
+    params = state.get('writerModelParams')
+    if params is None:
         return None
-    return {node["id"]: model for node in definition.get("nodes", []) if node.get("node_type", "agent") == "agent"
-            and not ((node.get("var_bindings") or {}).get("model_override") or {}).get("var_key")
-            and "{{" not in node.get("agent_type", "") and "{{" not in (node.get("model_override") or "")}
+    if not isinstance(params, dict):
+        raise ValueError('writerModelParams 必须是参数对象')
+    writer = state.get('writerModel')
+    if not params or not writer:
+        return None
+    body_nodes = {'mvp': {'agent_sw', 'agent_nw', 'agent_dw', 'agent_aw', 'agent_tw', 'agent_iw', 'agent_dsw'},
+                  'polish': {'agent_pl', 'agent_pp'}}
+    selected = model_overrides(state, definition, stage) or {}
+    result = {node_id: deepcopy(params) for node_id in body_nodes.get(stage, set())
+              if selected.get(node_id) == writer}
+    return result or None

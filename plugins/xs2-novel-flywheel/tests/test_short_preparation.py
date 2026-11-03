@@ -172,3 +172,132 @@ def test_compact_character_model_receives_actual_world_and_confirmed_author_fact
     expanded = asyncio.run(resolve_placeholders(node['first_message'], values, definition['variables'], str(tmp_path)))
     assert '现实照相馆；原始记录不等于全部权属。' in expanded
     assert '程见夏31岁，唐小满22岁，保留师徒关系。' in expanded
+
+
+def test_flexible_voice_preserves_facts_values_and_optional_legacy_fields(tmp_path):
+    data = cast()
+    person = data['characters'][0]
+    person['facts'] = ['程见夏救过周予安；周予安是受助者']
+    person['voice'] = {'baseline': '通常先问细节', 'preferences': ['紧张时偏向短句'],
+                       'when_adaptable': ['疲惫时可承认害怕，关系改善后可以求助'],
+                       'boundaries': ['不以无辜者性命报复']}
+    helper().render_characters(tmp_path, data)
+    profile = (tmp_path / 'meta/character_profiles.md').read_text(encoding='utf-8')
+    voice = (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8')
+    assert '已确认事实' in profile and person['facts'][0] in profile
+    assert '价值底线' in profile and person['boundary'] in profile
+    for phrase in ['表达倾向（非固定台词）', '可随情境调整', '疲惫时可承认害怕', '明确表达边界', '不以无辜者性命报复']:
+        assert phrase in voice
+    cached = json.loads((tmp_path / 'cache/character/skeleton.json').read_text(encoding='utf-8'))
+    assert cached['characters'][0]['facts'] == person['facts']
+
+
+def test_empty_legacy_voice_lists_are_compatible_and_boundaries_are_not_erased(tmp_path):
+    data = cast()
+    data['characters'][0]['voice'].update(by_relationship=[], avoid=[])
+    helper().render_characters(tmp_path, data)
+    voice = (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8')
+    assert '不作反派式自白' in voice
+    assert '旧档表达约束（原文保留）' in voice
+
+
+def test_structured_adaptable_voice_from_live_model_keeps_context_and_reaction(tmp_path):
+    import copy
+    data = cast()
+    context = {'condition': '对客商谈修样', 'reaction': '说明自己能接的部分，也能承认忙不过来'}
+    data['characters'][0]['voice']['when_adaptable'] = ['疲惫时可以求助', context]
+    before = copy.deepcopy(data)
+    helper().render_characters(tmp_path, data)
+    text = (tmp_path / 'meta/character_voice.md').read_text(encoding='utf-8')
+    assert '可随情境调整：对客商谈修样：说明自己能接的部分，也能承认忙不过来' in text
+    assert '疲惫时可以求助' in text and "'condition'" not in text
+    cached = json.loads((tmp_path / 'cache/character/voice.json').read_text(encoding='utf-8'))
+    assert cached['characters'][0]['when_adaptable'][1] == context
+    assert data == before
+
+
+@pytest.mark.parametrize('entry', [{}, {'condition': '谈修样'},
+    {'condition': '', 'reaction': '求助'}, {'condition': '疲惫', 'reaction': []}, 42])
+def test_invalid_adaptable_voice_cannot_publish_partial_archives(tmp_path, entry):
+    data = cast()
+    data['characters'][0]['voice']['when_adaptable'] = [entry]
+    with pytest.raises(ValueError):
+        helper().render_characters(tmp_path, data)
+    assert not (tmp_path / 'meta/character_profiles.md').exists()
+    assert not (tmp_path / 'cache/character/voice.json').exists()
+
+
+def test_new_character_output_checks_shape_and_does_not_invent_legacy_prohibitions():
+    from src.workflow.output_selection import select_agent_output
+    definition = json.loads((PLUGIN / 'resources/workflows/character/definition.json').read_text(encoding='utf-8'))
+    params = next(n for n in definition['nodes'] if n['id'] == 'agent_short_character')['node_params']
+    data = cast()
+    for person in data['characters']:
+        person['voice'].pop('avoid')
+    data['characters'][0]['voice']['when_adaptable'] = [
+        '疲惫时可以求助', {'condition': '面对熟人', 'reaction': '可以解释自己的顾虑'}]
+    def select():
+        return select_agent_output([{'type': 'user', 'content': '生成新档案'},
+            {'type': 'assistant', 'content': json.dumps(data, ensure_ascii=False)}], params)
+    selected, error = select()
+    assert not error and json.loads(selected) == data
+    data['characters'][0]['voice']['avoid'] = ['不透露自己的疲惫']
+    assert select()[1], 'New generated profiles must not invent legacy prohibitions'
+    data['characters'][0]['voice'].pop('avoid')
+    data['characters'][0]['voice']['when_adaptable'] = [{'condition': '疲惫'}]
+    assert select()[1], 'Malformed context must be rejected before publication script'
+
+
+@pytest.mark.parametrize('value', [[42], [''], {'condition': '疲惫', 'reaction': '求助'}])
+def test_full_voice_renderer_rejects_malformed_optional_context(value):
+    script = PLUGIN / 'resources/script-library/nvl/json_to_md/json_to_md.py'
+    spec = importlib.util.spec_from_file_location('invalid_voice_renderer_tests', script)
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    with pytest.raises(ValueError):
+        renderer.render_voice_char({'name': '程见夏', 'when_adaptable': value})
+
+
+def test_existing_character_archive_is_never_rewritten_to_relax_rules(tmp_path):
+    write(tmp_path, 'meta/character_voice.md', '## 程见夏\n不伤害无辜；永不背叛妹妹。\n')
+    before = (tmp_path / 'meta/character_voice.md').read_bytes()
+    with pytest.raises(ValueError, match='已有'):
+        helper().render_characters(tmp_path, cast())
+    assert (tmp_path / 'meta/character_voice.md').read_bytes() == before
+    assert not (tmp_path / 'cache/character/skeleton.json').exists()
+
+
+def test_character_prompts_distinguish_fact_direction_values_and_reactions():
+    prompts = json.loads((PLUGIN / 'resources/prompts.json').read_text(encoding='utf-8-sig'))['agents']
+    assert len(prompts) == 41
+    for name in ['novel-short-character', 'novel-character-skeleton', 'novel-character-belief', 'novel-character-deep', 'novel-character-voice']:
+        content = '\n'.join(s['content'] for s in prompts[name]['sections'] if s.get('enabled', True))
+        for phrase in ['谁救了谁', '价值底线', '疲惫', '回应对方', '不得照抄']:
+            assert phrase in content, (name, phrase)
+    compact = prompts['novel-short-character']['sections'][0]['content']
+    assert 'by_relationship和avoid必须有具体内容' not in compact
+    assert 'when_adaptable' in compact and 'facts' in compact
+
+
+def test_full_voice_renderer_retains_legacy_boundaries_and_optional_context_without_mutation():
+    import copy
+    script = PLUGIN / 'resources/script-library/nvl/json_to_md/json_to_md.py'
+    spec = importlib.util.spec_from_file_location('flexible_voice_renderer_tests', script)
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    legacy = {'name': '程见夏', 'syntax_fingerprint': {'catchphrases': ['先等一等']},
+              'forbidden_speech': ['不泄露妹妹住处'], 'emotion_patterns': {'anger': '有时沉默'}}
+    original = copy.deepcopy(legacy)
+    rendered = renderer.render_voice_char(legacy)
+    assert '旧档表达约束（原文保留）' in rendered
+    assert '不泄露妹妹住处' in rendered and '先等一等' in rendered
+    assert '表达倾向（非固定台词）' in rendered
+    assert legacy == original
+    flexible = {'name': '程见夏', 'preferences': ['通常先问细节'],
+                'when_adaptable': ['疲惫时可求助'], 'boundaries': ['不伤害无辜']}
+    rendered = renderer.render_voice_char(flexible)
+    assert '疲惫时可求助' in rendered and '可随情境调整' in rendered
+    assert '不伤害无辜' in rendered and '明确表达边界' in rendered
+    flexible['when_adaptable'] = [{'condition': '疲惫时', 'reaction': '可以求助'}]
+    rendered = renderer.render_voice_char(flexible)
+    assert '疲惫时：可以求助' in rendered and "'condition'" not in rendered

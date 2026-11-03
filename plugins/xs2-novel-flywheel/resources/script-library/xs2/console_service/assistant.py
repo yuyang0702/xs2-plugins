@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -27,6 +28,70 @@ HISTORY_PATH = "learning/assistant-history.json"
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _close_model(model):
+    """Close only an explicit model lifecycle; nested SDK transports are borrowed."""
+    try:
+        close = getattr(model, 'aclose', None) or getattr(model, 'close', None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+    except Exception:
+        pass
+
+
+def _safe_attribute(value, name, default=None):
+    try:
+        return getattr(value, name, default)
+    except Exception:
+        return default
+
+
+def _provider_diagnostics(error, model=None):
+    """Only allowlisted classifications leave the exception boundary."""
+    result = {'types': [], 'closed_client': False, 'tls': False, 'proxy': False,
+              'dns': False, 'errnos': [], 'transports_closed': []}
+    seen = set()
+    while error is not None and id(error) not in seen and len(seen) < 12:
+        seen.add(id(error))
+        name = type(error).__name__
+        result['types'].append(name if name.isidentifier() else 'Exception')
+        try:
+            text = str(error).lower()
+        except Exception:
+            text = ''
+        result['closed_client'] |= 'client has been closed' in text or 'client is closed' in text
+        result['tls'] |= 'ssl' in name.lower() or 'certificate_verify_failed' in text
+        result['proxy'] |= 'proxy' in name.lower()
+        result['dns'] |= name == 'gaierror' or 'getaddrinfo failed' in text
+        errno = _safe_attribute(error, 'errno')
+        if type(errno) is int:
+            result['errnos'].append(errno)
+        remote = _safe_attribute(error, 'provider_diagnostics')
+        if isinstance(remote, dict):
+            names = remote.get('types', [])
+            if isinstance(names, list):
+                names = [value for value in names[:12] if isinstance(value, str)
+                         and value.isidentifier() and len(value) <= 80]
+                result['types'].extend(names)
+                result['tls'] |= any('ssl' in value.lower() for value in names)
+                result['proxy'] |= any('proxy' in value.lower() for value in names)
+                result['dns'] |= 'gaierror' in names
+            for flag in ('closed_client', 'tls', 'proxy', 'dns'):
+                if type(remote.get(flag)) is bool:
+                    result[flag] |= remote[flag]
+            if isinstance(remote.get('errnos'), list):
+                result['errnos'].extend(value for value in remote['errnos'][:12] if type(value) is int)
+        error = _safe_attribute(error, '__cause__') or _safe_attribute(error, '__context__')
+    result['types'] = result['types'][:24]
+    for name in ('root_async_client', 'root_client', '_async_client', '_client'):
+        client = _safe_attribute(model, name)
+        value = _safe_attribute(_safe_attribute(client, '_client', client), 'is_closed')
+        if type(value) is bool:
+            result['transports_closed'].append(value)
+    return result
 
 
 def _error_details(error: Exception) -> tuple[str, str]:
@@ -178,6 +243,7 @@ class NovelAssistantJobs:
         return entry
 
     async def _run(self, root: Path, request_id: str, payload: dict) -> None:
+        llm = None
         started = perf_counter()
         result: dict[str, Any]
         try:
@@ -259,6 +325,7 @@ class NovelAssistantJobs:
                 else ANALYSIS_TIMEOUT_SECONDS
             )
             max_attempts = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
+            deadline = asyncio.get_running_loop().time() + completion_timeout
             for attempt in range(max_attempts):
                 if attempt:
                     entries = self.history(root)
@@ -267,12 +334,18 @@ class NovelAssistantJobs:
                             entry.update(attempt=attempt + 1,
                                          message=f"模型连接暂时失败，正在重试（第 {attempt + 1} 次）…")
                     self._write(root, entries)
-                    await asyncio.sleep(TRANSIENT_RETRY_DELAYS_SECONDS[attempt - 1])
+                    delay = TRANSIENT_RETRY_DELAYS_SECONDS[attempt - 1]
+                    if deadline - asyncio.get_running_loop().time() <= delay:
+                        raise TimeoutError("Assistant deadline exhausted")
+                    await asyncio.sleep(delay)
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise TimeoutError("Assistant deadline exhausted")
                 # Resolve current model settings for each attempt rather than
                 # holding a startup client with stale provider credentials.
                 # The transport must allow the same budget as the whole call;
                 # providers may reason silently before the first stream event.
-                llm = self.model_factory(model_override=payload.get('_model_override'), streaming=True, timeout=completion_timeout,
+                llm = self.model_factory(model_override=payload.get('_model_override'), streaming=True, timeout=remaining,
                                  provider_retries_enabled=False)
                 try:
                     def on_output():
@@ -283,12 +356,14 @@ class NovelAssistantJobs:
                         self._write(root, entries)
                     response = await asyncio.wait_for(
                         _receive_model_reply(llm, [("system", system), ("human", user)], on_output),
-                        timeout=completion_timeout,
+                        timeout=max(0, deadline - asyncio.get_running_loop().time()),
                     )
                     break
                 except Exception as error:
                     if attempt >= max_attempts - 1 or not _is_transient_provider_error(error):
                         raise
+                    await _close_model(llm)
+                    llm = None
                     logger.warning(
                         "小说助手模型连接失败，将自动重试: request=%s attempt=%s/%s error=%s",
                         request_id, attempt + 1, max_attempts, type(error).__name__,
@@ -324,7 +399,8 @@ class NovelAssistantJobs:
         except Exception as error:
             code, message = _error_details(error)
             logger.warning("小说助手分析失败: request=%s code=%s error=%s elapsed=%.1f", request_id, code, type(error).__name__, perf_counter() - started)
-            result = {"status": "failed", "error_code": code, "message": message}
+            result = {"status": "failed", "error_code": code, "message": message, "provider_diagnostics": _provider_diagnostics(error, llm)}
+        await _close_model(llm)
         result.update(finished_at=_now(), elapsed_seconds=round(perf_counter() - started, 1))
         entries = self.history(root)
         for entry in entries:

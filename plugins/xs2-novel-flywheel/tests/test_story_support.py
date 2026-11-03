@@ -337,7 +337,16 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
         data = json.loads((ROOT/f'resources/workflows/{stage}/definition.json').read_text(encoding='utf-8'))
         assert any(n['id']=='script_story_context' for n in data['nodes'])
         assert any(e['source']=='__start__' and e['target']=='script_story_context' for e in data['edges'])
-        assert all('{{story_support_context}}' in n['first_message'] for n in data['nodes'] if n['node_type']=='agent')
+        for node in data['nodes']:
+            if node['node_type'] != 'agent':
+                continue
+            if node['id'] == 'agent_fragment_review':
+                # This one consumes the same shared source inside a hash-bound
+                # snapshot; do not inject a second, unbound live copy.
+                assert '{{fragment_review_input}}' in node['first_message']
+                assert any(e['source']=='script_fragment_review_context' and e['target']==node['id'] for e in data['edges'])
+            else:
+                assert '{{story_support_context}}' in node['first_message']
     post = json.loads((ROOT/'resources/workflows/post-hoc/definition.json').read_text(encoding='utf-8'))
     assert any(e['source']=='script_confirm_archive' and e['target']=='__end__' for e in post['edges'])
 

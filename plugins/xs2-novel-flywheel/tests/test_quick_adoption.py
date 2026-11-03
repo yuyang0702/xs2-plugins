@@ -545,7 +545,7 @@ def test_new_source_retains_prior_adoption_with_flat_journal_backups(tmp_path):
     assert all(path.is_file() for path in backups.iterdir())
 
 
-def test_review_closes_owned_sdk_transport_when_model_has_no_close(tmp_path):
+def test_review_preserves_borrowed_sdk_transport_when_model_has_no_close(tmp_path):
     setup_book(tmp_path)
     class Client:
         closed = False
@@ -559,4 +559,29 @@ def test_review_closes_owned_sdk_transport_when_model_has_no_close(tmp_path):
         jobs.start(tmp_path, str(uuid.uuid4()), {'entry_id': 'adviser-1'})
         await asyncio.gather(*list(jobs.tasks.values()))
     asyncio.run(run())
-    assert model.root_async_client.closed
+    assert not model.root_async_client.closed
+
+@pytest.mark.parametrize('failure,retries', [(ConnectionError('offline'), True), (type('AuthenticationError', (Exception,), {})('secret'), False)])
+def test_review_transient_retry_uses_fresh_model(tmp_path, failure, retries):
+    setup_book(tmp_path)
+    class Broken(Model):
+        async def ainvoke(self, messages):
+            raise failure
+    broken = Broken({})
+    healthy = Model({'decisions': [decision()], 'voice_adaptations': []})
+    created = []
+    def factory(**kwargs):
+        model = broken if not created else healthy
+        created.append(model)
+        return model
+    jobs = service().ReferenceAdoptionJobs(factory, lambda: [catalog()], merge, runner, threading.RLock())
+    identifier = str(uuid.uuid4())
+    async def run():
+        jobs.start(tmp_path, identifier, {'entry_id': 'adviser-1'})
+        await asyncio.gather(*list(jobs.tasks.values()))
+    asyncio.run(run())
+    assert len(created) == (2 if retries else 1)
+    assert broken.closed
+    receipt = jobs.get(tmp_path, identifier)
+    assert receipt['status'] == ('applied' if retries else 'failed')
+    assert 'secret' not in str(receipt.get('provider_diagnostics'))

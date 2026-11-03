@@ -75,18 +75,70 @@ def _load_json_tolerant(path: str):
         return data
 
 
+def _validate_v2_identities(characters, *, require_v2=False):
+    """Validate the whole v2 batch before names can become deep-cache paths.
+
+    Keep these standalone identity rules aligned with the v2 renderer. Legacy
+    records remain unmodified; a declared version must be explicitly supported.
+    """
+    names = [c.get("name").strip() for c in characters
+             if isinstance(c, dict) and isinstance(c.get("name"), str)]
+    for character in characters:
+        if not isinstance(character, dict):
+            raise ValueError("角色记录必须是对象")
+        if "card_schema" not in character:
+            if require_v2:
+                raise ValueError("新人物卡必须显式声明card_schema=xs2.character.v2")
+            continue
+        if character["card_schema"] != "xs2.character.v2":
+            raise ValueError("不支持的card_schema；请使用xs2.character.v2或保留无版本旧档")
+        name = character.get("name")
+        if (not isinstance(name, str) or not name.strip() or len(name) > 60
+                or re.search(r'[\x00-\x1f\x85\u2028\u2029/\\<>:"|?*#]', name)
+                or name.strip() in {".", ".."}):
+            raise ValueError("v2人物姓名name必须是非空安全字符串，不能包含路径或标题字符")
+        aliases = character.get("aliases", [])
+        if not isinstance(aliases, list) or any(
+                not isinstance(alias, str) or not alias.strip()
+                or re.search(r'[\x00-\x1f\x85\u2028\u2029]', alias) for alias in aliases):
+            raise ValueError("v2的aliases必须是非空单行字符串数组")
+        true_name = character.get("true_name", "")
+        if (not isinstance(true_name, str)
+                or re.search(r'[\x00-\x1f\x85\u2028\u2029]', true_name)):
+            raise ValueError("v2的true_name必须是单行字符串；真名未知可留空")
+        for text in [name, true_name, *aliases]:
+            if require_v2 and ("{{" in text or "}}" in text):
+                raise ValueError("新人物卡身份不能包含工作流占位符分隔符")
+            if (re.match(r'^[ \t]{0,3}#{1,6}(?:[ \t]|$)', text)
+                    or re.match(r'^[ \t]{0,3}(?:`{3,}|~{3,})', text)):
+                raise ValueError("v2身份文本不能包含Markdown标题或代码围栏")
+        if names.count(name.strip()) != 1:
+            raise ValueError("v2人物姓名重复；请使用不同name区分角色")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="skeleton JSON 文件路径")
+    parser.add_argument("--require-v2", action="store_true", help="新建工作流拒绝未声明v2的人物记录")
     args = parser.parse_args()
 
     try:
-        data = _load_json_tolerant(args.file)
-    except json.JSONDecodeError as e:
-        print(f"JSON 解析失败: {e}", file=sys.stderr)
+        if args.require_v2:
+            # AgentNode has already saved JSON. Preserve its exact source bytes;
+            # smart quotes inside valid strings are data, not JSON delimiters.
+            with open(args.file, "r", encoding="utf-8") as source:
+                data = json.load(source)
+            if not isinstance(data, dict) or not isinstance(data.get("characters"), list):
+                raise ValueError("新人物卡必须是包含characters数组的JSON对象")
+        else:
+            data = _load_json_tolerant(args.file)
+        characters = data.get("characters", [])
+        _validate_v2_identities(characters, require_v2=args.require_v2)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"角色骨架校验失败: {e}", file=sys.stderr)
         sys.exit(1)
 
-    names = [c["name"] for c in data.get("characters", []) if c.get("name")]
+    names = [c["name"] for c in characters if c.get("name")]
 
     if not names:
         print("[extract_names] 错误：未找到角色名", file=sys.stderr)

@@ -1,7 +1,7 @@
 {
   "workflow_id": "story-plan",
   "name": "故事宏观规划",
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": "script_story_context",
@@ -84,7 +84,9 @@
       "save_output_to_file": true,
       "output_file_path": "cache/story_plan/story_plan.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "agent_style",
@@ -107,7 +109,9 @@
       "save_output_to_file": true,
       "output_file_path": "cache/story_plan/style_profile.json",
       "sub_workflow_params": {},
-      "fail_auto_skip": false
+      "fail_auto_skip": false,
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
     },
     {
       "id": "script_persist_story_plan",
