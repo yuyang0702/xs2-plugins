@@ -449,3 +449,26 @@ def test_mvp_planners_read_chapter_state_contents_in_both_modes(book, mode):
         node = next(n for n in definition["nodes"] if n["id"] == node_id)
         message = asyncio.run(resolve(node["first_message"], values, definition, book))
         assert marker in message and state not in message
+
+@pytest.mark.parametrize("nvl,xs2", [
+    ("nvl", "xs2"), ("xs2-novel-flywheel-nvl", "xs2-novel-flywheel-xs2"), ("custom-book-nvl", "custom-book-xs2"),
+])
+def test_local_archive_loads_policy_from_the_exact_prepared_sibling(tmp_path, nvl, xs2):
+    import shutil
+
+    from_archive = LIB / "nvl/local_archive/local_archive.py"
+    archive = tmp_path / nvl / "local_archive/local_archive.py"
+    archive.parent.mkdir(parents=True)
+    shutil.copyfile(from_archive, archive)
+    policy = tmp_path / xs2 / "prose_policy"
+    shutil.copytree(ENTRY.parent, policy)
+    if xs2 != "xs2":
+        wrong = tmp_path / "xs2/prose_policy/prose_policy.py"
+        wrong.parent.mkdir(parents=True)
+        wrong.write_text("raise RuntimeError('wrong resource group')", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("test_qualified_archive", archive)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    book = tmp_path / "book"
+    book.mkdir()
+    assert module._policy().read(book)["mode"] == "inherit"

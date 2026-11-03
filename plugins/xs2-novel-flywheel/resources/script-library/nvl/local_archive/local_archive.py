@@ -34,7 +34,16 @@ INDEX_PATHS = {
 
 @lru_cache(maxsize=1)
 def _policy():
-    entry = Path(__file__).resolve().parents[2] / "xs2/prose_policy/prose_policy.py"
+    group = Path(__file__).resolve().parents[1]
+    if group.name == "nvl":
+        sibling = "xs2"
+    elif group.name.endswith("-nvl"):
+        sibling = group.name.removesuffix("-nvl") + "-xs2"
+    else:
+        raise ValueError("无法识别归档脚本所属的资源组。")
+    entry = (group.parent / sibling / "prose_policy/prose_policy.py").resolve()
+    if not entry.is_relative_to(group.parent / sibling):
+        raise ValueError("叙述偏好脚本越过当前插件资源组。")
     spec = importlib.util.spec_from_file_location("xs2_archive_prose_policy", entry)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
