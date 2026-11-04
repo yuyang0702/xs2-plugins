@@ -18,7 +18,7 @@ def execute(root, node_id, content):
         async def create_sub_session(self,**kwargs):
             self.sessions['body']=SimpleNamespace(record=[{'type':'user','content':'write'}, {'type':'assistant','content':content}])
             kwargs['on_auto_complete']('body','done','success','');return {'success':True,'session_id':'body'}
-    return asyncio.run(AgentNode().execute(NodeContext(definition=wf,node_def=node,node_state=NodeExecutionState(node_id=node_id),session_manager=Manager(),shared_ws=root,parameter_values={'chapter_number':'0001','length_execution_context':''})))
+    return asyncio.run(AgentNode().execute(NodeContext(definition=wf,node_def=node,node_state=NodeExecutionState(node_id=node_id),session_manager=Manager(),shared_ws=root,parameter_values={'chapter_number':'0001','length_execution_context':'','multi_dir':'cache/multi/task-fixture'})))
 
 
 def test_only_polish_pl_pp_opt_into_single_body_envelope():
@@ -30,7 +30,7 @@ def test_only_polish_pl_pp_opt_into_single_body_envelope():
     assert all('json_single_string_field' not in n.get('node_params',{}) for n in reader_definition()['nodes'])
 
 
-def test_single_writer_uses_same_body_envelope_without_changing_planning_nodes(tmp_path, monkeypatch):
+def test_single_writer_uses_body_envelope_without_changing_planning_nodes(tmp_path, monkeypatch):
     resource=Path(__file__).resolve().parents[1]/'resources/workflows/mvp/definition.json'
     doc=json.loads(resource.read_text(encoding='utf-8'))
     assert doc['version']>=10
@@ -40,6 +40,16 @@ def test_single_writer_uses_same_body_envelope_without_changing_planning_nodes(t
     result=execute(tmp_path,'agent_sw','{"body":"'+body+'"}')
     assert result.status=='completed',result.error
     assert json.loads((tmp_path/'cache/si/chapter.json').read_text(encoding='utf-8'))['body']==body
+
+
+def test_scene_writer_publishes_plain_prose_to_its_gate(tmp_path, monkeypatch):
+    resource=Path(__file__).resolve().parents[1]/'resources/workflows/mvp/definition.json'
+    doc=json.loads(resource.read_text(encoding='utf-8'))
+    monkeypatch.setitem(execute.__globals__,'definition',lambda:doc)
+    body='她问：“船开了？”\n\n他还按着桨。'
+    result=execute(tmp_path,'agent_dw',body)
+    assert result.status=='completed',result.error
+    assert (tmp_path/'cache/multi/task-fixture/scene-2.txt').read_text(encoding='utf-8')==body
 
 
 @pytest.mark.parametrize('node_id',['agent_pl','agent_pp'])

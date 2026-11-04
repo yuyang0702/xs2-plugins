@@ -720,11 +720,14 @@ def confirmed_indexes(root, chapter, proposed, arb, body):
             operation = item.get('operation', 'plant')
             if operation not in ('plant', 'advance', 'resolve'):
                 raise ValueError('伏笔确认操作无效。')
+            if operation == 'advance' and identity in planned and identity not in entries and item in operations:
+                # This is the first observed manifestation of a planned thread.
+                operation = 'plant'
             if operation != 'plant' and identity not in entries:
                 raise ValueError('不能推进或回收尚未在正文埋下的伏笔或债务。')
             if item in additions and identity in planned and identity not in entries:
                 raise ValueError('新发现的伏笔编号与本章计划重复，请重新核对。')
-            value = {**old, **item, 'evidence': quote, 'source': '正文确认', 'source_chapter': chapter}
+            value = {**old, **item, 'operation': operation, 'evidence': quote, 'source': '正文确认', 'source_chapter': chapter}
             value['status'] = 'resolved' if operation == 'resolve' else ('progressing' if operation == 'advance' and key == 'hooks' else 'open')
             value.setdefault('chapter_created', int(chapter))
             if operation == 'resolve': value['chapter_resolved'] = int(chapter)
@@ -732,6 +735,29 @@ def confirmed_indexes(root, chapter, proposed, arb, body):
             entries[identity] = value
         result[key] = list(entries.values())
     return base, result
+
+
+def observed_characters(proposed, body):
+    if not isinstance(proposed, dict):
+        raise ValueError("确认状态格式无效。")
+    items = proposed.get('characters', [])
+    if not isinstance(items, list):
+        raise ValueError('人物状态必须是列表。')
+    for item in items:
+        if not isinstance(item, dict) or not item.get('name'):
+            raise ValueError("人物状态缺少姓名。")
+        quote = validated_evidence(item.get("evidence"), body,
+                                   "人物状态的正文依据无法核实，未更新正式档案。")
+        yield item, quote
+
+
+def validate_observation(root, chapter):
+    chapter = chapter_id(chapter)
+    body = read(root, f"story/{chapter}/chapter.md")
+    obs = load(root, "cache/observer/obs_output.json", {})
+    proposed = obs.get('confirmed_state') if isinstance(obs, dict) else None
+    list(observed_characters(proposed, body))
+    confirmed_indexes(root, chapter, proposed, {}, body)
 
 
 def commit(root, chapter):
@@ -749,16 +775,8 @@ def commit(root, chapter):
     previous = prior[-1] if prior else {}
     chars = {c["name"]: c for c in previous.get("characters", []) if c.get("name")}
     proposed = obs.get("confirmed_state", {})
-    if not isinstance(proposed, dict):
-        raise ValueError("确认状态格式无效。")
     evidence_changes = []
-    if not isinstance(proposed.get('characters', []), list):
-        raise ValueError('人物状态必须是列表。')
-    for item in proposed.get("characters", []):
-        if not isinstance(item, dict) or not item.get("name"):
-            raise ValueError("人物状态缺少姓名。")
-        quote = validated_evidence(item.get("evidence"), body,
-                                   "人物状态的正文依据无法核实，未更新正式档案。")
+    for item, quote in observed_characters(proposed, body):
         name = item["name"]
         old = chars.get(name, {"name": name})
         chars[name] = {**old, **item, "evidence": quote, "source_chapter": chapter}
@@ -829,12 +847,20 @@ def refresh_archive(root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["context", "begin-reader", "commit-reader", "begin-review", "commit", "preflight", "refresh"])
+    parser.add_argument("command", choices=["context", "begin-reader", "commit-reader", "begin-review", "validate-observation", "commit", "preflight", "refresh"])
     parser.add_argument("--chapter", default="0001")
     parser.add_argument("--check", action='store_true')
     parser.add_argument("--policy-alias", action="append", default=[])
     args = parser.parse_args()
     root = Path.cwd().resolve()
+    if args.command == "validate-observation":
+        try:
+            validate_observation(root, args.chapter)
+        except ValueError:
+            print('<WF_REJECT_UPSTREAM target="agent_obs">[archive_evidence] 对照本章原文重新复制证据，'
+                  '包括代词、原标点，不能把“她”改成人名。首次进入正文的伏笔和债务用 plant；'
+                  '缺乏原文依据则不收录。</WF_REJECT_UPSTREAM>')
+        return
     action = {"context": prepare_context, "begin-reader": begin_reader, "commit-reader": commit_reader,
               "begin-review": begin_review, "commit": commit, "preflight": preflight}
     result = (refresh_archive(root) if args.command == "refresh" else

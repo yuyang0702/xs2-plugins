@@ -22,6 +22,7 @@ EXPECTED_WORKFLOWS = {
     "style-compatibility-advisor",
 }
 EXPECTED_SCRIPT_LIBRARIES = {
+    "multi_scene",
     "character_review",
     "manuscript_quality",
     "story_support",
@@ -182,7 +183,13 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
                 assert params["script_group"] in {"nvl", "xs2"}
                 referenced_libraries.add(params["script_name"])
 
-    assert referenced_agents == set(agents)
+    # Saved task snapshots still resolve these original multi-writer agents.
+    legacy_writers = {
+        "novel-writer", "novel-dialogue-writer", "novel-action-writer", "novel-internal-writer",
+        "novel-description-writer", "novel-transition-writer", "novel-storyboard-integrator",
+    }
+    assert set(agents) - referenced_agents == legacy_writers
+    assert referenced_agents <= set(agents)
     assert referenced_libraries == EXPECTED_SCRIPT_LIBRARIES
     # Resolve each workflow identity to its actual executable. Host-loaded
     # service libraries (voice/console support) may legitimately be unreferenced.

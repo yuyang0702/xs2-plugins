@@ -381,3 +381,23 @@ def test_nonfinite_scores_and_malformed_reading_lists_are_rejected(tmp_path):
     source=support.context(tmp_path)
     with pytest.raises(ValueError, match='文字列表'):
         support.parse_proposal(json.dumps({'reply':'建议','options':[{'chapters':[], 'risks':{'risk':'坏格式'}}]}),source,'创意')
+
+def test_observation_validation_rejects_paraphrased_quote_before_archive_write(tmp_path):
+    support.write(tmp_path, 'story/0001/chapter.md', '她把灯放回去。')
+    support.begin_review(tmp_path, '0001')
+    support.write(tmp_path, 'cache/observer/obs_output.json', {'confirmed_state': {
+        'characters': [{'name': '赵青', 'evidence': '赵青把灯放回去。'}]}})
+    with pytest.raises(ValueError, match='无法核实'):
+        support.validate_observation(tmp_path, '0001')
+    assert not (tmp_path / 'story/0001/confirmed_state.json').exists()
+
+
+def test_planned_debt_advance_is_first_recorded_as_plant(tmp_path):
+    quote = '阿柱把欠条卷起来。'
+    support.write(tmp_path, 'story/0001/chapter.md', quote)
+    support.write(tmp_path, 'story/0001/planned_debts.json', [{'id': 'd001', 'description': '欠药钱'}])
+    support.begin_review(tmp_path, '0001')
+    _, result = support.confirmed_indexes(tmp_path, '0001', {
+        'debts': [{'id': 'd001', 'operation': 'advance', 'evidence': quote}]}, {}, quote)
+    assert result['debts'][0]['operation'] == 'plant'
+    assert result['debts'][0]['evidence'] == quote

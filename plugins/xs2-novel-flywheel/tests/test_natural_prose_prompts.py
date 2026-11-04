@@ -16,6 +16,7 @@ PROSE_AGENTS = (
     "novel-action-writer", "novel-internal-writer", "novel-description-writer",
     "novel-storyboard-integrator", "novel-transition-writer",
     "novel-polisher", "novel-professional-polisher",
+    "novel-multi-scene-planner", "novel-multi-scene-writer",
 )
 # These are obsolete imperatives, not banned words in the novel itself.
 # Fact, schema, information-access and author-specified constraints are retained.

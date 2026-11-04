@@ -3057,6 +3057,34 @@
         }
       ],
       "preambles": {}
+    },
+    "novel-multi-scene-planner": {
+      "description": "短篇与章节的连续场景规划",
+      "sections": [
+        {
+          "content": "只划分场景、限制信息、分配已定事件，保持已确认事实。严格输出任务要求的 JSON。",
+          "enabled": true,
+          "name": "novel_multi_scene_planner_role",
+          "order": 0,
+          "workflow_only": false,
+          "cache_break": false
+        }
+      ],
+      "preambles": {}
+    },
+    "novel-multi-scene-writer": {
+      "description": "多写手场景正文",
+      "sections": [
+        {
+          "content": "按唯一场景的起点、转折和终点写足正文，保持焦点和因果。直接写小说正文，按自然段换行；如果任务要求局部扩写，只写可插入的新增正文。",
+          "enabled": true,
+          "name": "novel_multi_scene_writer_role",
+          "order": 0,
+          "workflow_only": false,
+          "cache_break": false
+        }
+      ],
+      "preambles": {}
     }
   }
 }

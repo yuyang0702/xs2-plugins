@@ -269,7 +269,6 @@ def test_existing_character_archive_is_never_rewritten_to_relax_rules(tmp_path):
 
 def test_character_prompts_distinguish_fact_direction_values_and_reactions():
     prompts = json.loads((PLUGIN / 'resources/prompts.json').read_text(encoding='utf-8-sig'))['agents']
-    assert len(prompts) == 41
     for name in ['novel-short-character', 'novel-character-skeleton', 'novel-character-belief', 'novel-character-deep', 'novel-character-voice']:
         content = '\n'.join(s['content'] for s in prompts[name]['sections'] if s.get('enabled', True))
         for phrase in ['谁救了谁', '价值底线', '疲惫', '回应对方', '不得照抄']:

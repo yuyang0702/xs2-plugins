@@ -223,20 +223,49 @@ def repair_ready(state, feedback_path):
                         "autoRepairPlanId": "", "lengthRepairFeedback": {}}}
 
 
+def dialogue_writer_node(definition, writer_type):
+    if writer_type != 'muti':
+        return 'agent_sw'
+    if any(node['id'] == 'agent_dw' and node.get('agent_type', '').endswith('novel-multi-scene-writer')
+           for node in definition.get('nodes', [])):
+        return 'agent_dw'
+    return 'agent_nw'
+
+
+def _is_body_writer(node, stage):
+    identity = node['id']
+    if stage == 'mvp':
+        agent_type = node.get('agent_type', '')
+        if agent_type.endswith('novel-multi-scene-writer'):
+            return True
+        if agent_type.endswith('novel-multi-scene-planner'):
+            return False
+        return identity in {'agent_sw', 'agent_nw', 'agent_dw', 'agent_aw', 'agent_tw', 'agent_iw', 'agent_dsw'}
+    return stage == 'polish' and identity in {'agent_pl', 'agent_pp'}
+
+
 def model_overrides(state, definition, stage):
-    eligible = [node for node in definition.get("nodes", [])
-                if node.get("node_type", "agent") == "agent" and node["id"] != "agent_fragment_review"
-                and not ((node.get("var_bindings") or {}).get("model_override") or {}).get("var_key")
-                and "{{" not in node.get("agent_type", "") and "{{" not in (node.get("model_override") or "")]
-    selected = {}
+    analysis = state.get('analysisModel')
     writer = state.get('writerModel')
-    body_nodes = {'mvp': {'agent_sw', 'agent_nw', 'agent_dw', 'agent_aw', 'agent_tw', 'agent_iw', 'agent_dsw'},
-                  'polish': {'agent_pl', 'agent_pp'}}
-    if writer and stage in body_nodes:
-        selected.update({node['id']: writer for node in eligible if node['id'] in body_nodes[stage]})
-    model = state.get("repairModel")
-    if model and stage in {"polish", "reader-sim"} and (state.get("repairReviewOnly") or state.get("readerRepairCount")):
-        selected.update({node['id']: model for node in eligible})
+    polisher = state.get('polishModel')
+    repair = state.get('repairModel') if state.get('repairReviewOnly') or state.get('readerRepairCount') else None
+    selected = {}
+    for node in definition.get('nodes', []):
+        identity = node['id']
+        if (node.get('node_type', 'agent') != 'agent'
+                or ((node.get('var_bindings') or {}).get('model_override') or {}).get('var_key')
+                or '{{' in node.get('agent_type', '') or '{{' in (node.get('model_override') or '')):
+            continue
+        if identity == 'agent_fragment_review' and not analysis:
+            continue
+        if _is_body_writer(node, stage):
+            model = (polisher or repair or writer) if stage == 'polish' else writer
+        elif stage == 'character' and identity != 'agent_card_semantic_review':
+            model = None  # Respect the selected character author.
+        else:
+            model = analysis or (repair if stage in {'polish', 'reader-sim'} else None)
+        if model:
+            selected[identity] = model
     return selected or None
 
 
@@ -251,9 +280,6 @@ def model_params_overrides(state, definition, stage):
     writer = state.get('writerModel')
     if not params or not writer:
         return None
-    body_nodes = {'mvp': {'agent_sw', 'agent_nw', 'agent_dw', 'agent_aw', 'agent_tw', 'agent_iw', 'agent_dsw'},
-                  'polish': {'agent_pl', 'agent_pp'}}
     selected = model_overrides(state, definition, stage) or {}
-    result = {node_id: deepcopy(params) for node_id in body_nodes.get(stage, set())
-              if selected.get(node_id) == writer}
-    return result or None
+    return {node['id']: deepcopy(params) for node in definition.get('nodes', [])
+            if _is_body_writer(node, stage) and selected.get(node['id']) == writer} or None

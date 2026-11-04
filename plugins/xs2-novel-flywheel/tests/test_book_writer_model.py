@@ -75,3 +75,17 @@ def test_model_budget_does_not_overwrite_previous_attempt_feedback(tmp_path):
     assert second['action'] == 'advance'
     assert second['updates']['lengthRepairFeedback']['path'] != state['lengthRepairFeedback']['path']
     assert original.read_bytes() == content and original.stat().st_mtime_ns == stamp
+
+def test_explicit_book_roles_separate_writer_planner_polisher_and_assessor():
+    p = policy()
+    book = {'writerModel': 'volcengine:writer', 'analysisModel': 'system:model', 'polishModel': MODEL}
+    mvp = {'nodes': [{'id': key, 'node_type': 'agent', 'agent_type': agent}
+                     for key, agent in [('agent_nw', 'novel-multi-scene-planner'),
+                                        ('agent_aw', 'novel-multi-scene-writer'),
+                                        ('agent_si', 'novel-multi-scene-writer'),
+                                        ('agent_trimmer', 'existing')]]}
+    assert p.model_overrides(book, mvp, 'mvp') == {
+        'agent_nw': 'system:model', 'agent_aw': 'volcengine:writer',
+        'agent_si': 'volcengine:writer', 'agent_trimmer': 'system:model'}
+    assert p.model_overrides(book, definition(), 'polish')['agent_pp'] == MODEL
+    assert p.model_overrides(book, definition(), 'polish')['agent_fragment_review'] == 'system:model'

@@ -870,6 +870,34 @@
       "available_for_sub_session": true,
       "visible_skill_group_ids": [],
       "visible_rule_group_ids": []
+    },
+    "novel-multi-scene-planner": {
+      "description": "短篇与章节的连续场景规划",
+      "prompt_template": "novel-multi-scene-planner",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 1,
+      "system_prompt_template": "",
+      "include_skills": false,
+      "include_rules": false,
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
+    },
+    "novel-multi-scene-writer": {
+      "description": "多写手场景正文",
+      "prompt_template": "novel-multi-scene-writer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 1,
+      "system_prompt_template": "",
+      "include_skills": false,
+      "include_rules": false,
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
     }
   }
 }
