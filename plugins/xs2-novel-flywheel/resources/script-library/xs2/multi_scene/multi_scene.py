@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import uuid
 
 _LENGTH_SPEC = importlib.util.spec_from_file_location(
     'multi_scene_length', Path(__file__).resolve().parents[1] / 'console_service/length_quality.py')
@@ -144,6 +145,39 @@ def save_json(path, data):
     length.atomic_text(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
+def expansion_retry(directory, index, guard, minimum, maximum, issue=''):
+    actual = length.count_prose(guard['before'] + '\n\n' + guard['after'])
+    low, high = minimum - actual, maximum - actual
+    feedback = f'上次新增片段未采用：{issue}\n只重写新增部分，原段落仍由插件保留。\n' if issue else ''
+    length.atomic_text(directory / f'retry-{index}.md', (
+        feedback + f'【本场局部扩写】已有正文实测 {actual} 字。只返回新增正文，至少 {low}、最多 {high} 实字。'
+        '它将由插件插入原段落之间。写出插入位置尚未发生的现场行动和反应，'
+        '保持焦点、事件顺序和交棒。不增加证据或改写结果，不复述两侧原文，不写出标记。\n\n'
+        f'【插入点前的原文】\n{guard["before"]}\n\n【插入点后的原文】\n{guard["after"]}\n'))
+
+
+def reset_scene(directory, index, minimum, maximum, reason):
+    """Explicit recovery for a stopped scene; keep accepted siblings and audit the old seed."""
+    if index not in range(1, len(WRITERS) + 1):
+        raise ValueError('无效场景编号')
+    brief = read_json(directory / f'brief-{index}.json')
+    names = [f'expansion-{index}.json', f'validated-{index}.json', f'scene-{index}.txt', f'retry-{index}.md']
+    previous = {name: (directory / name).read_text(encoding='utf-8-sig')
+                for name in names if (directory / name).is_file()}
+    archive = length.safe_path(directory, f'rejected/scene-{index}-{uuid.uuid4().hex}.json')
+    save_json(archive, {'reason': reason, 'files': previous})
+    for name in names[:3]:
+        (directory / name).unlink(missing_ok=True)
+    brief.update(minimum=minimum, maximum=maximum, draft_target=(minimum + maximum) // 2)
+    save_json(directory / f'brief-{index}.json', brief)
+    length.atomic_text(directory / f'retry-{index}.md', (
+        '【本场重写】上轮场景未通过，旧稿仅归档，不参与本次正文。只重写本场完整正文。'
+        'entry 中的事已经发生，不再重新演一遍；从 turn 的新动作开始，写到 exit 即停。'
+        f'本场范围 {minimum}—{maximum} 实字。此前失败原因：{reason}。\n'
+        '本次唯一交付范围（全篇资料仅用于核实事实，不能扩大本场范围）：\n'
+        + json.dumps(brief, ensure_ascii=False, indent=2) + '\n'))
+
+
 def accept_scene_attempt(directory, index, incoming, minimum, maximum, pov):
     """On a short scene, keep the existing ending and ask only for a new passage."""
     guard_path = directory / f'expansion-{index}.json'
@@ -159,18 +193,16 @@ def accept_scene_attempt(directory, index, incoming, minimum, maximum, pov):
         return None
     actual = length.count_prose(body)
     if not issue.startswith('[scene_length]') or actual >= minimum:
+        if guard:
+            expansion_retry(directory, index, guard, minimum, maximum, issue)
         return issue
     insertion = insertion_point(body)
     if not insertion:
         return issue
     before, after = insertion
     save_json(guard_path, {'before': before, 'after': after})
-    low, high = minimum - actual, maximum - actual
-    length.atomic_text(retry_path, (
-        f'【本场局部扩写】已有正文实测 {actual} 字。只返回新增正文，至少 {low}、最多 {high} 实字。'
-        '它将由插件插入原段落之间。分自然段写出一个完整的现场小动作及其后果，'
-        '保持原有焦点、事件顺序和交棒。不增加证据或改写结果，不复述两侧原文，不写出标记。\n\n'
-        f'【插入点前的原文】\n{before}\n\n【插入点后的原文】\n{after}\n'))
+    low = minimum - actual
+    expansion_retry(directory, index, {'before': before, 'after': after}, minimum, maximum)
     return f'[scene_length] 本场正文实测 {actual}，缺少至少 {low} 实字。请按新增片段指令续写指定位置。'
 
 
@@ -180,10 +212,11 @@ def retry(node, reason):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('prepare', 'plan', 'scene', 'assemble'))
+    parser.add_argument('action', choices=('prepare', 'plan', 'scene', 'assemble', 'reset-scene'))
     parser.add_argument('--target', required=True)
     parser.add_argument('--pov', choices=('first_person', 'third_person'), required=True)
     parser.add_argument('--scene', type=int, choices=range(1, len(WRITERS) + 1))
+    parser.add_argument('--reason', default='场景返修后仍未通过，重新按本场边界交付')
     args = parser.parse_args()
     root = Path.cwd()
     task = os.environ.get('TASK_ID', '')
@@ -192,7 +225,11 @@ def main():
     relative = f'cache/multi/{task}'
     directory = length.safe_path(root, relative)
     lo, hi = budgets(args.target)
-    if args.action == 'prepare':
+    if args.action == 'reset-scene':
+        if args.scene is None:
+            parser.error('--scene is required for scene recovery')
+        reset_scene(directory, args.scene, lo[args.scene - 1], hi[args.scene - 1], args.reason)
+    elif args.action == 'prepare':
         save_json(directory / 'budgets.json', [
             {'id': i, 'minimum': a, 'maximum': b} for i, (a, b) in enumerate(zip(lo, hi), 1)])
         for key, value in {'multi_dir': relative, 'multi_budgets': f'{relative}/budgets.json'}.items():
@@ -206,7 +243,7 @@ def main():
             return
         for i, row in enumerate(plan['scenes'], 1):
             brief = {**row, 'focus': plan['focus'], 'minimum': lo[i - 1], 'maximum': hi[i - 1],
-                     'draft_target': hi[i - 1] + max(75, lo[i - 1] // 4)}
+                     'draft_target': (lo[i - 1] + hi[i - 1]) // 2}
             name = f'brief-{i}.json'
             save_json(directory / name, brief)
             print(f'<WF_VAR>multi_brief_{i}:{relative}/{name}</WF_VAR>')

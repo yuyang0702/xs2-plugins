@@ -1,7 +1,7 @@
 {
   "workflow_id": "mvp",
   "name": "章节生产管线",
-  "version": 15,
+  "version": 16,
   "nodes": [
     {
       "id": "script_story_context",
@@ -621,7 +621,7 @@
       "node_type": "agent",
       "agent_type": "novel-multi-scene-writer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "你只写第 2 场。用第 2 项的实字预算，尽量写到其上下限的中间。实字只计汉字和英文数字词，不计标点。你写完整场景正文，须有足够的可见行动与后果，不能交梗概，也不能复制旧段凑数。\n你的场景卡和字数：\n{{multi_brief_2}}\nminimum 与 maximum 是正文实测范围。按 draft_target 安排足够的现场行动和交涉。正文分成至少六个有不同动作或感知落点的自然段，切换说话人时换行。如收到了实测不足的反馈，增加具体的现场经过和角色反应，不缩写成几句概述。\n以本场 entry 为已经存在的状态，直接接住，不复述前场；本场独占的 turn 要实际发生，写到 exit 即停，别提前写下一场。只写计划给定的焦点人物能见、能听、能记忆或合理推断的事。第三人称叙事中，第一人称只在直接引语中出现。配角的态度由焦点人物看见的举止或听到的话表现；保留未证实的可能性。需要交流才写对白，避免台词复述刚刚发生的事。\n本书视角：{{narrative_pov}}。范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n资料（轻量短篇有完整资料时以其为准）：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用的本章方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n直接返回纯正文。段落之间留空行，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n\n如果下面有【本场局部扩写】，它优先于整场交付要求。请只返回插入点的新增正文，长度按给出的净增范围，绝不附带两侧原文。\n{{multi_retry_2}}",
+      "first_message": "背景资料仅用于核实本书事实和人物，不能据此重演本场 entry 已经完成的情节，也不能提前完成后场。\n本书视角：{{narrative_pov}}；范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n事实背景：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n\n【本次唯一场景与实字预算】\n{{multi_brief_2}}\n你只写第 2 场。entry 是本场开始时已经成立的状态，直接从 turn 的新动作推进，写到 exit 即停。人物信息限于 knowledge，不把全书方案当作人物已经知道的事实。只写既定焦点人物所见、所闻和有限推断，不叙述旁人内心。\n按 draft_target 安排正文，minimum 与 maximum 是本场实测范围；中文按汉字、英文和数字按词，标点不计。用具体行动、感知和取舍展开本场，交流有需要才开口，不用对白复述经过。不为凑段数反复写同一个动作，按事件和说话人自然换段。\n直接返回本场纯正文，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n以下若有【本场局部扩写】，只交付指定位置的新增正文，不能附带两侧原文；若有【本场重写】，按其边界重新交付完整场景。\n{{multi_retry_2}}",
       "position": {
         "x": 150,
         "y": 540
@@ -647,7 +647,7 @@
       "node_type": "agent",
       "agent_type": "novel-multi-scene-writer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "你只写第 1 场。用第 1 项的实字预算，尽量写到其上下限的中间。实字只计汉字和英文数字词，不计标点。你写完整场景正文，须有足够的可见行动与后果，不能交梗概，也不能复制旧段凑数。\n你的场景卡和字数：\n{{multi_brief_1}}\nminimum 与 maximum 是正文实测范围。按 draft_target 安排足够的现场行动和交涉。正文分成至少六个有不同动作或感知落点的自然段，切换说话人时换行。如收到了实测不足的反馈，增加具体的现场经过和角色反应，不缩写成几句概述。\n以本场 entry 为已经存在的状态，直接接住，不复述前场；本场独占的 turn 要实际发生，写到 exit 即停，别提前写下一场。只写计划给定的焦点人物能见、能听、能记忆或合理推断的事。第三人称叙事中，第一人称只在直接引语中出现。配角的态度由焦点人物看见的举止或听到的话表现；保留未证实的可能性。需要交流才写对白，避免台词复述刚刚发生的事。\n本书视角：{{narrative_pov}}。范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n资料（轻量短篇有完整资料时以其为准）：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用的本章方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n直接返回纯正文。段落之间留空行，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n\n如果下面有【本场局部扩写】，它优先于整场交付要求。请只返回插入点的新增正文，长度按给出的净增范围，绝不附带两侧原文。\n{{multi_retry_1}}",
+      "first_message": "背景资料仅用于核实本书事实和人物，不能据此重演本场 entry 已经完成的情节，也不能提前完成后场。\n本书视角：{{narrative_pov}}；范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n事实背景：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n\n【本次唯一场景与实字预算】\n{{multi_brief_1}}\n你只写第 1 场。entry 是本场开始时已经成立的状态，直接从 turn 的新动作推进，写到 exit 即停。人物信息限于 knowledge，不把全书方案当作人物已经知道的事实。只写既定焦点人物所见、所闻和有限推断，不叙述旁人内心。\n按 draft_target 安排正文，minimum 与 maximum 是本场实测范围；中文按汉字、英文和数字按词，标点不计。用具体行动、感知和取舍展开本场，交流有需要才开口，不用对白复述经过。不为凑段数反复写同一个动作，按事件和说话人自然换段。\n直接返回本场纯正文，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n以下若有【本场局部扩写】，只交付指定位置的新增正文，不能附带两侧原文；若有【本场重写】，按其边界重新交付完整场景。\n{{multi_retry_1}}",
       "position": {
         "x": 350,
         "y": 450
@@ -673,7 +673,7 @@
       "node_type": "agent",
       "agent_type": "novel-multi-scene-writer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "你只写第 3 场。用第 3 项的实字预算，尽量写到其上下限的中间。实字只计汉字和英文数字词，不计标点。你写完整场景正文，须有足够的可见行动与后果，不能交梗概，也不能复制旧段凑数。\n你的场景卡和字数：\n{{multi_brief_3}}\nminimum 与 maximum 是正文实测范围。按 draft_target 安排足够的现场行动和交涉。正文分成至少六个有不同动作或感知落点的自然段，切换说话人时换行。如收到了实测不足的反馈，增加具体的现场经过和角色反应，不缩写成几句概述。\n以本场 entry 为已经存在的状态，直接接住，不复述前场；本场独占的 turn 要实际发生，写到 exit 即停，别提前写下一场。只写计划给定的焦点人物能见、能听、能记忆或合理推断的事。第三人称叙事中，第一人称只在直接引语中出现。配角的态度由焦点人物看见的举止或听到的话表现；保留未证实的可能性。需要交流才写对白，避免台词复述刚刚发生的事。\n本书视角：{{narrative_pov}}。范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n资料（轻量短篇有完整资料时以其为准）：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用的本章方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n直接返回纯正文。段落之间留空行，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n\n如果下面有【本场局部扩写】，它优先于整场交付要求。请只返回插入点的新增正文，长度按给出的净增范围，绝不附带两侧原文。\n{{multi_retry_3}}",
+      "first_message": "背景资料仅用于核实本书事实和人物，不能据此重演本场 entry 已经完成的情节，也不能提前完成后场。\n本书视角：{{narrative_pov}}；范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n事实背景：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n\n【本次唯一场景与实字预算】\n{{multi_brief_3}}\n你只写第 3 场。entry 是本场开始时已经成立的状态，直接从 turn 的新动作推进，写到 exit 即停。人物信息限于 knowledge，不把全书方案当作人物已经知道的事实。只写既定焦点人物所见、所闻和有限推断，不叙述旁人内心。\n按 draft_target 安排正文，minimum 与 maximum 是本场实测范围；中文按汉字、英文和数字按词，标点不计。用具体行动、感知和取舍展开本场，交流有需要才开口，不用对白复述经过。不为凑段数反复写同一个动作，按事件和说话人自然换段。\n直接返回本场纯正文，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n以下若有【本场局部扩写】，只交付指定位置的新增正文，不能附带两侧原文；若有【本场重写】，按其边界重新交付完整场景。\n{{multi_retry_3}}",
       "position": {
         "x": 520,
         "y": 540
@@ -699,7 +699,7 @@
       "node_type": "agent",
       "agent_type": "novel-multi-scene-writer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "你只写第 4 场。用第 4 项的实字预算，尽量写到其上下限的中间。实字只计汉字和英文数字词，不计标点。你写完整场景正文，须有足够的可见行动与后果，不能交梗概，也不能复制旧段凑数。\n你的场景卡和字数：\n{{multi_brief_4}}\nminimum 与 maximum 是正文实测范围。按 draft_target 安排足够的现场行动和交涉。正文分成至少六个有不同动作或感知落点的自然段，切换说话人时换行。如收到了实测不足的反馈，增加具体的现场经过和角色反应，不缩写成几句概述。\n以本场 entry 为已经存在的状态，直接接住，不复述前场；本场独占的 turn 要实际发生，写到 exit 即停，别提前写下一场。只写计划给定的焦点人物能见、能听、能记忆或合理推断的事。第三人称叙事中，第一人称只在直接引语中出现。配角的态度由焦点人物看见的举止或听到的话表现；保留未证实的可能性。需要交流才写对白，避免台词复述刚刚发生的事。\n本书视角：{{narrative_pov}}。范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n资料（轻量短篇有完整资料时以其为准）：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用的本章方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n直接返回纯正文。段落之间留空行，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n\n如果下面有【本场局部扩写】，它优先于整场交付要求。请只返回插入点的新增正文，长度按给出的净增范围，绝不附带两侧原文。\n{{multi_retry_4}}",
+      "first_message": "背景资料仅用于核实本书事实和人物，不能据此重演本场 entry 已经完成的情节，也不能提前完成后场。\n本书视角：{{narrative_pov}}；范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n事实背景：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n\n【本次唯一场景与实字预算】\n{{multi_brief_4}}\n你只写第 4 场。entry 是本场开始时已经成立的状态，直接从 turn 的新动作推进，写到 exit 即停。人物信息限于 knowledge，不把全书方案当作人物已经知道的事实。只写既定焦点人物所见、所闻和有限推断，不叙述旁人内心。\n按 draft_target 安排正文，minimum 与 maximum 是本场实测范围；中文按汉字、英文和数字按词，标点不计。用具体行动、感知和取舍展开本场，交流有需要才开口，不用对白复述经过。不为凑段数反复写同一个动作，按事件和说话人自然换段。\n直接返回本场纯正文，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n以下若有【本场局部扩写】，只交付指定位置的新增正文，不能附带两侧原文；若有【本场重写】，按其边界重新交付完整场景。\n{{multi_retry_4}}",
       "position": {
         "x": 660,
         "y": 480
@@ -725,7 +725,7 @@
       "node_type": "agent",
       "agent_type": "novel-multi-scene-writer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "你只写第 5 场。用第 5 项的实字预算，尽量写到其上下限的中间。实字只计汉字和英文数字词，不计标点。你写完整场景正文，须有足够的可见行动与后果，不能交梗概，也不能复制旧段凑数。\n你的场景卡和字数：\n{{multi_brief_5}}\nminimum 与 maximum 是正文实测范围。按 draft_target 安排足够的现场行动和交涉。正文分成至少六个有不同动作或感知落点的自然段，切换说话人时换行。如收到了实测不足的反馈，增加具体的现场经过和角色反应，不缩写成几句概述。\n以本场 entry 为已经存在的状态，直接接住，不复述前场；本场独占的 turn 要实际发生，写到 exit 即停，别提前写下一场。只写计划给定的焦点人物能见、能听、能记忆或合理推断的事。第三人称叙事中，第一人称只在直接引语中出现。配角的态度由焦点人物看见的举止或听到的话表现；保留未证实的可能性。需要交流才写对白，避免台词复述刚刚发生的事。\n本书视角：{{narrative_pov}}。范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n资料（轻量短篇有完整资料时以其为准）：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用的本章方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n直接返回纯正文。段落之间留空行，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n\n如果下面有【本场局部扩写】，它优先于整场交付要求。请只返回插入点的新增正文，长度按给出的净增范围，绝不附带两侧原文。\n{{multi_retry_5}}",
+      "first_message": "背景资料仅用于核实本书事实和人物，不能据此重演本场 entry 已经完成的情节，也不能提前完成后场。\n本书视角：{{narrative_pov}}；范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n事实背景：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n\n【本次唯一场景与实字预算】\n{{multi_brief_5}}\n你只写第 5 场。entry 是本场开始时已经成立的状态，直接从 turn 的新动作推进，写到 exit 即停。人物信息限于 knowledge，不把全书方案当作人物已经知道的事实。只写既定焦点人物所见、所闻和有限推断，不叙述旁人内心。\n按 draft_target 安排正文，minimum 与 maximum 是本场实测范围；中文按汉字、英文和数字按词，标点不计。用具体行动、感知和取舍展开本场，交流有需要才开口，不用对白复述经过。不为凑段数反复写同一个动作，按事件和说话人自然换段。\n直接返回本场纯正文，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n以下若有【本场局部扩写】，只交付指定位置的新增正文，不能附带两侧原文；若有【本场重写】，按其边界重新交付完整场景。\n{{multi_retry_5}}",
       "position": {
         "x": 900,
         "y": 420
@@ -751,7 +751,7 @@
       "node_type": "agent",
       "agent_type": "novel-multi-scene-writer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "你只写第 6 场。用第 6 项的实字预算，尽量写到其上下限的中间。实字只计汉字和英文数字词，不计标点。你写完整场景正文，须有足够的可见行动与后果，不能交梗概，也不能复制旧段凑数。\n你的场景卡和字数：\n{{multi_brief_6}}\nminimum 与 maximum 是正文实测范围。按 draft_target 安排足够的现场行动和交涉。正文分成至少六个有不同动作或感知落点的自然段，切换说话人时换行。如收到了实测不足的反馈，增加具体的现场经过和角色反应，不缩写成几句概述。\n以本场 entry 为已经存在的状态，直接接住，不复述前场；本场独占的 turn 要实际发生，写到 exit 即停，别提前写下一场。只写计划给定的焦点人物能见、能听、能记忆或合理推断的事。第三人称叙事中，第一人称只在直接引语中出现。配角的态度由焦点人物看见的举止或听到的话表现；保留未证实的可能性。需要交流才写对白，避免台词复述刚刚发生的事。\n本书视角：{{narrative_pov}}。范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n资料（轻量短篇有完整资料时以其为准）：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用的本章方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n直接返回纯正文。段落之间留空行，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n\n如果下面有【本场局部扩写】，它优先于整场交付要求。请只返回插入点的新增正文，长度按给出的净增范围，绝不附带两侧原文。\n{{multi_retry_6}}",
+      "first_message": "背景资料仅用于核实本书事实和人物，不能据此重演本场 entry 已经完成的情节，也不能提前完成后场。\n本书视角：{{narrative_pov}}；范围：{{conflict_plan_mode}}；章末类型：{{chapter_ending_mode}}。\n作者要求：{{human_intent}}\n事实背景：\n{{short_context_file}}\n{{wroter_context}}\n已确认事实与采用方案：\n{{story_support_context}}\n本书叙述偏好及已采用写法：\n{{pp_learning_context}}\n人物对白适配：\n{{character_voice_adaptations_file}}\n\n【本次唯一场景与实字预算】\n{{multi_brief_6}}\n你只写第 6 场。entry 是本场开始时已经成立的状态，直接从 turn 的新动作推进，写到 exit 即停。人物信息限于 knowledge，不把全书方案当作人物已经知道的事实。只写既定焦点人物所见、所闻和有限推断，不叙述旁人内心。\n按 draft_target 安排正文，minimum 与 maximum 是本场实测范围；中文按汉字、英文和数字按词，标点不计。用具体行动、感知和取舍展开本场，交流有需要才开口，不用对白复述经过。不为凑段数反复写同一个动作，按事件和说话人自然换段。\n直接返回本场纯正文，不加标题、场次号、前情总结、下场预告、槽位、分隔线或字数声明。\n以下若有【本场局部扩写】，只交付指定位置的新增正文，不能附带两侧原文；若有【本场重写】，按其边界重新交付完整场景。\n{{multi_retry_6}}",
       "position": {
         "x": 475,
         "y": 870

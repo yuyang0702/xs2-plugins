@@ -109,3 +109,53 @@ def test_fallback_accepts_plain_prose_and_exact_legacy_envelope():
     assert m.scene_text(json.dumps({'body': body}, ensure_ascii=False)) == body
     assert m.scene_text('{"body":') == ''
     assert m.scene_text('{"body":"句子","notes":"说明"}') == ''
+
+
+def test_rejected_expansion_refreshes_feedback_without_publishing_or_mutating_seed(tmp_path):
+    m = module()
+    seed = '春' * 30 + '\n\n' + '夏' * 30
+    m.accept_scene_attempt(tmp_path, 1, seed, 100, 120, 'third_person')
+    before = (tmp_path / 'expansion-1.json').read_bytes()
+    issue = m.accept_scene_attempt(tmp_path, 1, '春' * 30, 100, 120, 'third_person')
+    assert '[scene_duplicate]' in issue
+    assert '[scene_duplicate]' in (tmp_path / 'retry-1.md').read_text(encoding='utf8')
+    assert (tmp_path / 'expansion-1.json').read_bytes() == before
+    assert not (tmp_path / 'validated-1.json').exists()
+    assert m.accept_scene_attempt(tmp_path, 1, '秋' * 45, 100, 120, 'third_person') is None
+
+
+def test_reset_scene_preserves_other_scenes_and_archives_failed_seed(tmp_path):
+    m = module()
+    seed = {'before': '已经验过灯。', 'after': '她离开了。'}
+    brief = {'entry': '验灯已经完成', 'turn': '协商结算', 'exit': '收款', 'knowledge': '只知道现场事实'}
+    m.save_json(tmp_path / 'expansion-5.json', seed)
+    m.save_json(tmp_path / 'brief-5.json', brief)
+    m.save_json(tmp_path / 'validated-4.json', {'body': '第四场已通过'})
+    keep = (tmp_path / 'validated-4.json').read_bytes()
+    m.reset_scene(tmp_path, 5, 950, 1007, 'scene_duplicate')
+    assert not (tmp_path / 'expansion-5.json').exists()
+    assert (tmp_path / 'validated-4.json').read_bytes() == keep
+    assert list((tmp_path / 'rejected').glob('scene-5-*.json'))
+    retry = (tmp_path / 'retry-5.md').read_text(encoding='utf8')
+    assert '【本场重写】' in retry and '验灯已经完成' in retry and '协商结算' in retry
+    assert '已经验过灯。' not in retry
+
+
+def test_scene_specific_contract_follows_background_and_target_is_inside_budget(tmp_path, monkeypatch, capsys):
+    m = module()
+    definition = json.loads((PLUGIN / 'resources/workflows/mvp/definition.json').read_bytes())
+    for node in definition['nodes']:
+        if node.get('agent_type') == 'novel-multi-scene-writer':
+            prompt = node['first_message']
+            assert prompt.rfind('{{multi_brief_') > prompt.rfind('{{short_context_file}}')
+            assert '至少六个' not in prompt
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('TASK_ID', 'budget-test')
+    directory = tmp_path / 'cache/multi/budget-test'
+    m.save_json(directory / 'plan.json', {'focus': '主角', 'scenes': [
+        {'id': i, 'entry': '起点', 'turn': '推进', 'exit': '终点', 'knowledge': '已知'} for i in range(1, 7)]})
+    monkeypatch.setattr('sys.argv', ['multi_scene', 'plan', '--target', '5000-5300', '--pov', 'third_person'])
+    m.main()
+    for i in range(1, 7):
+        row = m.read_json(directory / f'brief-{i}.json')
+        assert row['minimum'] <= row['draft_target'] <= row['maximum']
