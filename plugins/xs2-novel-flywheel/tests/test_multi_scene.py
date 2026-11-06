@@ -61,6 +61,7 @@ def test_gate_retry_preserves_body_until_all_scenes_are_valid(tmp_path, monkeypa
     bodies = [c * n for c, n in zip('春夏秋冬梅竹', lo)]
     for i, body in enumerate(bodies, 1):
         m.save_json(directory / f'validated-{i}.json', {'body': body})
+        m.save_json(directory / f'brief-{i}.json', {'entry': '已成立的起点', 'turn': '本场行动', 'exit': '交棒'})
     m.save_json(directory / 'validated-4.json', {'body': '冬'})
     monkeypatch.setattr('sys.argv', ['multi_scene', 'assemble', '--target', '300-330', '--pov', 'third_person'])
     m.main()
@@ -159,3 +160,22 @@ def test_scene_specific_contract_follows_background_and_target_is_inside_budget(
     for i in range(1, 7):
         row = m.read_json(directory / f'brief-{i}.json')
         assert row['minimum'] <= row['draft_target'] <= row['maximum']
+
+
+def test_scene_workflow_retries_a_complete_scene_without_inserting_the_old_seed(tmp_path):
+    m = module()
+    m.save_json(tmp_path / 'brief-1.json', {'entry': '进门', 'turn': '取物', 'exit': '离开', 'draft_target': 110})
+    issue = m.accept_full_scene_attempt(tmp_path, 1, '春' * 50, 100, 150, 'third_person')
+    assert '[scene_length]' in issue
+    assert not (tmp_path / 'expansion-1.json').exists()
+    assert '完整场景' in (tmp_path / 'retry-1.md').read_text(encoding='utf8')
+    assert m.accept_full_scene_attempt(tmp_path, 1, '夏' * 115, 100, 150, 'third_person') is None
+    assert m.read_json(tmp_path / 'validated-1.json')['body'] == '夏' * 115
+
+
+def test_draft_allocation_has_room_while_final_word_count_still_needs_polish():
+    m = module()
+    bodies = [c * n for c, n in zip('春夏秋冬梅竹', [710, 680, 1100, 1331, 1050, 750])]
+    assert sum(map(m.length.count_prose, bodies)) > 5300
+    assert m.validate(bodies, '5000-5300', 'third_person') is None
+    assert m.validate([c * 300 for c in '春夏秋冬梅竹'], '5000-5300', 'third_person') is not None

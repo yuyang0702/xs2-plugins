@@ -100,6 +100,18 @@ def test_length_gate_runs_before_posthoc_and_export_even_for_legacy_pass(tmp_pat
             p.launch_check(tmp_path, state, stage)
 
 
+@pytest.mark.parametrize('count', [4500, 6200])
+def test_multi_writer_draft_budget_does_not_relax_final_export_gate(tmp_path, count):
+    p = policy()
+    body = write(tmp_path, 'story/0001/chapter.md', '衣' * count)
+    write(tmp_path, 'story/0001/reader_report.json', json.dumps({
+        'verdict': 'pass', 'body_sha256': hashlib.sha256(body.read_bytes()).hexdigest()}))
+    state = {'mode': 'short', 'values': {'chapter_number': '0001', 'target_word_count': '5000-5300', 'writer_type': 'muti'}}
+    for stage in ['post-hoc', 'export']:
+        with pytest.raises(ValueError):
+            p.launch_check(tmp_path, state, stage)
+
+
 def test_repeated_length_repairs_replace_old_budget_but_keep_original_author_feedback(tmp_path):
     p = policy()
     body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3400)

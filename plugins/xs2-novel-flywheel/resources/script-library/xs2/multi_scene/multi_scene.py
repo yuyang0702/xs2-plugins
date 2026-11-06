@@ -40,6 +40,11 @@ def paragraphs(body):
     return [line.strip() for line in body.splitlines() if line.strip()]
 
 
+def draft_scene_limits(lo, hi):
+    # Allocation is a drafting guide. Final reader/export gates retain the book target.
+    return [max(1, (n * 65 + 99) // 100) for n in lo], [(n * 165 + 99) // 100 for n in hi]
+
+
 def insertion_point(body):
     parts = paragraphs(body)
     if len(parts) > 1:
@@ -103,7 +108,8 @@ def scene_problem(body, minimum, maximum, pov):
 
 def validate(bodies, target, pov):
     """Return the offending scene and safe retry feedback, or None."""
-    lo, hi = budgets(target)
+    nominal_lo, nominal_hi = budgets(target)
+    lo, hi = draft_scene_limits(nominal_lo, nominal_hi)
     if len(bodies) != len(WRITERS):
         raise ValueError('场景数与写手数不一致')
     previous = []
@@ -116,13 +122,14 @@ def validate(bodies, target, pov):
             return i, '[scene_duplicate] 场景含与已有段落高度重复的内容。从自己的入场点继续，删除复述并写出本场的具体行动和后果。'
         previous.extend(paragraphs(body))
     total = sum(counts)
-    if total < sum(lo) or total > sum(hi):
-        short = total < sum(lo)
+    draft_min, draft_max = (sum(nominal_lo) * 90 + 99) // 100, sum(nominal_hi) * 145 // 100
+    if total < draft_min or total > draft_max:
+        short = total < draft_min
         index = max(range(len(counts)), key=lambda i: (lo[i] - counts[i]) if short else (counts[i] - hi[i]))
-        delta = (sum(lo) if short else sum(hi)) - total
+        delta = (draft_min if short else draft_max) - total
         edge = max(1, counts[index] + delta)
         wanted = f'至少 {edge}' if short else f'至多 {edge}'
-        return index, f'[chapter_length] 全章实测 {total} 实字，目标 {target}。本场现为 {counts[index]}，请调整到{wanted}实字，保持情节边界。'
+        return index, f'[chapter_length] 初稿实测 {total}，初稿范围 {draft_min}—{draft_max} 实字。本场现为 {counts[index]}，请调整到{wanted}实字，保持情节边界。成品目标 {target} 仍在润色后验收。'
     return None
 
 
@@ -178,6 +185,28 @@ def reset_scene(directory, index, minimum, maximum, reason):
         + json.dumps(brief, ensure_ascii=False, indent=2) + '\n'))
 
 
+def full_scene_retry(directory, index, issue):
+    brief = read_json(directory / f'brief-{index}.json')
+    length.atomic_text(directory / f'retry-{index}.md', (
+        '【本场完整返修】只重新交付本场完整场景，不返回新增片段，不附上旧稿。'
+        f'上次未采用原因：{issue}\n'
+        'entry 已经发生，从 turn 的新动作开始，到 exit 停止；不要重演前场或提前写后场。'
+        '预算留有初稿余量，按 draft_target 展开行动和后果，避免为凑字重复解释。\n'
+        + json.dumps(brief, ensure_ascii=False, indent=2) + '\n'))
+
+
+def accept_full_scene_attempt(directory, index, incoming, minimum, maximum, pov):
+    issue = scene_problem(incoming, minimum, maximum, pov)
+    if issue is None:
+        save_json(directory / f'validated-{index}.json', {'body': incoming.strip()})
+        return None
+    archive = length.safe_path(directory, f'rejected/scene-{index}-{uuid.uuid4().hex}.json')
+    save_json(archive, {'reason': issue, 'body': incoming})
+    (directory / f'validated-{index}.json').unlink(missing_ok=True)
+    full_scene_retry(directory, index, issue)
+    return issue
+
+
 def accept_scene_attempt(directory, index, incoming, minimum, maximum, pov):
     """On a short scene, keep the existing ending and ask only for a new passage."""
     guard_path = directory / f'expansion-{index}.json'
@@ -224,14 +253,16 @@ def main():
         raise ValueError('场景产物需要有效任务标识')
     relative = f'cache/multi/{task}'
     directory = length.safe_path(root, relative)
-    lo, hi = budgets(args.target)
+    nominal_lo, nominal_hi = budgets(args.target)
+    lo, hi = draft_scene_limits(nominal_lo, nominal_hi)
     if args.action == 'reset-scene':
         if args.scene is None:
             parser.error('--scene is required for scene recovery')
         reset_scene(directory, args.scene, lo[args.scene - 1], hi[args.scene - 1], args.reason)
     elif args.action == 'prepare':
         save_json(directory / 'budgets.json', [
-            {'id': i, 'minimum': a, 'maximum': b} for i, (a, b) in enumerate(zip(lo, hi), 1)])
+            {'id': i, 'minimum': a, 'maximum': b, 'draft_target': (nominal_lo[i-1] + nominal_hi[i-1]) // 2}
+            for i, (a, b) in enumerate(zip(lo, hi), 1)])
         for key, value in {'multi_dir': relative, 'multi_budgets': f'{relative}/budgets.json'}.items():
             print(f'<WF_VAR>{key}:{value}</WF_VAR>')
     elif args.action == 'plan':
@@ -243,7 +274,7 @@ def main():
             return
         for i, row in enumerate(plan['scenes'], 1):
             brief = {**row, 'focus': plan['focus'], 'minimum': lo[i - 1], 'maximum': hi[i - 1],
-                     'draft_target': (lo[i - 1] + hi[i - 1]) // 2}
+                     'draft_target': (nominal_lo[i - 1] + nominal_hi[i - 1]) // 2}
             name = f'brief-{i}.json'
             save_json(directory / name, brief)
             print(f'<WF_VAR>multi_brief_{i}:{relative}/{name}</WF_VAR>')
@@ -255,7 +286,7 @@ def main():
             parser.error('--scene is required for the scene check')
         raw = (directory / f'scene-{args.scene}.txt').read_text(encoding='utf-8-sig')
         i = args.scene - 1
-        problem = accept_scene_attempt(directory, args.scene, scene_text(raw), lo[i], hi[i], args.pov)
+        problem = accept_full_scene_attempt(directory, args.scene, scene_text(raw), lo[i], hi[i], args.pov)
         if problem:
             retry(WRITERS[i], problem)
     else:
@@ -270,8 +301,7 @@ def main():
         error = validate(bodies, args.target, args.pov)
         if error:
             index = error[0] + 1
-            save_json(directory / f'expansion-{index}.json', None)
-            length.atomic_text(directory / f'retry-{index}.md', '')
+            full_scene_retry(directory, index, error[1])
             retry(WRITERS[error[0]], error[1])
             return
         save_json(length.safe_path(root, 'cache/si/chapter.json'), {'body': '\n\n'.join(bodies)})
