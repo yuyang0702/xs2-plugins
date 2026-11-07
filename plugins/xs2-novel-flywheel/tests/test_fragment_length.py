@@ -199,7 +199,7 @@ def test_real_engine_with_actual_fragment_cli_invokes_one_pp_and_commits(tmp_pat
         sessions = {}
         main_session_id = ''
         async def create_sub_session(self, **kwargs):
-            report={'compatible':compatible,'issues':[] if compatible else [{'category':'new_fact','candidate_quote':'丁'*30,'source_quote':'乙'*25,'reason':'不能假设“隐藏账册”已存在'}]}
+            report={'expression_review':{'verdict':'pass','issues':[]},'compatible':compatible,'issues':[] if compatible else [{'category':'new_fact','candidate_quote':'丁'*30,'source_quote':'乙'*25,'reason':'不能假设“隐藏账册”已存在'}]}
             text=json.dumps(report,ensure_ascii=False,indent=2)
             self.sessions['review-session']=SimpleNamespace(record=[{'type':'user','content':'review'},{'type':'assistant','content':text}])
             kwargs['on_auto_complete']('review-session','done','success','')

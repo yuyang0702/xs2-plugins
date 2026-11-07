@@ -60,6 +60,10 @@ def reader_report(root, state):
 
 
 def verify_completion(root, state, stage, task):
+    checkpoint = state.get('automaticCheckpoint') or {}
+    if stage == 'mvp' and checkpoint.get('stage') == stage:
+        recovery_checkpoint().verify(root, state, task)
+        return
     focused = (task.get('node_states') or {}).get('script_focused_commit') or {}
     if stage == 'polish' and focused.get('status') == 'completed':
         length_quality().verify_focused_attempt(root, chapter(state), task, focused)
@@ -119,6 +123,9 @@ def launch_check(root, state, stage, support=None):
     if stage == "mvp":
         body = Path(root) / f"story/{chapter(state)}/chapter.md"
         if body.is_file() and body.read_text(encoding="utf-8").strip():
+            if (state.get('automaticCheckpoint') or {}).get('stage') == stage:
+                recovery_checkpoint().validate(root, state, state['automaticCheckpoint'])
+                return
             raise ValueError("本章已有正文，自动创作不会覆盖；请从章节目录选择返修或重新生成。")
         if support is None:
             raise ValueError("故事连续性检查服务不可用，自动创作已暂停。")
@@ -145,6 +152,95 @@ def _length_cycle(state):
     return cycle, prior_count if same and not focused_migration and not writer_changed else 0, total
 
 
+NEW_BOOK_DEFAULTS_ENABLED = False  # Enable only after end-to-end verification.
+
+
+def new_book_defaults(providers, default_model):
+    """Resolve a new-book recipe against current configuration, never migrate it."""
+    if not NEW_BOOK_DEFAULTS_ENABLED or not default_model:
+        return {}
+    def select(role):
+        candidates = []
+        for identity, provider in providers.items():
+            name = str(provider.get('name', '')).lower()
+            url = str(provider.get('base_url', '')).lower()
+            models = provider.get('models') or []
+            if not isinstance(models, list) or not models or not isinstance(models[0], str):
+                continue
+            matched = ('火山' in name or 'volcengine' in name or 'ark.cn-' in url) if role == 'writer' else (
+                ('modelflare' in name or 'modelflare.' in url) and provider.get('provider_type') == 'anthropic')
+            if matched:
+                candidates.append(identity + ':' + models[0])
+        return candidates[0] if len(candidates) == 1 else ''
+    writer, polish = select('writer'), select('polish')
+    if not writer or not polish:
+        return {}
+    return {'analysisModel': default_model, 'writerModel': writer, 'polishModel': polish,
+            'values': {'writer_type': 'muti'}}
+
+
+def recovery_checkpoint():
+    path = Path(__file__).with_name('recovery_checkpoint.py')
+    spec = importlib.util.spec_from_file_location(__name__ + '_checkpoint', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def checkpoint_options(root, state, stage, definition, source):
+    if stage != 'mvp' or not state.get('automaticCheckpoint'):
+        return {}
+    return recovery_checkpoint().options(root, state, definition, source)
+
+
+def validate_checkpoint(root, state, stage):
+    if stage == 'mvp' and state.get('automaticCheckpoint'):
+        recovery_checkpoint().validate(root, state, state['automaticCheckpoint'])
+
+
+def validate_dispatch(root, state, stage, task):
+    if stage == 'mvp' and state.get('automaticCheckpoint'):
+        validate_checkpoint(root, state, stage)
+        recovery_checkpoint().validate_selection(task, state['automaticCheckpoint'])
+
+
+def recovery_action(state, stage, task, *, root=None):
+    """Bounded, durable relaunch for known execution failures, never content."""
+    if stage not in STAGES or task.get('status') != 'failed' or not task.get('task_id'):
+        return None
+    errors = [str(task.get('error') or '')]
+    errors += [str(node.get('error') or '') for node in task.get('node_states', {}).values()
+               if node.get('status') == 'failed']
+    error = '\n'.join(errors)
+    operational = ('Script Library' in error and '漂移' in error) or any(token in error.lower() for token in (
+        '没有最终 ai 输出可保存', 'json 输出校验失败', 'connection reset', 'connection aborted',
+        'remoteprotocolerror', 'connecttimeout', 'readtimeout', 'tls', 'ssl eof'))
+    if not operational:
+        return None
+    from copy import deepcopy
+    attempts = deepcopy(state.get('automaticRecovery') or {})
+    key = chapter(state) + '/' + stage
+    history = attempts.get(key, [])
+    if len(history) >= 2 or any(item.get('task_id') == task['task_id'] for item in history):
+        return None
+    attempts[key] = history + [{'task_id': task['task_id'], 'reason': error[:1000]}]
+    updates = {'automaticRecovery': attempts}
+    if stage == 'mvp' and root is not None and (Path(root) / f'story/{chapter(state)}/chapter.md').is_file():
+        checkpoint = state.get('automaticCheckpoint')
+        if checkpoint:
+            recovery_checkpoint().validate(root, state, checkpoint)
+            failed_nodes = {key for key, node in task.get('node_states', {}).items() if node.get('status') == 'failed'}
+            if not failed_nodes or not failed_nodes.issubset(checkpoint['selected_node_ids']):
+                return None
+        else:
+            checkpoint = recovery_checkpoint().prepare(root, state, task, chapter(state))
+        if checkpoint is None:
+            return None
+        updates['automaticCheckpoint'] = checkpoint
+    return {'action': 'advance', 'stage': stage, 'reset': list(STAGES[STAGES.index(stage):]),
+            'updates': updates}
+
+
 def next_action(root, state, stage):
     if stage == 'polish':
         result = length_quality().assess(root, chapter(state), state.get('values', {}).get('target_word_count', ''))
@@ -159,6 +255,17 @@ def next_action(root, state, stage):
         if result['status'] in {'short', 'long'}:
             limit = max(1, min(3, int(state.get('autoLengthRepairLimit') or 2)))
             if count >= limit:
+                content_limit = max(1, min(5, int(state.get('autoRepairLimit') or 2)))
+                if (int(state.get('readerRepairCount') or 0) < content_limit
+                        and not state.get('assessmentOnly') and not state.get('repairReviewOnly')):
+                    # A reader report is still strictly length-gated. Let the
+                    # existing planner choose a better content repair instead
+                    # of repeating the rejected local window or requiring UI surgery.
+                    source = length_quality().original_feedback(root, state)
+                    return {'action': 'advance', 'stage': 'reader-sim',
+                            'reset': ['reader-sim', 'post-hoc', 'export'],
+                            'updates': {**progress, 'lengthCheck': result, 'lengthRepairFeedback': {},
+                                        'values': {**state.get('values', {}), 'author_feedback_file': source}}}
                 return {'action': 'pause', 'reason': f"字数自动校正已达上限，实测{result['actual']}实字，目标{result['lower']}—{result['upper']}；未放行审核和导出。",
                         'updates': {**progress, 'lengthCheck': result}}
             feedback = length_quality().correction_feedback(root, {**state, 'lengthRepairCount': count}, result)
@@ -204,7 +311,8 @@ def next_action(root, state, stage):
         return {"action": "finish", "reason": "本次指定范围已完成并导出。"}
     if stage not in STAGES:
         return {"action": "pause", "reason": "当前步骤不属于自动创作流程。"}
-    return {"action": "advance", "stage": STAGES[STAGES.index(stage) + 1]}
+    return {"action": "advance", "stage": STAGES[STAGES.index(stage) + 1],
+            'updates': {'automaticCheckpoint': None} if stage == 'mvp' else {}}
 
 
 def repair_request(state):

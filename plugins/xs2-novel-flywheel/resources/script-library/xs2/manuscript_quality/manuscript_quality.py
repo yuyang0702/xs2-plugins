@@ -16,7 +16,7 @@ def quality():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['guidance', 'focused-ready', 'focused-commit', 'prepare-fragment-review', 'gate-reader'])
+    parser.add_argument('action', choices=['guidance', 'draft-guidance', 'focused-ready', 'focused-commit', 'prepare-fragment-review', 'gate-reader'])
     parser.add_argument('--chapter', required=True)
     parser.add_argument('--target', default='')
     parser.add_argument('--scope', default='content', choices=['content', 'length_only'])
@@ -27,11 +27,14 @@ def main():
     parser.add_argument('--review-binding', default='')
     parser.add_argument('--review-binding-sha', default='')
     parser.add_argument('--policy-runtime', default='')
+    parser.add_argument('--candidate', default='')
     args = parser.parse_args()
     root = Path.cwd().resolve();q = quality()
     chapter = q.chapter_number(args.chapter)
-    if args.action in {'guidance', 'focused-ready', 'focused-commit', 'prepare-fragment-review'}:
-        if args.action == 'focused-commit':
+    if args.action in {'guidance', 'draft-guidance', 'focused-ready', 'focused-commit', 'prepare-fragment-review'}:
+        if args.action == 'draft-guidance':
+            outputs = {'pp_length_context_file': q.prepare_draft_guidance(root, chapter, args.target, args.candidate)}
+        elif args.action == 'focused-commit':
             outputs = q.focused_commit(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha, os.environ.get('TASK_ID', ''), args.review_binding, args.review_binding_sha, args.review_result)
         elif args.action == 'prepare-fragment-review':
             outputs = q.prepare_fragment_review(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha, os.environ.get('TASK_ID', ''))

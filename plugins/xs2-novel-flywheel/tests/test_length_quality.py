@@ -86,7 +86,8 @@ def test_length_retry_is_bounded_and_keeps_body_and_feedback(tmp_path):
     assert body.read_text(encoding='utf-8') == '衣' * 3400
     state.update(action['updates']);state['lengthRepairCount'] = 2
     stopped = p.next_action(tmp_path, state, 'polish')
-    assert stopped['action'] == 'pause' and '字数' in stopped['reason']
+    assert stopped['action'] == 'advance' and stopped['stage'] == 'reader-sim'
+    assert stopped['updates']['lengthRepairCount'] == 2
     assert list((tmp_path / 'quality/length-repairs/0001').rglob('before.md'))
 
 
@@ -214,7 +215,9 @@ def test_legacy_first_draft_limit_is_not_reset_by_new_cycle_tracking(tmp_path):
     write(tmp_path, 'story/0001/chapter.md', '衣' * 4708)
     state = {'autoLengthRepairLimit': 3, 'lengthRepairCount': 3,
              'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    assert policy().next_action(tmp_path, state, 'polish')['action'] == 'pause'
+    action = policy().next_action(tmp_path, state, 'polish')
+    assert action['stage'] == 'reader-sim'
+    assert action['updates']['lengthRepairCount'] == 3
 
 
 def test_identical_body_across_content_repair_cycles_keeps_old_feedback_history(tmp_path):
@@ -307,9 +310,11 @@ def test_polish_and_reader_workflows_wire_real_length_evidence():
     nodes = {n['id']: n for n in polish['nodes']}
     assert nodes['script_length_context']['node_params']['script_name'] == 'manuscript_quality'
     assert any(e['source'] == 'script_length_context' and e['target'] == 'gw_polish_scope' for e in polish['edges'])
-    for name in ['agent_sc', 'agent_pl', 'agent_pp']:
+    for name in ['agent_sc', 'agent_pl']:
         assert '{{length_context_file}}' in nodes[name]['first_message']
         assert 'length_context_file' in nodes[name]['var_bindings']
+    assert '{{pp_length_context_file}}' in nodes['agent_pp']['first_message']
+    assert 'pp_length_context_file' in nodes['agent_pp']['var_bindings']
     reader = json.loads((root / 'reader-sim/definition.json').read_text(encoding='utf-8'))
     assert any(e['source'] == 'script_length_context' and e['target'] == 'agent_reader' for e in reader['edges'])
     assert '{{length_context_file}}' in next(n for n in reader['nodes'] if n['id'] == 'agent_reader')['first_message']

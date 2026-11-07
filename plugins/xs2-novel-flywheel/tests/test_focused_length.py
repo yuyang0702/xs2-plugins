@@ -89,7 +89,7 @@ def test_focused_strategy_migrates_old_revision_budget_once_and_keeps_total(tmp_
     assert policy().next_action(tmp_path, state, 'polish')['action'] == 'pause'
     assert state['lengthRepairTotal'] == 9
     state['readerRepairCount'] = 0; state['lengthRepairCycle'] = 0; state.pop('lengthRepairStrategy')
-    assert policy().next_action(tmp_path, state, 'polish')['action'] == 'pause'
+    assert policy().next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
 
 
 @pytest.mark.parametrize('scope,agents', [('length_only', ['agent_pp', 'agent_fragment_review']), ('content', ['agent_sc', 'agent_pl', 'agent_pp'])])

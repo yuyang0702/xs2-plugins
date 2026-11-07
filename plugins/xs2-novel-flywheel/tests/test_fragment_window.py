@@ -29,7 +29,7 @@ def test_v5_contract_migrates_once_preserving_total_and_hard_limit(tmp_path):
     assert state['lengthRepairStrategy']==quality().LENGTH_REPAIR_STRATEGY=='fragment-v6'
     assert state['lengthRepairTotal']==4 and state['lengthRepairMigration']['from']=='fragment-v5'
     for _ in range(2):state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert policy().next_action(tmp_path,state,'polish')['action']=='pause' and state['lengthRepairTotal']==6
+    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim' and state['lengthRepairTotal']==6
 
 
 def test_large_window_partial_commit_preserves_every_outside_raw_byte(tmp_path):

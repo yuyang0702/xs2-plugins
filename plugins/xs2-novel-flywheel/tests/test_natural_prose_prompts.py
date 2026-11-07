@@ -163,7 +163,9 @@ def test_rhythm_statistic_alone_cannot_become_an_automatic_rewrite_order():
 
 
 @pytest.mark.parametrize('agent,section_name', [
-    ('novel-single-writer', 'sw_self_edit'),
+    ('novel-writer', 'natural_prose_contract'),
+    ('novel-multi-scene-writer', 'natural_prose_contract'),
+    ('novel-single-writer', 'natural_prose_contract'),
     ('novel-dialogue-writer', 'natural_prose_contract'),
     ('novel-storyboard-integrator', 'niw_polish'),
     ('novel-self-critic', 'nsc_dimensions'),

@@ -45,7 +45,7 @@ def test_author_selected_model_starts_one_bounded_budget_keeps_total_and_origina
     body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3206)
     before = body.read_bytes()
     state = exhausted()
-    assert p.next_action(tmp_path, state, 'polish')['action'] == 'pause'
+    assert p.next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
     state['writerModel'] = MODEL
     for expected in [1, 2, 3]:
         action = p.next_action(tmp_path, state, 'polish')
@@ -55,7 +55,7 @@ def test_author_selected_model_starts_one_bounded_budget_keeps_total_and_origina
         assert state['lengthRepairTotal'] == 6 + expected
         assert state['lengthRepairModel'] == MODEL
         assert state['autoLengthRepairLimit'] == 3
-    assert p.next_action(tmp_path, state, 'polish')['action'] == 'pause'
+    assert p.next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
     assert body.read_bytes() == before
 
 

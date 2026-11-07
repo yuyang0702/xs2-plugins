@@ -10,7 +10,11 @@ PLUGIN = Path(__file__).resolve().parents[1]
 REPORT = {'verdict': 'revise', 'continue_reading_score': 62, 'summary': '需要返修',
           'dimensions': {'middle_pacing': {'verdict': 'slow', 'note': '重复'}},
           'issues': [{'location': '中段', 'impact': '节奏重复', 'goal': '保留承重行动', 'priority': 'high'}],
-          'repair_constraints': ['保留既定事实']}
+          'repair_constraints': ['保留既定事实'],
+          'fact_review': {'verdict': 'pass', 'summary': '情节成立'},
+          'expression_review': {'verdict': 'revise', 'summary': '交谈重复解释', 'issues': [
+              {'location': '中段', 'priority': 'medium', 'excerpts': ['我又解释一遍。'],
+               'impact': '同一回答使交谈停住。', 'goal': '合并重复说明。'}]}}
 
 
 def definition():

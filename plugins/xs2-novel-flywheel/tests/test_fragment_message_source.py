@@ -59,7 +59,7 @@ def test_v3_initial_draft_contract_migrates_once_but_markerless_limit_does_not(t
     action=policy().next_action(tmp_path,state,'polish');assert action['action']=='advance';state.update(action['updates'])
     assert state['lengthRepairStrategy']==quality().LENGTH_REPAIR_STRATEGY=='fragment-v6' and state['lengthRepairTotal']==4
     for _ in range(2):state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert policy().next_action(tmp_path,state,'polish')['action']=='pause'
+    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim'
     assert state['lengthRepairTotal']==6 and state['readerRepairCount']==0
     state.pop('lengthRepairStrategy')
-    assert policy().next_action(tmp_path,state,'polish')['action']=='pause'
+    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim'

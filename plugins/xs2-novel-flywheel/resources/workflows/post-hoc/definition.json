@@ -1,7 +1,7 @@
 {
   "workflow_id": "post-hoc",
   "name": "章节后验管线",
-  "version": 6,
+  "version": 7,
   "nodes": [
     {
       "id": "script_story_context",
@@ -87,7 +87,7 @@
       "var_bindings": {},
       "node_params": {},
       "auto_flow": false,
-      "enable_complete_node_task": true,
+      "enable_complete_node_task": false,
       "output_variable": "",
       "enable_reject_upstream": false,
       "max_reject_count": 3,
@@ -112,7 +112,7 @@
       "var_bindings": {},
       "node_params": {},
       "auto_flow": false,
-      "enable_complete_node_task": true,
+      "enable_complete_node_task": false,
       "output_variable": "",
       "enable_reject_upstream": false,
       "max_reject_count": 3,

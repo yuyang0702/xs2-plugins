@@ -78,8 +78,12 @@ def assess(root, chapter, target=''):
     if not body.is_file():
         raise ValueError('缺少本章正文，无法核对实际字数')
     raw = body.read_bytes()
-    actual = count_prose(raw.decode('utf-8-sig'))
     bounds = resolve_target(root, target)
+    return measurement(raw, chapter, bounds)
+
+
+def measurement(raw, chapter, bounds):
+    actual = count_prose(raw.decode('utf-8-sig'))
     result = {'chapter_number': chapter, 'metric': METRIC, 'actual': actual,
               'body_sha256': hashlib.sha256(raw).hexdigest(), 'status': 'unconfigured'}
     if bounds is not None:
@@ -120,11 +124,51 @@ def guidance(result):
     return '\n'.join(lines) + '\n'
 
 
+def gesture_review_context(text):
+    """Supply literal candidates, never infer literary quality from counts."""
+    candidates = []
+    for label, pattern in [('指尖', r'指尖'), ('攥手动作', r'攥(?:紧|着|住)?'), ('指节', r'指节')]:
+        matches = list(re.finditer(pattern, text))
+        if len(matches) < 3:
+            continue
+        excerpts = []
+        for match in matches[:6]:
+            start = max(text.rfind('\n', 0, match.start()), text.rfind('。', 0, match.start())) + 1
+            end = text.find('。', match.end())
+            end = min(len(text), match.end()+70) if end < 0 else min(end+1, match.end()+70)
+            excerpts.append(text[start:end].strip())
+        candidates.append(f"- {label}：出现{len(matches)}处；原文候选：" + ' / '.join(excerpts))
+    if not candidates:
+        return ''
+    return ('\n# 重复动作候选（需结合场景核对）\n'
+            '次数只用于定位，不判定错误，也不要求清零。区分必要的手艺、验物动作与重复表达同一紧张情绪的伴随动作。'
+            '对照人物正在做的事、关系变化和前后反应；没有新作用的动作可删并，让实际行动或回应接续，'
+            '不要逐词换成握拳、咬唇等另一批套话。引用连续原文说明具体阅读影响，保留有作用的动作。\n'
+            + '\n'.join(candidates) + '\n')
+
+
 def prepare_guidance(root, chapter, target=''):
     result = assess(root, chapter, target)
     relative = f'cache/quality/{chapter}/length_context.md'
-    atomic_text(safe_path(root, relative), guidance(result))
+    source = safe_path(root, f'story/{chapter}/chapter.md')
+    hints = gesture_review_context(source.read_text(encoding='utf-8-sig')) if source.is_file() else ''
+    atomic_text(safe_path(root, relative), guidance(result) + hints)
     atomic_text(safe_path(root, f'quality/length/{chapter}.json'), json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    return relative
+
+
+def prepare_draft_guidance(root, chapter, target, candidate):
+    chapter = chapter_number(chapter)
+    data = json.loads(safe_path(root, candidate).read_text(encoding='utf-8-sig'))
+    body = data.get('body') if isinstance(data, dict) else None
+    if not isinstance(body, str) or not body.strip():
+        raise ValueError('润色候选正文缺失，不能沿用修改前的字数')
+    result = measurement(body.encode('utf-8'), chapter, resolve_target(root, target))
+    relative = f'cache/quality/{chapter}/polish_draft_length_context.md'
+    text = ('# 待编辑润色稿实测（尚未提交正文）\n\n'
+            f'来源：{candidate}。以下预算针对最终编辑正在读取的候选稿，不能当作当前已提交正文的评估。\n\n'
+            + guidance(result) + gesture_review_context(body))
+    atomic_text(safe_path(root, relative), text)
     return relative
 
 
@@ -133,6 +177,7 @@ def gate_report(root, chapter, target, report):
     if report.get('body_sha256') and report['body_sha256'] != result['body_sha256']:
         raise ValueError('读者报告绑定的正文已变化，请重新评估')
     gated = copy.deepcopy(report)
+    expression_gate(gated, safe_path(root, f'story/{chapter}/chapter.md').read_text(encoding='utf-8-sig'))
     gated['length_check'] = result
     if result['status'] in {'short', 'long'}:
         if gated.get('verdict') != 'reject':
@@ -142,6 +187,49 @@ def gate_report(root, chapter, target, report):
                  'goal': guidance(result)}
         gated['issues'] = [item for item in gated.get('issues', []) if item.get('code') != 'length_out_of_range'] + [issue]
     return gated
+
+
+def expression_gate(report, body):
+    """Keep literary judgements with the reviewer; verify their cited evidence.
+
+    Legacy reports stay readable. New separate reviews cannot hide substantive
+    expression problems behind a fact pass or a numerical overall score.
+    """
+    if 'expression_review' not in report and 'fact_review' not in report:
+        return
+    for name in ('expression_review', 'fact_review'):
+        item = report.get(name)
+        if (not isinstance(item, dict) or item.get('verdict') not in {'pass', 'revise', 'reject'}
+                or not isinstance(item.get('summary'), str) or not item['summary'].strip()):
+            raise ValueError('表达审稿与事实审稿须分别给出有效结论，不能用总分替代')
+    review = report['expression_review']
+    if not isinstance(review.get('issues'), list):
+        raise ValueError('表达审稿缺少具体问题列表')
+    issues = [item for item in report.get('issues', [])
+              if not isinstance(item, dict) or item.get('source') != 'expression_review']
+    blocking = False
+    for item in review['issues']:
+        if (not isinstance(item, dict) or item.get('priority') not in {'high', 'medium', 'low'}
+                or any(not isinstance(item.get(key), str) or not item[key].strip()
+                       for key in ('location', 'impact', 'goal'))):
+            raise ValueError('表达审稿问题须包含位置、影响、目标和优先级')
+        excerpts = item.get('excerpts')
+        if (not isinstance(excerpts, list) or not excerpts
+                or any(not isinstance(quote, str) or not quote.strip() or quote not in body for quote in excerpts)):
+            raise ValueError('表达审稿引用须为当前正文中连续存在的原句，不能拼接或改述')
+        blocking = blocking or item['priority'] in {'medium', 'high'}
+        # Idempotent: this report is checked both at publication and dispatch.
+        merged = dict(item, source='expression_review')
+        if not any(isinstance(old, dict) and old.get('location') == item['location']
+                   and old.get('impact') == item['impact'] for old in issues):
+            issues.append(merged)
+    if review['verdict'] != 'pass' and not blocking:
+        raise ValueError('表达审稿返修结论缺少有原文依据的实质问题')
+    report['issues'] = issues
+    verdicts = {report.get('verdict'), report['fact_review']['verdict']}
+    if blocking:
+        verdicts.add(review['verdict'] if review['verdict'] != 'pass' else 'revise')
+    report['verdict'] = 'reject' if 'reject' in verdicts else 'revise' if 'revise' in verdicts else 'pass'
 
 
 def original_feedback(root, state):
@@ -259,8 +347,16 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     atomic_text(safe_path(root, base), json.dumps({'body': body.decode('utf-8-sig')}, ensure_ascii=False, indent=2) + '\n')
     previous_path = safe_path(root, f'quality/length/{chapter}-last-attempt.json')
     previous = json.loads(previous_path.read_text(encoding='utf-8')) if previous_path.is_file() else {}
-    previous_range = previous.get('expanded_span_range') if previous.get('accepted') and previous.get('body_sha256') == result['body_sha256'] else None
-    fragment = fragment_anchor(body, result, previous_range)
+    excluded = []
+    if previous.get('accepted') and previous.get('body_sha256') == result['body_sha256']:
+        excluded.extend(_span_ranges(previous.get('expanded_span_range')))
+    # A rejected candidate leaves the source unchanged. Rotate away from every
+    # rejected source span for that exact source, not merely accepted expansions.
+    for path in safe_path(root, f'quality/length-attempts/{chapter}').glob('*/receipt.json'):
+        attempt = json.loads(path.read_text(encoding='utf-8'))
+        if not attempt.get('accepted') and attempt.get('input_body_sha256') == result['body_sha256']:
+            excluded.extend(_span_ranges(attempt.get('selected_span_range')))
+    fragment = fragment_anchor(body, result, excluded)
     system_path = folder + '/fragment_system.md'
     system = ('本次是插件控制的局部片段字数修复。你只返回JSON对象，body字段只能包含指定原段落的扩写或精简替换文本，允许保留选定原段原句。'
               '绝不能返回整章、选定段落以外的旧正文、插入锚或计划。整章由插件按冻结锚合成。遵守既定人物事实、视角、语言与原作者约束。'
@@ -284,6 +380,10 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         previous_result = json.loads(previous_attempt.read_text(encoding='utf-8'))
         if previous_result.get('body_sha256') == result['body_sha256'] and previous_result.get('rejection_reason'):
             instruction += '\n上次片段未采纳原因：' + previous_result['rejection_reason'] + '\n'
+    instruction += ('\n【本轮最终交付边界】\n'
+                    + fragment_instructions(body, fragment, result).split('【插入/替换前文】')[0]
+                    + '仅替换以下冻结原文，body不得含前后文或整章：\n'
+                    + body[fragment['start']:fragment['end']].decode('utf-8') + '\n')
     atomic_text(safe_path(root, context), instruction)
     outputs.update(polish_pass='length_only', pl_body_file=base, critique_file='', reader_report_file='',
                    length_execution_context=context, length_execution_system=system_path,
@@ -334,12 +434,23 @@ def confirm_execution(root, chapter, expected_sha, guard_path, guard_sha, accept
 
 
 
+def _span_ranges(value):
+    if not isinstance(value, (list, tuple)) or not value:
+        return []
+    if len(value) == 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in value):
+        return [value] if 0 <= value[0] < value[1] else []
+    return [span for item in value for span in _span_ranges(item)]
+
+
 def fragment_anchor(raw, result, exclude_range=None):
     text = raw.decode('utf-8')
     paragraphs = [(m.start(1), m.end(1), m.end(), m.group(1))
                   for m in re.finditer(r'([\s\S]+?)(?:\r?\n[ \t]*\r?\n|\Z)', text) if m.group(1).strip()]
     if result['status'] == 'long':
-        prose = [item for item in paragraphs if count_prose(item[3].lstrip('\ufeff')) > 0]
+        prose = [item for item in paragraphs if count_prose(item[3].lstrip('\ufeff')) > 0
+                 and all(len(text[:item[1]].encode('utf-8')) <= span[0]
+                         or len(text[:item[0]].encode('utf-8')) >= span[1]
+                         for span in _span_ranges(exclude_range))]
         if not prose:
             raise ValueError('没有可安全局部替换的正文段落')
         start, end, _, paragraph = max(prose, key=lambda item: count_prose(item[3]))
@@ -363,7 +474,7 @@ def fragment_anchor(raw, result, exclude_range=None):
         raise ValueError('没有400实字内的安全局部原段或完整句子，未改写整章')
     def outside_previous(item):
         start = len(text[:item[0]].encode('utf-8')); end = len(text[:item[1]].encode('utf-8'))
-        return not exclude_range or end <= exclude_range[0] or start >= exclude_range[1]
+        return all(end <= span[0] or start >= span[1] for span in _span_ranges(exclude_range))
     fresh = [item for item in bounded if outside_previous(item)]
     if not fresh:
         fresh = [(match.start(), match.end(), match.end(), match.group())
@@ -376,6 +487,11 @@ def fragment_anchor(raw, result, exclude_range=None):
     options = middle or fresh
     dialogue = [item for item in options if any(mark in item[3] for mark in ['“','”','"'])]
     start, end, _, paragraph = min(dialogue or options, key=lambda item: abs((item[0]+item[1])/2-len(text)/2))
+    # A small chapter-wide deficit can still be enormous relative to one
+    # short cue. Include the existing response/result in the editable source
+    # instead of asking the model to borrow events from frozen neighbors.
+    if result.get('lower', 0)-result.get('actual', 0) > 2*count_prose(paragraph):
+        return expansion_window(raw, result, paragraphs, exclude_range)
     if start == 0 and text.startswith('\ufeff'):
         start = 1
     selected = text[start:end].encode('utf-8')
@@ -395,7 +511,7 @@ def expansion_window(raw, result, paragraphs, exclude_range):
     for item in paragraphs:
         start, end = len(text[:item[0]].encode('utf-8')), len(text[:item[1]].encode('utf-8'))
         heading = re.search(r'(?m)^\s*(?:#{1,6}\s+|第[^\r\n]{0,20}[章节卷幕回](?:\s|[·：:])|(?:[-*_＊]\s*){3,}$)', item[3])
-        blocked = heading or (exclude_range and start < exclude_range[1] and end > exclude_range[0])
+        blocked = heading or any(start < span[1] and end > span[0] for span in _span_ranges(exclude_range))
         if blocked:
             if current: segments.append(current)
             current = []
@@ -564,6 +680,7 @@ def focused_commit(root, chapter, expected_sha, guard_path, guard_sha, task_id, 
         _atomic_body(safe_path(root, guard['body_path']), merged, check)
     receipt = {'task_id': task_id, 'chapter_number': chapter, 'strategy': LENGTH_REPAIR_STRATEGY,
                'operation': guard['fragment']['kind'],
+               'selected_span_range': [guard['fragment']['start'], guard['fragment']['end']],
                'expanded_span_range': [guard['fragment']['start'], guard['fragment']['start']+len(fragment_text.encode('utf-8'))] if not rejected and guard['fragment']['kind'] == 'expand' else None,
                'expanded_span_sha256': hashlib.sha256(fragment_text.encode('utf-8')).hexdigest() if not rejected and guard['fragment']['kind'] == 'expand' else '',
                'candidate_path': candidate_path, 'candidate_sha256': hashlib.sha256(safe_path(root, candidate_path).read_bytes()).hexdigest(),
@@ -610,16 +727,30 @@ def prepare_fragment_review(root, chapter, expected_sha, guard_path, guard_sha, 
     shared_raw = safe_path(root, shared_path).read_bytes() if shared_path else b''
     if shared_path and hashlib.sha256(shared_raw).hexdigest() != guard['files'][shared_path]:
         raise ValueError('共享故事上下文已变化，不能审查未绑定资料')
+    body_raw = safe_path(root, guard['body_path']).read_bytes()
+    def text_offset(offset):
+        return len(body_raw[:offset].decode('utf-8-sig').replace('\r\n', '\n').replace('\r', '\n'))
     context = {'story_support_context': shared_raw.decode('utf-8-sig'), 'candidate': candidate['body'], 'current_body': safe_path(root, guard['body_path']).read_text(encoding='utf-8-sig'),
                'operation': guard['fragment']['kind'],
                'selected_text': safe_path(root, guard['body_path']).read_bytes()[guard['fragment']['start']:guard['fragment']['end']].decode('utf-8'),
+               'selection_range': [text_offset(guard['fragment']['start']), text_offset(guard['fragment']['end'])],
                'insertion_context': safe_path(root, guard['outputs']['length_execution_context']).read_text(encoding='utf-8'),
                'author_feedback': safe_path(root, source).read_text(encoding='utf-8-sig') if source else '',
                'narrative_pov': guard['state_binding'].get('narrative_pov', 'third_person')}
     folder = f'quality/length-attempts/{chapter}/{task_id}'
     input_path, report_path, binding_path = folder+'/review-input.json', folder+'/semantic-review.json', folder+'/review-binding.json'
     input_text = json.dumps(context, ensure_ascii=False, indent=2)+'\n'
-    input_sha = hashlib.sha256(input_text.encode('utf-8')).hexdigest()
+    input_bytes = input_text.encode('utf-8')
+    input_file = safe_path(root, input_path)
+    if input_file.is_file():
+        stored_bytes = input_file.read_bytes()
+        stored_context = json.loads(stored_bytes)
+        legacy_context = {key: value for key, value in context.items() if key != 'selection_range'}
+        if isinstance(stored_context, dict) and 'selection_range' not in stored_context and stored_context == legacy_context:
+            # Retrying a pre-offset task must retain its exact frozen input and
+            # SHA; the consumer can derive an unambiguous legacy selection.
+            input_bytes = stored_bytes
+    input_sha = hashlib.sha256(input_bytes).hexdigest()
     binding = {'task_id': task_id, 'guard_sha256': guard_sha, 'candidate_sha256': hashlib.sha256(raw).hexdigest(),
                'input_path': input_path, 'input_sha256': input_sha,
                'report_path': report_path}
@@ -627,8 +758,7 @@ def prepare_fragment_review(root, chapter, expected_sha, guard_path, guard_sha, 
     text = json.dumps(binding, ensure_ascii=False, indent=2)+'\n'
     if file.is_file() and file.read_text(encoding='utf-8') != text:
         raise ValueError('同任务片段审查输入已变化，已保留原凭证')
-    input_file = safe_path(root, input_path)
-    if input_file.is_file() and input_file.read_bytes() != input_text.encode('utf-8'):
+    if input_file.is_file() and input_file.read_bytes() != input_bytes:
         raise ValueError('同任务原审查上下文已保留，不能覆盖不同输入')
     if not input_file.is_file():
         atomic_text(input_file, input_text)
@@ -670,4 +800,75 @@ def fragment_review_decision(root, task_id, guard_sha, binding_path, binding_sha
                 or issue['candidate_quote'] not in context['candidate'] or issue['source_quote'] not in source):
             raise ValueError('语义审查引用未与候选及原文逐字对应，不能据此发布或伪造通过')
         reasons.append(issue['category']+': '+issue['reason'])
-    return ('语义审查未通过：'+'；'.join(reasons) if reasons else ''), report_sha
+    expression = report.get('expression_review')
+    needs_context = (isinstance(expression, dict) and isinstance(expression.get('issues'), list)
+                     and any(isinstance(issue, dict) and issue.get('context_excerpts') for issue in expression['issues']))
+    regions = expression_context_regions(context) if needs_context else ()
+    expression_reasons = fragment_expression_issues(report, context['candidate'], regions)
+    messages = []
+    if reasons:
+        messages.append('语义审查未通过：'+'；'.join(reasons))
+    if expression_reasons:
+        messages.append('表达审查未通过：'+'；'.join(expression_reasons))
+    return '；'.join(messages), report_sha
+
+
+def expression_context_regions(context):
+    """Return separately bound outside spans; never join over the replacement."""
+    body, selected = context.get('current_body'), context.get('selected_text')
+    if not isinstance(body, str) or not isinstance(selected, str):
+        raise ValueError('表达审查上下文缺少冻结正文或原选区')
+    selected = selected.replace('\r\n', '\n').replace('\r', '\n')
+    offsets = context.get('selection_range')
+    if offsets is None:
+        # Receipts created before offsets were added remain verifiable when
+        # the original selected window has exactly one occurrence.
+        selected = selected.removeprefix('\ufeff')
+        if not selected or body.count(selected) != 1:
+            raise ValueError('旧表达审查上下文原选区不唯一，不能猜测外部引用')
+        start = body.index(selected)
+        end = start + len(selected)
+    else:
+        if (not isinstance(offsets, list) or len(offsets) != 2
+                or any(type(value) is not int for value in offsets)):
+            raise ValueError('表达审查上下文选区坐标无效')
+        start, end = offsets
+        if start == 0:
+            selected = selected.removeprefix('\ufeff')
+        if not (0 <= start <= end <= len(body)) or body[start:end] != selected:
+            raise ValueError('表达审查上下文选区与冻结原文不符')
+    return [body[:start], body[end:]]
+
+
+def fragment_expression_issues(report, candidate, context_regions=()):
+    """Keep factual compatibility and grounded expression findings independent.
+
+    Historical fact-only receipts remain readable. The current workflow's
+    generation schema requires expression_review; a present but malformed
+    field must never be mistaken for a legacy report or a pass.
+    """
+    if 'expression_review' not in report:
+        return []
+    review = report['expression_review']
+    if (not isinstance(review, dict) or review.get('verdict') not in ('pass', 'revise')
+            or not isinstance(review.get('issues'), list)):
+        raise ValueError('片段表达审查结构无效，未发布')
+    blocking = []
+    for issue in review['issues']:
+        if (not isinstance(issue, dict)
+                or issue.get('category') not in ('action_dilation', 'object_inventory', 'scripted_dialogue', 'semantic_redundancy')
+                or issue.get('priority') not in ('low', 'medium', 'high')
+                or any(not isinstance(issue.get(key), str) or not issue[key].strip() for key in ('impact', 'goal'))
+                or not isinstance(issue.get('excerpts'), list) or not issue['excerpts']
+                or any(not isinstance(quote, str) or not quote.strip() or quote not in candidate for quote in issue['excerpts'])):
+            raise ValueError('片段表达审查缺少连续原文、阅读影响或修复目标，未发布')
+        contextual = issue.get('context_excerpts', [])
+        if (not isinstance(contextual, list)
+                or any(not isinstance(quote, str) or not quote.strip()
+                       or not any(quote in region for region in context_regions) for quote in contextual)):
+            raise ValueError('片段表达审查上下文引文不在冻结选区外的连续正文中，未发布')
+        if issue['priority'] in {'medium', 'high'}:
+            blocking.append(issue['category']+': '+issue['impact']+'；修复目标：'+issue['goal'])
+    if (review['verdict'] == 'revise') != bool(blocking):
+        raise ValueError('片段表达审查结论与实质问题不一致，未发布')
+    return blocking

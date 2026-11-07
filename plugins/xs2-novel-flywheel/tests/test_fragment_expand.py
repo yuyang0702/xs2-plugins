@@ -39,7 +39,7 @@ def test_v4_contract_migration_once_preserves_totals_profile_and_caps(tmp_path):
     assert state['lengthRepairStrategy']==quality().LENGTH_REPAIR_STRATEGY=='fragment-v6'
     assert state['lengthRepairTotal']==10 and state['lengthRepairCount']==1 and state['lengthRepairModel']=='anthropic:existing'
     for _ in range(2):state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert policy().next_action(tmp_path,state,'polish')['action']=='pause' and state['lengthRepairTotal']==12
+    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim' and state['lengthRepairTotal']==12
 
 
 def test_next_expansion_avoids_entire_previous_multiline_output_range(tmp_path):

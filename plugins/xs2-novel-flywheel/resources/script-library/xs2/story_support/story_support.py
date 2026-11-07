@@ -644,6 +644,11 @@ def prepare_context(root, chapter, check=False, *, task_id=None):
     text += '\n\n## 人物信念与声音\n' + ctx['methods']['character']
     text += '\n\n## 局部剧情讨论约束\n' + '\n'.join(ctx['methods']['rescue_rules'])
     text += "\n\n事实与人物知识分开。章节方案是待写计划，不是已发生事实。世界规则、视角与本书风格先于方法偏好。"
+    text += ("\n\n## 内部核对与正文表达的边界\n"
+             "以上材料用于规划和核对，不是正文需要逐条念出的事实清单。人物只说当场需要争取或确认的信息；"
+             "已由行为和结果成立的因果，不在对白后反复翻译。必要的证词、条件和承诺仍须清楚。"
+             "物件来历、感受与回忆随当下注意力取舍，不给每件道具相同分量。"
+             "这段指导只改变材料的使用方式，不修改既有事实、人物卡、风格文件或作者已确认的约束。")
     if runtime["directory"]:
         runtime["common_file"] = policy.runtime_file(root, runtime["directory"], "common.md", text + "\n")
     else:
