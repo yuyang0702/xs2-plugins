@@ -55,7 +55,7 @@ def values(workspace):
 
 def test_full_and_compact_cannot_finish_without_shared_review_tail():
     data = workflow()
-    assert data["version"] == 11
+    assert data["version"] == 12
     edges = data["edges"]
     assert [e["target"] for e in edges if e["source"] == "__start__"] == ["script_card_preflight"]
     assert [e["target"] for e in edges if e["source"] == "script_card_preflight"] == ["script_sync_down"]

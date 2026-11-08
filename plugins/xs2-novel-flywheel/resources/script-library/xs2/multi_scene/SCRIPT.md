@@ -1,13 +1,13 @@
-# Multi-writer chapter scene budgets, validated scene briefs and guarded assembly before publication.
+# Multi-writer scene planning and guarded assembly
 
-`reset-scene --scene N --target RANGE --pov POV --reason REASON` is an explicit
-recovery operation for a failed or stopped task. Run from that book workspace
-with its original `TASK_ID`. It archives the rejected scene and expansion seed,
-refreshes only that scene's retry instructions, and preserves accepted siblings.
-Retry the failed workflow node afterward; this does not publish manuscript text.
+`prepare --target RANGE --pov POV` supplies the chapter range, before any per-scene allocation. The planner chooses 1–6 consecutive scenes with `plan_reason`, a positive integer `weight` (1–100) and a concrete `budget_reason` per scene. Do not create events to fill six worker slots.
 
-Scene limits are draft allocation bounds, not the final manuscript target. Current
-scene workflow retries return a complete scene, avoiding conflicts between workflow
-retry feedback and partial insertion instructions. Final length checks remain in
-polish, reader assessment and export. A task pinned to a changed library must be
-recreated with the new snapshot; never bypass the library drift check.
+`plan` freezes `allocation.json` and scene cards for this task. Reference lower/upper allocations sum exactly to the chapter target. `draft_target` and nominal ranges guide emphasis; new plans accept short transitions without requiring local padding. Nonempty scenes, per-scene runaway limits, duplicate/POV checks and whole-draft limits still apply. Final polish, reader and export length checks retain the configured manuscript range.
+
+Logical scenes 1 through N−1 use the first N−1 worker slots. The last actual scene always uses slot 6. The plugin uses sequential conditional branches with explicit skip and join script checks: the current host flattens conditions inside parallel branches. Unused writers are skipped without model calls; their stale drafts never enter assembly. `skip-scene` refuses an active slot and `check-plan` verifies the frozen allocation at each join.
+
+`reset-scene --scene SLOT --target RANGE --pov POV --reason REASON` is an explicit recovery operation for a failed or stopped task, run from its book workspace with the original `TASK_ID`. It archives only that slot's rejected artifacts and refreshes its retry instructions, preserving reference targets and accepted siblings. Retry the failed workflow node afterward. The command cannot activate an unused slot or publish a chapter.
+
+Assembly requires every accepted active scene to match the current allocation SHA. A changed plan, budget or scene card requires a new task; never bypass the library drift check. Historical six-scene plans without weights remain readable with their original allocation policy. A new weighted plan with a missing allocation cannot fall back to historical mode.
+
+Current production plans also supply a source-grounded continuity contract (facts, unit equations, account transfers/balances and event dependencies). prepare freezes current effective book sources and author constraints; existing sources cannot be rebound mid-task. Source SHA participates in allocation identity. Every writer receives the same contract and a task-scoped handoff containing only lower-numbered accepted scenes. New or changed preceding raw drafts must be checked before being handed off. No specific book, character, debt or unit ratio is built into the plugin. After assembly the draft_guard pipeline repairs/audits hard consistency, then expression, before rendering.

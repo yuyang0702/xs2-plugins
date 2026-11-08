@@ -898,6 +898,130 @@
       "available_for_sub_session": true,
       "visible_skill_group_ids": [],
       "visible_rule_group_ids": []
+    },
+    "xs2-blind-reader": {
+      "description": "独立整篇初审：不读历史评分和修改范围，检查表达与关键决定因果",
+      "prompt_template": "xs2-blind-reader",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-draft-repairer": {
+      "description": "按冻结契约分阶段修稿，先事实后表达",
+      "prompt_template": "xs2-draft-repairer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 1,
+      "system_prompt_template": "",
+      "include_skills": false,
+      "include_rules": false,
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
+    },
+    "xs2-draft-auditor": {
+      "description": "对修稿提供逐字有据的独立核验观察",
+      "prompt_template": "xs2-draft-auditor",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-local-revision-critic": {
+      "description": "你是按本书规则评读当前原文的编辑。只指出有原文依据且影响阅读的问题。检查无信息增量复述、后台条件直写、通用意象堆叠、替人物反复论证",
+      "prompt_template": "xs2-local-revision-critic",
+      "tools": null,
+      "disallowed_tools": null,
+      "max_turns": 40,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 0.7,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-local-revision-writer": {
+      "description": "你是本书的局部修订编辑。只交付source_sha256和edits，不交付整篇body。每项edit含paragraph_id、",
+      "prompt_template": "xs2-local-revision-writer",
+      "tools": null,
+      "disallowed_tools": null,
+      "max_turns": 60,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 0.8,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-local-revision-reviewer": {
+      "description": "你是独立修订验收编辑。比较冻结原文、候选、本书规则和当前目标。事实兼容性与表达净效果分别判断，不能以事实无误代替表达通过。逐项ch",
+      "prompt_template": "xs2-local-revision-reviewer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
     }
   }
 }

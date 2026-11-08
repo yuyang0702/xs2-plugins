@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import hashlib
 import inspect
 import json
 import logging
@@ -14,6 +16,7 @@ from typing import Any
 from types import SimpleNamespace
 
 from .configuration import ADVISOR_PROMPT, CONFIGURATION_PROMPT, advisor_catalog, parse_advisor, parse_configuration
+from .production import length_quality
 
 logger = logging.getLogger(__name__)
 ANALYSIS_TIMEOUT_SECONDS = 180
@@ -257,7 +260,13 @@ class NovelAssistantJobs:
             entry['chapter'] = frozen['target']['chapter']
             payload = payload | {'_character_task': frozen}
         if payload.get('purpose') in {'configure', 'advisor'}:
-            project = payload.get('project', {})
+            project = copy.deepcopy(payload.get('project', {}))
+            book=length_quality().book_rules
+            frozen=book.freeze(root,'advisor-'+hashlib.sha256(request_id.encode()).hexdigest()[:24],project=project)
+            payload={**payload,'project':project,'_book_contract':frozen['contract'],
+                     '_book_base_sha':book.digest(book.resolve(root))}
+            entry['book_contract_sha256']=frozen['sha256']
+            entry['book_contract_file']=frozen['path']
             entry['configuration_base'] = {'mode': project.get('mode', 'short'),
                                            'values': project.get('values', {}),
                                            'advisor_brief': project.get('advisor_brief', payload['question']) if payload.get('purpose') == 'advisor' else '',
@@ -283,6 +292,8 @@ class NovelAssistantJobs:
                    "下一阶段": payload.get("next_stage", ""), "缺少参数": payload.get("missing", []),
                    "蒸馏候选": payload.get("candidates", [])[:40],
                    "冲突规划": payload.get("conflict_plan", {})}
+        book=length_quality().book_rules
+        context['本书规则契约']=copy.deepcopy(payload.get('_book_contract') or book.resolve(root,project=payload.get('project',{})))
         reference_catalog = self.catalog_loader() if self.catalog_loader and payload.get('purpose') == 'advisor' else None
         if reference_catalog is not None:
             context['写法来源目录'] = advisor_catalog(reference_catalog)
@@ -334,6 +345,9 @@ class NovelAssistantJobs:
             "没有蒸馏内容也要正常分析原创故事。不要复制原作人物、情节或句子。"
             "用户问创意时给具体题材、故事创意、冲突链和伏笔；问流程时才解释流程。"
             "历史讨论和工作区资料是参考数据，用户最新问题优先；中文回答，先给结论，再给可执行建议。"
+            "本书规则契约给出当前有效的世界、文风、叙述权限和有意表达约定，优先于未采用的参考与旧讨论。"
+            "题材不自动决定写法；有意回环、全知、变换视角、心理、技术说明和华丽意象可按本书目标使用。"
+            "单独的本书表达约定覆盖页面同名值时须说明差异；修改建议需作者采用，不宣称已改规则。"
         )
         if repair:
             system += ('本次任务是读者评估后的定向返修规划。必须以本章正文与完整读者报告为依据，'
@@ -418,7 +432,13 @@ class NovelAssistantJobs:
             if response is None or llm is None:
                 raise RuntimeError("模型没有返回响应")
             reply = _content_text(getattr(response, "content", None))
-            if not reply:
+            book=length_quality().book_rules
+            current=book.digest(book.resolve(root,project=payload.get('project',{}))) if payload.get('_book_contract') else ''
+            base=book.digest(book.resolve(root)) if payload.get('_book_contract') else ''
+            if payload.get('_book_contract') and (current!=book.digest(payload['_book_contract'])
+                    or (base!=payload['_book_base_sha'] and base!=current)):
+                result={'status':'failed','error_code':'book_contract_changed','message':'本书世界、文风或叙述权限在分析中已有变化，请按新规则重新分析；旧建议未采用。'}
+            elif not reply:
                 result = {"status": "failed", "error_code": "empty_output", "message": "模型没有返回可用回答，请重试。"}
             else:
                 result = {"status": "completed", "reply": reply, "message": "分析已完成，可查看建议。", "model": payload.get('_model_override') or str(getattr(llm, "model_name", "") or getattr(llm, "model", ""))}

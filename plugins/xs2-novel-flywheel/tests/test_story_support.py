@@ -336,15 +336,32 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
     for stage in ('mvp','outline','story-plan','polish','reader-sim','post-hoc'):
         data = json.loads((ROOT/f'resources/workflows/{stage}/definition.json').read_text(encoding='utf-8'))
         assert any(n['id']=='script_story_context' for n in data['nodes'])
-        assert any(e['source']=='__start__' and e['target']=='script_story_context' for e in data['edges'])
+        first = 'script_reader_review_prepare' if stage == 'reader-sim' else 'script_story_context'
+        assert any(e['source']=='__start__' and e['target']==first for e in data['edges'])
         for node in data['nodes']:
             if node['node_type'] != 'agent':
                 continue
-            if node['id'] == 'agent_fragment_review':
+            if node['id'] == 'agent_blind_reader':
+                assert '{{reader_blind_input}}' in node['first_message']
+                assert '{{story_support_context}}' not in node['first_message']
+                assert any(e['source']=='script_reader_blind_commit' and e['target']=='script_story_context' for e in data['edges'])
+            elif stage=='polish' and node['id'] in ('agent_sc','agent_pl','agent_local_review'):
+                key={'agent_sc':'revision_source_input','agent_pl':'revision_input','agent_local_review':'revision_review_input'}[node['id']]
+                assert '{{'+key+'}}' in node['first_message']
+                prep=next(n for n in data['nodes'] if n['id']=='script_local_prepare')
+                assert '{{revision_context_path}}' in prep['node_params']['script_argv']
+            elif node['id'] == 'agent_fragment_review':
                 # This one consumes the same shared source inside a hash-bound
                 # snapshot; do not inject a second, unbound live copy.
                 assert '{{fragment_review_input}}' in node['first_message']
                 assert any(e['source']=='script_fragment_review_context' and e['target']==node['id'] for e in data['edges'])
+            elif node['id'].startswith('agent_guard_'):
+                # Guard inputs include the same confirmed context inside their
+                # frozen planning sources; avoid injecting a second live copy.
+                phase='expression' if 'expression' in node['id'] else 'facts'
+                key=f'guard_{phase}_audit_input' if node['id'].endswith('_audit') else f'guard_{phase}_input'
+                assert '{{'+key+'}}' in node['first_message']
+                assert any(n['id']=='script_guard_prepare' for n in data['nodes'])
             else:
                 assert '{{story_support_context}}' in node['first_message']
     post = json.loads((ROOT/'resources/workflows/post-hoc/definition.json').read_text(encoding='utf-8'))

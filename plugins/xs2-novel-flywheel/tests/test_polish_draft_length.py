@@ -23,11 +23,11 @@ def test_missing_or_invalid_polish_draft_cannot_reuse_old_length_evidence(tmp_pa
     with pytest.raises(ValueError):quality().prepare_draft_guidance(tmp_path,'0001','5000-5300','cache/pl/body.json')
 
 
-def test_content_polish_refreshes_draft_budget_but_length_only_keeps_frozen_contract():
+def test_content_polish_measures_patch_candidate_before_audit_and_length_only_keeps_frozen_contract():
     data=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf8'))
     edges={(e['source'],e['target']) for e in data['edges']}
-    assert ('agent_pl','script_draft_length_context') in edges
-    assert ('script_draft_length_context','agent_pp') in edges
+    assert ('agent_pl','script_local_candidate') in edges
+    assert ('script_local_candidate','agent_local_review') in edges
     assert ('script_focused_execution','agent_pp') in edges
     assert ('agent_pl','agent_pp') not in edges
 
@@ -44,7 +44,7 @@ def test_actual_cli_output_reaches_final_editor_without_competing_with_original_
     raw=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf8'))
     wf=WorkflowDef.from_dict(raw)
     states={'script_length_context':NodeExecutionState(node_id='script_length_context',status='completed',outputs={'length_context_file':'old.md'}),
-            'script_draft_length_context':NodeExecutionState(node_id='script_draft_length_context',status='completed',outputs={'pp_length_context_file':path})}
+            'script_focused_execution':NodeExecutionState(node_id='script_focused_execution',status='completed',outputs={'pp_length_context_file':path})}
     values=WorkflowEngine._enrich_parameter_values({},wf,'agent_pp',states)
     assert values['pp_length_context_file']==path and values['length_context_file']=='old.md'
     node=next(n for n in raw['nodes'] if n['id']=='agent_pp')
@@ -52,21 +52,23 @@ def test_actual_cli_output_reaches_final_editor_without_competing_with_original_
     assert node['var_bindings']['pp_length_context_file']['var_key']=='pp_length_context_file'
 
 
-def test_script_argument_resolves_to_draft_path_instead_of_entire_json(tmp_path):
+def test_script_argument_resolves_to_revision_directory_instead_of_entire_json(tmp_path):
     import asyncio
     from src.workflow.definition import WorkflowDef,resolve_placeholders
     write(tmp_path,'cache/pl/body.json',json.dumps({'body':'乙'*4749},ensure_ascii=False))
     raw=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf8'))
-    wf=WorkflowDef.from_dict(raw);node=next(n for n in wf.nodes if n.id=='script_draft_length_context')
-    values={v.key:v.default for v in wf.variables};values.update(chapter_number='0001',target_word_count='5000-5300')
+    wf=WorkflowDef.from_dict(raw);node=next(n for n in wf.nodes if n.id=='script_local_candidate')
+    values={v.key:v.default for v in wf.variables};values.update(revision_dir='cache/local-revision/test-task')
     argv=[asyncio.run(resolve_placeholders(part,values,wf.variables,str(tmp_path))) for part in node.node_params['script_argv']]
-    assert argv[argv.index('--candidate')+1]=='cache/pl/body.json'
+    assert argv[argv.index('--dir')+1]=='cache/local-revision/test-task'
 
 
 def test_book_values_cannot_redirect_internal_polish_output_into_published_chapter():
     raw=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf8'))
     values={v['key']:v.get('default','') for v in raw['variables']}
-    values.update(chapter_number='0001',pl_draft_path='story/0001/chapter.md',pl_body_file='quality/author.md')
+    values.update(chapter_number='0001',pl_draft_path='story/0001/chapter.md',pl_body_file='quality/author.md',
+                  revision_patch_path='story/0001/chapter.md',revision_dir='story/0001')
     parameters=policy().parameters({'values':values},raw)
     assert 'pl_draft_path' not in parameters and 'pl_body_file' not in parameters
-    assert next(n for n in raw['nodes'] if n['id']=='agent_pl')['output_file_path']=='cache/pl/body.json'
+    assert 'revision_patch_path' not in parameters and 'revision_dir' not in parameters
+    assert next(n for n in raw['nodes'] if n['id']=='agent_pl')['output_file_path']=='{{revision_patch_path}}'

@@ -21,12 +21,13 @@ def execute(root, node_id, content):
     return asyncio.run(AgentNode().execute(NodeContext(definition=wf,node_def=node,node_state=NodeExecutionState(node_id=node_id),session_manager=Manager(),shared_ws=root,parameter_values={'chapter_number':'0001','length_execution_context':'','multi_dir':'cache/multi/task-fixture'})))
 
 
-def test_only_polish_pl_pp_opt_into_single_body_envelope():
+def test_only_full_body_polisher_opts_into_single_body_envelope():
     nodes=definition()['nodes']
     assert definition()['version']>=15
-    assert {n['id'] for n in nodes if n.get('node_params',{}).get('json_single_string_field')}=={'agent_pl','agent_pp'}
+    assert {n['id'] for n in nodes if n.get('node_params',{}).get('json_single_string_field')}=={'agent_pp'}
     for n in nodes:
-        if n['id'] in ('agent_pl','agent_pp'):assert n['node_params']['json_single_string_field']=='body'
+        if n['id']=='agent_pp':assert n['node_params']['json_single_string_field']=='body'
+        if n['id']=='agent_pl':assert n['node_params']['json_output_schema']['required']==['source_sha256','edits']
     assert all('json_single_string_field' not in n.get('node_params',{}) for n in reader_definition()['nodes'])
 
 
@@ -52,7 +53,7 @@ def test_scene_writer_publishes_plain_prose_to_its_gate(tmp_path, monkeypatch):
     assert (tmp_path/'cache/multi/task-fixture/scene-2.txt').read_text(encoding='utf-8')==body
 
 
-@pytest.mark.parametrize('node_id',['agent_pl','agent_pp'])
+@pytest.mark.parametrize('node_id',['agent_pp'])
 def test_real_workflow_preserves_malformed_body_characters_exactly(tmp_path,node_id):
     # Exact observed failure shape: ordinary ASCII dialogue quotes inside body.
     body='她开口问:"这幅春幡多少钱?"\n沈照棠摸着"沈照棠制"的署名。'

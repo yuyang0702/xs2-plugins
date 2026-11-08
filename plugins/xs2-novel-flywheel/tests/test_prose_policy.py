@@ -176,8 +176,18 @@ def workflow_context(book, name, task_id):
     values = {v["key"]: v.get("default", "") for v in definition["variables"]
               if v.get("source_type") != "output"}
     values.update(chapter_number="0001")
+    if name=='polish' and (book/'.novel-project.json').is_file():
+        values['author_feedback_file']=json.loads((book/'.novel-project.json').read_text(encoding='utf8')).get('values',{}).get('author_feedback_file','')
     values.update(workflow_script(book, definition, values, "script_story_context", task_id))
+    if name=='polish':prepare_local_inputs(book,values,task_id)
     return definition, values
+
+
+def prepare_local_inputs(book,values,task_id):
+    from test_local_revision import module
+    values.update(module().prepare(book,'0001',task_id,'',values['story_support_context'],values.get('pp_learning_context','')))
+    write(book,'cache/sc/critique.json',json.dumps({'issues':[]}))
+    values.update(module().writer_input(book,values['revision_dir'],'cache/sc/critique.json'))
 
 
 def workflow_script(book, definition, values, node_id, task_id):
@@ -238,7 +248,7 @@ def test_real_prompt_builder_gets_policy_and_no_raw_duplicate_through_direct_and
         custom_append=asyncio.run(resolve(node["system_prompt_template"], values, definition, book)),
     )
     first_message = asyncio.run(resolve(node["first_message"], values, definition, book))
-    assert "叙述主导" in system
+    assert "叙述主导" in system or (stage=='polish' and '"prose_preference"' in first_message and '叙述主导' in first_message)
     assert NEW in first_message and OLD not in first_message
     assert FACT in first_message and KNOWLEDGE in first_message
     assert OLD in (book / profile).read_text(encoding="utf-8")
@@ -413,6 +423,9 @@ def test_learning_context_resolves_an_explicit_active_context_alias(book, stage,
     values = {v["key"]: v.get("default", "") for v in definition["variables"]}
     values.update(chapter_number="0001", learning_context=active)
     values.update(workflow_script(book, definition, values, "script_story_context", f"learning-{stage}"))
+    if stage=='polish':
+        write(book,'story/0001/chapter.md','阿杏走到渡口。')
+        prepare_local_inputs(book,values,f'learning-{stage}')
     node = next(n for n in definition["nodes"] if n["id"] == node_id)
     message = asyncio.run(resolve(node["first_message"], values, definition, book))
     assert NEW in message and OLD not in message

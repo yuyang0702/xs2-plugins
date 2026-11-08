@@ -311,8 +311,10 @@ def test_polish_and_reader_workflows_wire_real_length_evidence():
     assert nodes['script_length_context']['node_params']['script_name'] == 'manuscript_quality'
     assert any(e['source'] == 'script_length_context' and e['target'] == 'gw_polish_scope' for e in polish['edges'])
     for name in ['agent_sc', 'agent_pl']:
-        assert '{{length_context_file}}' in nodes[name]['first_message']
-        assert 'length_context_file' in nodes[name]['var_bindings']
+        key='revision_source_input' if name=='agent_sc' else 'revision_input'
+        assert '{{'+key+'}}' in nodes[name]['first_message']
+    assert ('agent_pl','script_local_candidate') in {(e['source'],e['target']) for e in polish['edges']}
+    assert nodes['script_local_prepare']['node_params']['script_name']=='local_revision'
     assert '{{pp_length_context_file}}' in nodes['agent_pp']['first_message']
     assert 'pp_length_context_file' in nodes['agent_pp']['var_bindings']
     reader = json.loads((root / 'reader-sim/definition.json').read_text(encoding='utf-8'))

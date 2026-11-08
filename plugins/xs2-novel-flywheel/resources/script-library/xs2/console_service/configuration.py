@@ -9,6 +9,7 @@ FIELD_LABELS = {
     'conflict_plan_mode': '冲突规划范围', 'conflict_point_count': '冲突点数量',
     'foreshadowing_count': '伏笔数量', 'human_intent': '本章想写什么',
     'world_intent': '世界发生的变化',
+    'narrator_scope': '叙述权限', 'style_intent': '本书文风要求',
 }
 
 
@@ -61,6 +62,8 @@ def parse_configuration(text: str, mode: str) -> tuple[str, list[dict]]:
             continue
         if key == 'narrative_pov' and value not in {'first_person', 'third_person'}:
             continue
+        if key == 'narrator_scope' and value not in {'preserve','limited','omniscient','variable','unreliable'}:
+            continue
         if key == 'estimated_length':
             if value[0] not in {'短', '中', '长'}:
                 continue
@@ -96,6 +99,8 @@ CONFIGURATION_PROMPT = (
     '人物应有欲望、弱点、独立选择和关系代价，不能只充当剧情工具。'
     '建议参数仅限：' + ', '.join(FIELD_LABELS) + '。'
     'narrative_pov只能first_person/third_person；字数用纯数字或3000-4000格式。'
+    'narrator_scope为preserve/limited/omniscient/variable/unreliable；题材不自动决定视角或文风。'
+    'style_intent描述本书希望的语言、节奏、说明和有意表达手法，不套固定风格预设。'
     '短篇target_word_count指整篇字数，冲突范围只能short_full；'
     '长篇target_word_count指当前一章，每章字数建议与之协调；estimated_length只能短/中/长，'
     '具体全书规模或短篇字数在reply解释，短篇通常填短，'

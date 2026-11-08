@@ -37,16 +37,24 @@ def test_normal_mvp_routes_all_scene_writers_through_gate_before_body():
     nodes = {n['id']: n for n in definition['nodes']}
     assert '2000' not in str(nodes['agent_nw'].get('node_params'))
     edges = {(e['source'], e['target']) for e in definition['edges']}
-    assert ('gw-conv-2', 'agent_si') in edges
+    assert ('script_multi_join_5', 'agent_si') in edges
     assert ('script_multi_scene_6', 'script_multi_assemble') in edges
-    assert ('script_multi_assemble', 'script_si_post') in edges
-    assert sum(source == 'gw-fork-2' for source, _ in edges) == 5
+    assert ('script_multi_assemble', 'script_guard_prepare') in edges
+    assert ('script_guard_expression_commit', 'script_guard_finish') in edges
+    assert ('script_guard_finish', 'script_si_post') in edges
+    assert ('script_multi_plan', 'gw-mqdqscyd-0') in edges
+    assert ('gw-mqdqscyd-0', 'gw-multi-active-1') in edges
+    assert ('agent_sw', 'script_guard_prepare') in edges
     for i, writer in enumerate(('agent_aw', 'agent_dw', 'agent_iw', 'agent_dsw', 'agent_tw', 'agent_si'), 1):
         gate = f'script_multi_scene_{i}'
         assert (writer, gate) in edges
-        assert (gate, 'script_multi_assemble' if i == 6 else 'gw-conv-2') in edges
+        next_node = 'script_multi_assemble' if i == 6 else f'script_multi_join_{i}'
+        assert (gate, next_node) in edges
         if i < 6:
-            assert ('gw-fork-2', writer) in edges
+            active = f'gw-multi-active-{i}'
+            skip = f'script_multi_skip_{i}'
+            assert (active, writer) in edges and (active, skip) in edges and (skip, next_node) in edges
+            assert next(e for e in definition['edges'] if e['source']==active and e['target']==writer)['condition']['expression']==f'{{{{multi_active_{i}}}}}==yes'
         assert nodes[writer]['output_file_path'].endswith('.txt')
         assert 'json_required_fields' not in nodes[writer]['node_params']
 def test_gate_retry_preserves_body_until_all_scenes_are_valid(tmp_path, monkeypatch, capsys):

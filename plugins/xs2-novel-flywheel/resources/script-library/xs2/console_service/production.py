@@ -60,6 +60,12 @@ def reader_report(root, state):
 
 
 def verify_completion(root, state, stage, task):
+    if stage=='polish' and ((task.get('node_states') or {}).get('script_local_commit') or {}).get('status')=='completed':
+        source=Path(__file__).resolve().parents[1]/'local_revision/local_revision.py'
+        spec=importlib.util.spec_from_file_location('completed_local_revision',source)
+        local=importlib.util.module_from_spec(spec);spec.loader.exec_module(local)
+        local.verify_attempt(root,task)
+        return
     checkpoint = state.get('automaticCheckpoint') or {}
     if stage == 'mvp' and checkpoint.get('stage') == stage:
         recovery_checkpoint().verify(root, state, task)
@@ -281,6 +287,8 @@ def next_action(root, state, stage):
         report = reader_report(root, state)
         if state.get("assessmentOnly"):
             return {"action": "finish", "reason": "本章读者评估已完成。", "updates": {"assessmentOnly": False}}
+        if report.get('requires_scope_confirmation'):
+            return {"action": "pause", "reason": "整篇审稿仍有超出或未明确属于本次修改范围的问题，请先确认修改范围。"}
         if state.get("repairReviewOnly") and report["verdict"] != "pass":
             return {"action": "pause", "reason": "本次返修复评尚未通过，请查看报告后决定后续操作。", "updates": {"repairReviewOnly": False}}
         if report["verdict"] != "pass":
@@ -343,6 +351,8 @@ def dialogue_writer_node(definition, writer_type):
 def _is_body_writer(node, stage):
     identity = node['id']
     if stage == 'mvp':
+        if identity == 'agent_guard_expression_repair':
+            return True
         agent_type = node.get('agent_type', '')
         if agent_type.endswith('novel-multi-scene-writer'):
             return True

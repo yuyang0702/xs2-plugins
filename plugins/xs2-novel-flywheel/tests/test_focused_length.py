@@ -28,6 +28,12 @@ def managed(root):
     return state
 
 
+def test_new_task_feedback_does_not_inherit_an_old_length_only_receipt(tmp_path):
+    managed(tmp_path);write(tmp_path,'quality/new.md','本次改人物关系。')
+    outputs=quality().prepare_execution(tmp_path,'0001','4800-5200','length_only',feedback_path='quality/new.md')
+    assert outputs['polish_pass']=='content' and not outputs['length_commit_guard']
+
+
 def cli(root, scope):
     script = PLUGIN / 'resources/script-library/xs2/manuscript_quality/manuscript_quality.py'
     result = subprocess.run([sys.executable, str(script), 'guidance', '--chapter', '0001', '--target', '4800-5200', '--scope', scope], cwd=root, capture_output=True, text=True, encoding='utf-8', errors='replace')
@@ -92,7 +98,7 @@ def test_focused_strategy_migrates_old_revision_budget_once_and_keeps_total(tmp_
     assert policy().next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
 
 
-@pytest.mark.parametrize('scope,agents', [('length_only', ['agent_pp', 'agent_fragment_review']), ('content', ['agent_sc', 'agent_pl', 'agent_pp'])])
+@pytest.mark.parametrize('scope,agents', [('length_only', ['agent_pp', 'agent_fragment_review']), ('content', ['agent_sc', 'agent_pl', 'agent_local_review'])])
 def test_real_engine_branch_executes_only_existing_selected_agents(tmp_path, monkeypatch, scope, agents):
     from src.workflow.definition import WorkflowDef, WorkflowTask, WorkflowRunRecord
     from src.workflow.engine import WorkflowEngine
@@ -165,7 +171,9 @@ def test_changed_original_feedback_reaches_content_agents_via_actual_variables(t
     d = definition(); wf = WorkflowDef.from_dict(d)
     values = {v['key']: v.get('default', '') for v in d['variables']}
     values.update(state['values']); values.update(outputs)
-    for node_id in ['agent_sc', 'agent_pp']:
+    from test_local_revision import module
+    values.update(module().prepare(tmp_path,'0001','changed-feedback','1-5000',feedback_path=outputs['author_feedback_file']))
+    for node_id in ['agent_sc']:
         prompt = asyncio.run(resolve_placeholders(next(n['first_message'] for n in d['nodes'] if n['id'] == node_id), values, wf.variables, str(tmp_path)))
         assert 'NEW AUTHOR REQUIREMENT' in prompt
 

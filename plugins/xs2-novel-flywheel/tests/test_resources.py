@@ -22,6 +22,10 @@ EXPECTED_WORKFLOWS = {
     "style-compatibility-advisor",
 }
 EXPECTED_SCRIPT_LIBRARIES = {
+    "book_context",
+    "local_revision",
+    "draft_guard",
+    "reader_review",
     "multi_scene",
     "character_review",
     "manuscript_quality",
@@ -187,6 +191,7 @@ def test_resource_graph_contains_only_referenced_production_resources() -> None:
     legacy_writers = {
         "novel-writer", "novel-dialogue-writer", "novel-action-writer", "novel-internal-writer",
         "novel-description-writer", "novel-transition-writer", "novel-storyboard-integrator",
+        "novel-self-critic", "novel-polisher",
     }
     assert set(agents) - referenced_agents == legacy_writers
     assert referenced_agents <= set(agents)

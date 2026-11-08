@@ -17,6 +17,7 @@ PROSE_AGENTS = (
     "novel-storyboard-integrator", "novel-transition-writer",
     "novel-polisher", "novel-professional-polisher",
     "novel-multi-scene-planner", "novel-multi-scene-writer",
+    "xs2-local-revision-writer",
 )
 # These are obsolete imperatives, not banned words in the novel itself.
 # Fact, schema, information-access and author-specified constraints are retained.
@@ -127,7 +128,8 @@ def test_polish_messages_do_not_import_an_unrelated_books_repair_case():
             message = node["first_message"]
             assert not re.search(r"感染观察|现场管控|倒计时提示|每项必要规则说明一次即可", message)
             assert "{{target_word_count}}" in message
-            assert "{{author_feedback_file}}" in message
+            if node['id']=='agent_pp':assert "{{author_feedback_file}}" in message
+            else:assert '{{revision_' in message # frozen JSON contains feedback, not a second live file
 
 
 def _normalizer():

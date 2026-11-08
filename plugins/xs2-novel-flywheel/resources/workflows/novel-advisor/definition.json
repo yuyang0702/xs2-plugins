@@ -1,7 +1,7 @@
 {
   "workflow_id": "novel-advisor",
   "name": "小说顾问分析",
-  "version": 2,
+  "version": 4,
   "console": {
     "app": "novel-workbench",
     "role": "advisor",
@@ -14,12 +14,58 @@
   },
   "nodes": [
     {
+      "id": "script_advisor_contract",
+      "label": "读取本书世界与文风",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 80,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "book_context",
+        "script_argv": [
+          "prepare",
+          "--premise",
+          "{{premise}}",
+          "--genre",
+          "{{genre}}",
+          "--narrative-pov",
+          "{{narrative_pov}}",
+          "--narrator-scope",
+          "{{narrator_scope}}",
+          "--style-intent",
+          "{{style_intent}}",
+          "--target",
+          "{{target_word_count}}",
+          "--scope",
+          "{{conflict_plan_mode}}"
+        ],
+        "timeout": 30
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
       "id": "agent_advisor",
       "label": "小说顾问",
       "node_type": "agent",
       "agent_type": "xs2-novel-advisor",
       "system_prompt_template": "",
-      "first_message": "【作品创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【已确认的抽象写法】\n{{learning_context_file}}\n\n【参考候选机制】\n{{candidates_file}}\n\n【智能推荐库】（已从 500+ 候选中精选，按类型适配和相关性排序）\n{{recommendations_file}}\n\n请生成小说顾问报告。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【作品创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【已确认的抽象写法】\n{{learning_context_file}}\n\n【参考候选机制】\n{{candidates_file}}\n\n【智能推荐库】（已从 500+ 候选中精选，按类型适配和相关性排序）\n{{recommendations_file}}\n\n请生成小说顾问报告。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n【本书当前有效规则；修改建议须经作者采用】\n{{book_contract_file}}\n按本书叙述权限与文风规划，不由题材推定限知、白描或固定高潮；本书JSON表达约定覆盖同名页面值时说明差异。\n{{advisor_constraints_file}}",
       "position": {
         "x": 320,
         "y": 180
@@ -28,23 +74,66 @@
       "node_params": {},
       "auto_flow": false,
       "enable_complete_node_task": true,
-      "output_variable": "",
+      "output_variable": "advisor_result",
       "enable_reject_upstream": false,
       "max_reject_count": 2,
       "save_output_to_file": true,
-      "output_file_path": "learning/advisor_report.json",
+      "output_file_path": "{{advisor_draft_path}}",
       "sub_workflow_params": {}
+    },
+    {
+      "id": "script_advisor_commit",
+      "label": "确认顾问规则仍有效",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 80,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "book_context",
+        "script_argv": [
+          "commit"
+        ],
+        "timeout": 30,
+        "script_stdin_variable": "advisor_result"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
     }
   ],
   "edges": [
     {
       "id": "edge-start-advisor",
       "source": "__start__",
+      "target": "script_advisor_contract"
+    },
+    {
+      "id": "advisor-contract-ready",
+      "source": "script_advisor_contract",
       "target": "agent_advisor"
     },
     {
       "id": "edge-advisor-end",
       "source": "agent_advisor",
+      "target": "script_advisor_commit"
+    },
+    {
+      "id": "advisor-commit-end",
+      "source": "script_advisor_commit",
       "target": "__end__"
     }
   ],
@@ -65,7 +154,7 @@
       "key": "genre",
       "name": "题材类型",
       "type": "text",
-      "default": "都市情感",
+      "default": "",
       "required": false,
       "description": "可留空，让顾问推荐。",
       "options": [],
@@ -77,8 +166,8 @@
       "key": "narrative_pov",
       "name": "叙事视角",
       "type": "text",
-      "default": "third_person",
-      "required": true,
+      "default": "",
+      "required": false,
       "description": "first_person 或 third_person。",
       "options": [],
       "source_type": "input",
@@ -132,6 +221,75 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": true
+    },
+    {
+      "key": "book_contract_file",
+      "name": "本书规则契约",
+      "type": "file",
+      "default": "",
+      "required": false,
+      "hidden": true
+    },
+    {
+      "key": "narrator_scope",
+      "name": "叙述权限",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": false
+    },
+    {
+      "key": "style_intent",
+      "name": "本书文风要求",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": false
+    },
+    {
+      "key": "advisor_draft_path",
+      "name": "advisor_draft_path",
+      "type": "text",
+      "default": "",
+      "hidden": true,
+      "required": false,
+      "source_type": "output"
+    },
+    {
+      "key": "advisor_result",
+      "name": "advisor_result",
+      "type": "text",
+      "default": "",
+      "hidden": true,
+      "required": false,
+      "source_type": "output"
+    },
+    {
+      "key": "target_word_count",
+      "name": "target_word_count",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": false,
+      "source_type": "input"
+    },
+    {
+      "key": "conflict_plan_mode",
+      "name": "conflict_plan_mode",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": true,
+      "source_type": "input"
+    },
+    {
+      "key": "advisor_constraints_file",
+      "name": "advisor_constraints_file",
+      "type": "file",
+      "default": "",
+      "required": false,
+      "hidden": true,
+      "source_type": "output"
     }
   ],
   "gateways": [],

@@ -141,6 +141,11 @@ def focused_commit_check(output, expected_sha, guard_path, guard_sha):
                "receipt": state.get("lengthRepairFeedback") or {}}
     if "narrative_pov" in guard["state_binding"]:
         current["narrative_pov"] = state.get("values", {}).get("narrative_pov", "third_person")
+    if 'book_contract_sha256' in guard['state_binding']:
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('polish_book_contract',Path(__file__).resolve().parents[2]/'xs2/prose_policy/book_contract.py')
+        book=importlib.util.module_from_spec(spec);spec.loader.exec_module(book)
+        current['book_contract_sha256']=book.digest(book.resolve(root))
     if current != guard["state_binding"]:
         raise ValueError("focused author feedback selection changed; chapter unchanged")
 

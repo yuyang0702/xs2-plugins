@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,8 @@ METRIC = '正文实字：中文按汉字、英文和数字按词；标题、标�
 _HAN = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0003134a]')
 _WORD = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 _TITLE = re.compile(r'^第[一二三四五六七八九十百千零〇两0-9]+[章回节卷](?:\s|[·：:、.]).*$|^第[一二三四五六七八九十百千零〇两0-9]+[章回节卷]$')
+_BOOK_SPEC=importlib.util.spec_from_file_location('length_book_contract',Path(__file__).resolve().parents[1]/'prose_policy/book_contract.py')
+book_rules=importlib.util.module_from_spec(_BOOK_SPEC);_BOOK_SPEC.loader.exec_module(book_rules)
 
 
 def safe_path(root, relative):
@@ -186,6 +189,13 @@ def gate_report(root, chapter, target, report):
                  'impact': f"实测 {result['actual']} 实字，目标 {result['lower']}—{result['upper']}；模型通过判断不能替代实际计数。",
                  'goal': guidance(result)}
         gated['issues'] = [item for item in gated.get('issues', []) if item.get('code') != 'length_out_of_range'] + [issue]
+    if 'reader_review_version' in gated:
+        path = Path(__file__).resolve().parents[1] / 'reader_review/reader_review.py'
+        spec = importlib.util.spec_from_file_location('reader_review_gate', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.verify_report_scope(root, gated)
+        gated = module.gate_review(gated, safe_path(root, f'story/{chapter}/chapter.md').read_text(encoding='utf-8-sig'))
     return gated
 
 
@@ -286,7 +296,7 @@ def correction_feedback(root, state, result):
 
 
 
-def prepare_execution(root, chapter, target='', scope='content', *, policy_runtime='', task_id=None):
+def prepare_execution(root, chapter, target='', scope='content', *, policy_runtime='', task_id=None, feedback_path=None):
     """Freeze the current body and both feedback sources before the final editor."""
     relative = prepare_guidance(root, chapter, target)
     outputs = {'length_context_file': relative, 'polish_pass': 'content', 'length_execution_context': '',
@@ -300,6 +310,8 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     number = chapter_number(str(state.get('values', {}).get('chapter_number', '0001')).zfill(4))
     receipt = state.get('lengthRepairFeedback') or {}
     prior = str(state.get('values', {}).get('author_feedback_file') or '').strip()
+    if feedback_path is not None and feedback_path!=prior:
+        return outputs # A new task selection is content work, not the old length receipt.
     if (number != chapter or not isinstance(receipt, dict) or not prior
             or receipt.get('chapter_number') != chapter or receipt.get('path') != prior):
         return outputs
@@ -327,7 +339,9 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     body = safe_path(root, body_path).read_bytes()
     if hashlib.sha256(body).hexdigest() != result['body_sha256']:
         raise ValueError('字数定向返修前正文已变化，请重新核对')
+    book=book_rules.freeze(root,task_id)['contract'] if task_id else book_rules.resolve(root)
     binding = {'chapter_number': chapter, 'author_feedback_file': prior, 'receipt': receipt,
+               'book_contract_sha256':book_rules.digest(book),
                'narrative_pov': state.get('values', {}).get('narrative_pov', 'third_person')}
     story_context_path = 'cache/story-support/context.md'
     identity_data = binding
@@ -374,6 +388,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     instruction += ('\n【当前正文；仅供定位与查重，不得交付整章】\n' + body.decode('utf-8-sig')
                     + '\n【原始作者约束；本次只在局部片段内落实】\n' + author
                     + '\n【叙事视角】\n' + str(binding['narrative_pov'])
+                    + '\n'+book_rules.prompt(book)
                     + '\n【已确认背景；计划不等于已发生或人物已知】\n' + focused_shared_context(shared))
     previous_attempt = safe_path(root, f'quality/length/{chapter}-last-attempt.json')
     if previous_attempt.is_file():
@@ -428,6 +443,8 @@ def confirm_execution(root, chapter, expected_sha, guard_path, guard_sha, accept
                'receipt': state.get('lengthRepairFeedback') or {}}
     if 'narrative_pov' in guard['state_binding']:
         current['narrative_pov'] = state.get('values', {}).get('narrative_pov', 'third_person')
+    if 'book_contract_sha256' in guard['state_binding']:
+        current['book_contract_sha256']=book_rules.digest(book_rules.resolve(root))
     if current != guard['state_binding']:
         raise ValueError('作者反馈选择在字数定向准备后已变化，请重新发起返修')
     return {**guard['outputs'], 'length_commit_guard': guard_path, 'length_commit_guard_sha': guard_sha}

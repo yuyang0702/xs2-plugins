@@ -5,16 +5,20 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from test_expression_evidence import checks, module
 
 PLUGIN = Path(__file__).resolve().parents[1]
 REPORT = {'verdict': 'revise', 'continue_reading_score': 62, 'summary': '需要返修',
+          'revision_scope': {'mode': 'unrestricted', 'summary': '完整审阅', 'assessments': []},
           'dimensions': {'middle_pacing': {'verdict': 'slow', 'note': '重复'}},
           'issues': [{'location': '中段', 'impact': '节奏重复', 'goal': '保留承重行动', 'priority': 'high'}],
           'repair_constraints': ['保留既定事实'],
           'fact_review': {'verdict': 'pass', 'summary': '情节成立'},
           'expression_review': {'verdict': 'revise', 'summary': '交谈重复解释', 'issues': [
-              {'location': '中段', 'priority': 'medium', 'excerpts': ['我又解释一遍。'],
+              {'id': 'context-1', 'location': '中段', 'priority': 'medium', 'excerpts': ['我又解释一遍。'],
                'impact': '同一回答使交谈停住。', 'goal': '合并重复说明。'}]}}
+REPORT['expression_checks'] = checks(module())
+for row in REPORT['expression_checks']: row['excerpts'] = ['我又解释一遍。']
 
 
 def definition():
@@ -36,7 +40,8 @@ def execute(root, record):
             return {'success': True, 'session_id': 'reader'}
     return asyncio.run(AgentNode().execute(NodeContext(definition=wf, node_def=node,
         node_state=NodeExecutionState(node_id=node.id), session_manager=Manager(), shared_ws=root,
-        parameter_values={'chapter_number': '0001', 'language': '中文'})))
+        parameter_values={'chapter_number': '0001', 'language': '中文',
+                          'reader_context_report_path': 'story/0001/reader_report.json'})))
 
 
 def test_reader_declares_current_turn_single_report_schema_and_automatic_finish():

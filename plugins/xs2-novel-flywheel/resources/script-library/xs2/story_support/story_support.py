@@ -872,15 +872,23 @@ def main():
               prepare_context(root, args.chapter, args.check, task_id=os.environ.get("TASK_ID"))
               if args.command == 'context' else action[args.command](root, args.chapter))
     if args.command == "context":
+        if os.environ.get('TASK_ID'):
+            contract_spec=importlib.util.spec_from_file_location('story_book_contract',HERE.parent/'prose_policy/book_contract.py')
+            contract_module=importlib.util.module_from_spec(contract_spec);contract_spec.loader.exec_module(contract_module)
+            frozen=contract_module.freeze(root,os.environ['TASK_ID'])
+            print(f"<WF_VAR>book_contract_file:{frozen['prompt_file']}</WF_VAR>")
         runtime = result["prose_policy_runtime"]
+        print(f"<WF_VAR>revision_context_path:{runtime.get('common_file') or 'cache/story-support/context.md'}</WF_VAR>")
         if runtime["directory"]:
             print(f"<WF_VAR>prose_policy_runtime:{runtime['directory']}</WF_VAR>")
             print(f"<WF_VAR>prose_policy_prompt:{runtime['prompt_file']}</WF_VAR>")
             print(f"<WF_VAR>story_support_context:{runtime['common_file']}</WF_VAR>")
-            for spec in args.policy_alias:
-                key, sep, source_id = spec.partition("=")
-                if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
-                    raise ValueError("无效的工作流叙述资料别名。")
+        for spec in args.policy_alias:
+            key, sep, source_id = spec.partition("=")
+            if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
+                raise ValueError("无效的工作流叙述资料别名。")
+            alias=source_id
+            if runtime['directory']:
                 policy = _prose_policy()
                 alias = policy.runtime_alias(root, runtime["directory"], source_id, task_id=runtime["task_id"])
                 if alias == source_id:
@@ -888,6 +896,7 @@ def main():
                                                         task_id=runtime["task_id"])
                 if alias != source_id:
                     print(f"<WF_VAR>{key}:{alias}</WF_VAR>")
+            if key=='pp_learning_context':print(f"<WF_VAR>revision_reference_path:{alias}</WF_VAR>")
     if args.command == "preflight" and not result["ready"]:
         raise ValueError(result["message"])
     print(json.dumps({"status": "completed", "command": args.command, "chapter": args.chapter}, ensure_ascii=False))

@@ -17,7 +17,7 @@ def expand(text, values):
     return text
 
 
-def test_confirmed_voice_adaptations_reach_writer_branches_and_reviewers():
+def test_confirmed_voice_adaptations_reach_writer_branches_and_reviewers(tmp_path):
     for stage, nodes in {
         'character': ['agent_voice'],
         'mvp': ['agent_cm', 'agent_se', 'agent_dw', 'agent_sw', 'agent_si'],
@@ -31,6 +31,14 @@ def test_confirmed_voice_adaptations_reach_writer_branches_and_reviewers():
         assert fields[KEY]['type'] == 'file' and not fields[KEY]['required']
         values = {key: field.get('default', '') for key, field in fields.items()}
         values[KEY] = 'CONFIRMED_BOOK_ROLE_VOICE'
+        if stage=='polish':
+            from test_local_revision import module
+            from test_book_contract import put
+            put(tmp_path,'story/0001/chapter.md','正文。')
+            put(tmp_path,'meta/character_voice_adaptations.md','CONFIRMED_BOOK_ROLE_VOICE')
+            outputs=module().prepare(tmp_path,'0001','voice-input','1-5000')
+            frozen=(tmp_path/outputs['revision_source_input']).read_text(encoding='utf8')
+            values.update(revision_source_input=frozen,revision_input=frozen)
         for node in definition['nodes']:
             if node['id'] in nodes:
                 assert 'CONFIRMED_BOOK_ROLE_VOICE' in expand(node.get('first_message', ''), values), (stage, node['id'])

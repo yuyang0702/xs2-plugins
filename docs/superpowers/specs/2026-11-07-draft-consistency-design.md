@@ -1,0 +1,15 @@
+# Draft consistency and ordered revision
+
+User-authorized scope: fix money arithmetic, shared scene facts, limited POV and cash/goods handoff first, then repeated explanation. Keep product code in the novel plugin and verify a new copy of 满城灯不借; preserve original and previous verification artifacts.
+
+Approach: extend the existing multi-scene plan with a source-grounded continuity contract, deliver it and actual preceding accepted prose to each writer, then guard assembled drafts before rendering. Money uses book-defined positive integer unit factors and exact arithmetic. Frozen transfers carry account, direction, amount, written amount, change, balance and source quote; event dependencies encode agreement/acceptance/cash receipt/goods handoff. Shared facts have one canonical value and only source-supported aliases. The contract has no novel-specific constants.
+
+A two-phase plugin pipeline repairs hard facts before expression. Each phase has a body-repair node, independent tool-free audit node and script commit gate. The expression audit rechecks hard facts and arithmetic. A failed audit returns grounded feedback to that phase's repairer. Missing observations or invalid quotes cannot mean pass. Audits contain candidate and contract hashes; scripts calculate amounts and event order from exact observed spans. Model judgement still handles semantics, POV and repetition; this does not claim exhaustive mechanical language understanding.
+
+Legacy plan APIs remain readable. Current production planner requires the contract. Sources use the task's effective prose-policy aliases plus book/author planning constraints; optional meta/continuity_constraints.md can supply explicit book-specific invariants. Scope and schema drift require a new task. Accepted per-scene handoffs must exclude future scenes on retries.
+
+Recovery must account for the host resetting only the rejected writer and rejecting commit node: if candidate content changed while its audit remained completed, refresh audit input and reject the stale auditor, never reuse its proof. Stage-one approved text is immutable during expression retries. Only the final successful expression commit replaces cache/si/chapter.json; rendering and archive sync remain downstream. Final 5000–5300 or other configured limits remain unchanged.
+
+Alternatives considered: prompt-only reminders cannot block bad actual output; regex-only prose scanning cannot establish semantic possession or private thoughts. Source-bound structured checks plus independent model audit provide concrete arithmetic and state evidence while retaining semantic review. Existing six-slot conditional scheduling stays in the plugin.
+
+Copy verification: replay the previous P1 draft with known money/name/POV/handoff/repetition faults through the new guard in a fresh original-book copy, then run P0 blind/contextual reading on the resulting candidate. Treat this as a post-assembly recovery validation, not a claim that every scene was regenerated. Unit/real-scheduler tests cover new generation's contract/handoff routing. Never manually edit prose to force a pass.
