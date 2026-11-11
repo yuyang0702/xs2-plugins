@@ -22,6 +22,7 @@ EXPECTED_WORKFLOWS = {
     "style-compatibility-advisor",
 }
 EXPECTED_SCRIPT_LIBRARIES = {
+    "composition_plan",
     "book_context",
     "local_revision",
     "draft_guard",
@@ -29,6 +30,7 @@ EXPECTED_SCRIPT_LIBRARIES = {
     "multi_scene",
     "character_review",
     "manuscript_quality",
+    "production_guard",
     "story_support",
     "manuscript_export",
     "market_rankings",

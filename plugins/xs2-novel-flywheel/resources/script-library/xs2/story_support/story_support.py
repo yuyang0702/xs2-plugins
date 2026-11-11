@@ -24,6 +24,34 @@ upstream = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(upstream)
 
 
+def _guarded_rejection(message):
+    spec=importlib.util.spec_from_file_location('plugin_rejection_transport',Path(__file__).resolve().parents[1]/'production_guard/rejections.py')
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value)
+    return value.emit(message)
+
+@lru_cache(maxsize=1)
+def archive_store():
+    spec = importlib.util.spec_from_file_location('story_archive_store', HERE / 'archive_store.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@lru_cache(maxsize=1)
+def memory():
+    spec = importlib.util.spec_from_file_location('story_memory', HERE / 'memory.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@lru_cache(maxsize=1)
+def serial():
+    spec = importlib.util.spec_from_file_location('story_serial', HERE / 'serial.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
 @lru_cache(maxsize=1)
 def _prose_policy():
     entry = HERE.parent / "prose_policy" / "prose_policy.py"
@@ -107,6 +135,8 @@ def write(root, relative, value):
 
 
 def digest(root, relative):
+    if relative.startswith('@memory/scene-time/'):
+        return archive_store().digest(root,relative)
     path = safe(root, relative)
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
 
@@ -164,6 +194,7 @@ def bodies(root):
 
 def source_hashes(root, include_outline=True, before=None):
     files = list(BASE_FILES if include_outline else CHECKPOINT_FILES)
+    files.append('meta/entity_registry.json')
     files += [p.relative_to(root).as_posix() for p in bodies(root)
               if before is None or int(p.parent.name) < int(before)]
     return {file: digest(root, file) for file in files}
@@ -191,26 +222,31 @@ def readable(value, depth=0):
 
 def confirmed(root, before=None):
     valid, stale = [], []
-    for path in sorted((Path(root) / "story").glob("[0-9][0-9][0-9][0-9]/confirmed_state.json")):
-        number = int(path.parent.name)
-        if before is not None and number >= int(before):
-            continue
-        try:
-            canonical = safe(root, f"story/{number:04d}/confirmed_state.json")
-            if canonical != path.absolute():
-                raise ValueError("确认记录指向别名路径")
-            data = json.loads(canonical.read_text(encoding="utf-8-sig"))
-            if not isinstance(data, dict) or data.get("chapter") != f"{number:04d}":
-                raise ValueError("确认记录章节无效")
-            hashes = data.get("source_hashes")
-            if not isinstance(hashes, dict) or not isinstance(data.get("body_sha256"), str) or not data["body_sha256"]:
-                raise ValueError("确认记录缺少来源校验")
-            verify(root, hashes)
-            if digest(root, f"story/{number:04d}/chapter.md") != data.get("body_sha256"):
-                raise ValueError("正文已修改")
-            valid.append(data)
-        except (ValueError, OSError):
-            stale.append(path.parent.name)
+    with archive_store().verification_reader(root) as verification:
+        for path in sorted((Path(root) / "story").glob("[0-9][0-9][0-9][0-9]/confirmed_state.json")):
+            number = int(path.parent.name)
+            if before is not None and number >= int(before):
+                continue
+            try:
+                canonical = safe(root, f"story/{number:04d}/confirmed_state.json")
+                if canonical != path.absolute():
+                    raise ValueError("确认记录指向别名路径")
+                data = json.loads(canonical.read_text(encoding="utf-8-sig"))
+                if not isinstance(data, dict) or data.get("chapter") != f"{number:04d}":
+                    raise ValueError("确认记录章节无效")
+                archive_store().verify_snapshot(root, data, reader=verification)
+                hashes = data.get("source_hashes")
+                if not isinstance(hashes, dict) or not isinstance(data.get("body_sha256"), str) or not data["body_sha256"]:
+                    raise ValueError("确认记录缺少来源校验")
+                verify(root, hashes)
+                dependencies = list(hashes) + [item.get('source_id','') for item in data.get('memory_dependencies',[]) if isinstance(item,dict)]
+                if any(re.match(r'story/([0-9]{4})/', file) and re.match(r'story/([0-9]{4})/', file)[1] in stale for file in dependencies):
+                    raise ValueError('依赖的前文档案已失效')
+                if digest(root, f"story/{number:04d}/chapter.md") != data.get("body_sha256"):
+                    raise ValueError("正文已修改")
+                valid.append(data)
+            except (ValueError, OSError):
+                stale.append(path.parent.name)
     return valid, stale
 
 
@@ -218,6 +254,12 @@ def chapter_start_indexes(root, chapter):
     """An explicitly empty snapshot is authoritative, not a fallback trigger."""
     prior, _ = confirmed(root, before=int(chapter))
     old = load(root, f"story/{chapter}/confirmed_state.json", {})
+    if old and not prior:
+        archive_store().historical_snapshot(root, old)
+        try:
+            verify(root, old.get('source_hashes', {}))
+        except ValueError:
+            return {'hooks': [], 'debts': []}
     snapshot = prior[-1] if prior else old
     field = "indexes" if prior else "indexes_before"
     if isinstance(snapshot.get(field), dict):
@@ -264,8 +306,8 @@ def chapter_outline(root, chapter, text=None):
     return "\n\n".join(sections)
 
 
-def archive_status(root):
-    states, stale = confirmed(root)
+def archive_status(root, _states=None):
+    states, stale = confirmed(root) if _states is None else _states
     last = states[-1] if states else None
     written = [p.parent.name for p in bodies(root)]
     return {"updated_chapter": last["chapter"] if last else "", "stale_chapters": stale,
@@ -296,7 +338,9 @@ def methods(question=""):
             "boundary": "方法按需要选择；不执行固定爽点、句式或章节配额；一致性和视角先于新颖度。"}
 
 
-def context(root, chapter="0001", question="", scope="chapter", *, runtime=None, chapter_drafts=True):
+def context(root, chapter="0001", question="", scope="chapter", *, runtime=None, chapter_drafts=True,
+            archive_observation=False):
+    archive_store().recover(root)
     root = Path(root).resolve()
     chapter = chapter_id(chapter)
     policy = _prose_policy()
@@ -352,12 +396,37 @@ def context(root, chapter="0001", question="", scope="chapter", *, runtime=None,
                 evidence[file] = original
     # upstream story_state_text is real reused code, now fed the relevant file state.
     chars = latest.get("characters", [])
-    active_text = question + read(root, f"planning/chapters/{chapter}.json") + chapter_outline(root, chapter)
-    chars = sorted(chars, key=lambda c: str(c.get("name", "")) not in active_text)
+    query_plan=load(root,f'planning/chapters/{chapter}.json',{})
+    effective_outline=chapter_outline(root,chapter,effective('outline/near_term_outline.md',read(root,'outline/near_term_outline.md')))
+    active_text = question + readable({k:v for k,v in query_plan.items() if k in {*PLAN_LABELS,'setup','title'}}) + effective_outline
+    recalled = memory().retrieve(root, chapter, active_text, states=states, outline_text=effective_outline)
+    active_ids = {e['id'] for e in recalled['entities']}
+    active_names = {e['name'] for e in recalled['entities']}
+    chars = sorted(chars, key=lambda c: c.get('entity_id') not in active_ids and c.get('name') not in active_names)
+    selected=[]; omitted=[]; size=0
+    for character in chars:
+        amount=len(json.dumps(character,ensure_ascii=False))
+        if size+amount<=10000 or character.get('entity_id') in active_ids or character.get('name') in active_names:
+            selected.append(character);size+=amount
+        else:omitted.append(character.get('entity_id') or character.get('name'))
+    recalled['omitted_character_states']=omitted
+    time_key=recalled['scene_time_key']
+    time_unverified=(time_key is not None and (type(latest.get('world_time_key')) is not int or latest['world_time_key']>time_key))
+    if time_unverified:
+        selected=[{**c,'identity':'作者身份索引；本场景状态待核实',
+            'snapshot':{'temporal_status':'unverified','scene_time_key':time_key,
+                'cognition':recalled['cognition'].get(c.get('entity_id'),{})},
+            'drives':{},'relationships':[]} for c in selected]
     upstream_state = {"characters": [{"name": c.get("name", ""), "identity": c.get("identity", ""),
                                      "current_status": json.dumps(c.get("snapshot", {}), ensure_ascii=False),
                                      "motivation": json.dumps(c.get("drives", {}), ensure_ascii=False),
-                                     "relationships": json.dumps(c.get("relationships", []), ensure_ascii=False)} for c in chars[:12]]}
+                                     "relationships": json.dumps(c.get("relationships", []), ensure_ascii=False)} for c in selected]}
+    for hit in recalled['hits']:
+        evidence[hit['source_id']] = read(root,hit['source_id'])
+        sources[hit['source_id']] = hit['source_sha256']
+    for dependency in recalled['read_set']:
+        sources[dependency['source_id']]=dependency['source_sha256']
+        evidence[dependency['source_id']]=read(root,dependency['source_id'])
     recent = [p for p in bodies(root) if int(p.parent.name) <= int(chapter)][-3:]
     for path in recent:
         file = path.relative_to(root).as_posix()
@@ -365,10 +434,15 @@ def context(root, chapter="0001", question="", scope="chapter", *, runtime=None,
         excerpt = text if len(text) <= 16000 else text[:2500] + "\n（正文中段省略）\n" + text[-9000:]
         entries.append({"source_id": file, "content": excerpt})
         evidence[file] = text
+        # A previous verdict about this same body is the output of post-hoc,
+        # not a source for a fresh observation or independent arbitration.
+        if archive_observation and path.parent.name == chapter:
+            continue
         diff = read(root, f"story/{path.parent.name}/diff_story_confirmed.md")
         if diff:
             entries.append({"source_id": f"story/{path.parent.name}/diff_story_confirmed.md", "content": diff[:4000]})
             evidence[f"story/{path.parent.name}/diff_story_confirmed.md"] = diff
+            sources[f"story/{path.parent.name}/diff_story_confirmed.md"] = digest(root,f"story/{path.parent.name}/diff_story_confirmed.md")
     adopted = load(root, f"planning/chapters/{chapter}.json")
     adopted_context = None
     if adopted:
@@ -379,9 +453,18 @@ def context(root, chapter="0001", question="", scope="chapter", *, runtime=None,
             compatible = False
         adopted_context = {"content": render_plan(adopted), "compatible": compatible,
                            "boundary": "作者已选择的待写方案；仍须与本次设定和正文核对，不是已发生事实。"}
+    serial_state=serial().status(root,chapter,states=states)
+    if serial_state.get('enabled'):
+        sources['meta/serial_contract.json']=digest(root,'meta/serial_contract.json')
+        if time_unverified:
+            serial_state['entry']['characters']=[]
+            serial_state['entry']['world']={'temporal_status':'unverified'}
     return {"chapter": chapter, "scope": scope, "sources": entries, "adopted_plan": adopted_context,
+            "serial":serial_state,
+            "memory": recalled,
             "state_text": upstream.story_state_text(upstream_state, mode="deep"),
-            "world_current": latest.get("world", {}), "indexes_before": indexes,
+            "world_current": ({'temporal_status':'unverified','scene_time_key':time_key,
+                'boundary':'上一叙事位置的世界状态不直接沿用到本场景；静态规则遵循本书契约'} if time_unverified else latest.get("world", {})), "indexes_before": indexes,
             "archive_status": archive_status(root),
             "methods": methods(question), "source_hashes": sources,
             "stale_chapters": stale, "evidence_texts": evidence,
@@ -534,6 +617,7 @@ def apply_plan(root, entry, option_id):
 
 
 def preflight(root, chapter):
+    archive_store().recover(root)
     chapter = chapter_id(chapter)
     missing = sorted(path.stem for path in (Path(root) / "archive/chapter_resets").glob("[0-9][0-9][0-9][0-9].json")
                      if int(path.stem) < int(chapter) and not read(root, f"story/{path.stem}/chapter.md").strip())
@@ -548,6 +632,7 @@ def preflight(root, chapter):
     if stale:
         stale_chapter = stale[0]
         return {"ready": False, "action": "post-hoc", "chapter": stale_chapter,
+                "impact": memory().impact(root),
                 "reason_code": "archive_stale", "changed_sources": [],
                 "next_step": f"重新审核第 {int(stale_chapter)} 章，并同步确认档案后再续写。",
                 "message": f"第 {int(stale_chapter)} 章的正文或依据发生过变化，原档案已过期。请先重新完成质量审核。"}
@@ -558,6 +643,11 @@ def preflight(root, chapter):
                     "reason_code": "archive_pending", "changed_sources": [],
                     "next_step": f"先审核第 {int(previous_chapter)} 章并同步人物、世界和伏笔档案。",
                     "message": f"第 {int(previous_chapter)} 章已有正文，但还没有同步确认档案。请先完成质量审核。"}
+    serial_check=serial().need_plan(root,chapter)
+    if not serial_check['ready']:
+        return {'ready':False,'action':'outline','chapter':chapter,'reason_code':serial_check['reason_code'],
+            'serial':serial_check,'changed_sources':[], 'next_step':'核对本卷承接并完成后续滚动规划。',
+            'message':'本章需要更新滚动计划或复核跨卷承接；原稿与作者选择均保留。'}
     adopted = load(root, f"planning/chapters/{chapter}.json")
     if adopted:
         changed = changed_sources(root, adopted.get("source_hashes", {}))
@@ -566,7 +656,7 @@ def preflight(root, chapter):
                     "reason_code": "ready", "changed_sources": [],
                     "next_step": f"开始生成第 {int(chapter)} 章正文。",
                     "message": "已核对前文档案与采用方案，可继续本章。"}
-        source_names = "、".join(changed[:4])
+        source_names = "、".join('本章世界时间序号' if p.startswith('@memory/scene-time/') else p for p in changed[:4])
         more = f"等 {len(changed)} 项" if len(changed) > 4 else ""
         return {"ready": False, "action": "outline", "chapter": chapter,
                 "reason_code": "adopted_plan_stale", "changed_sources": changed,
@@ -585,7 +675,7 @@ def preflight(root, chapter):
             "message": "已核对前文档案与大纲覆盖，可继续本章。"}
 
 
-def prepare_context(root, chapter, check=False, *, task_id=None):
+def prepare_context(root, chapter, check=False, *, task_id=None, archive_observation=False):
     chapter = chapter_id(chapter)
     if check:
         result = preflight(root, chapter)
@@ -595,7 +685,8 @@ def prepare_context(root, chapter, check=False, *, task_id=None):
     runtime = policy.prepare_runtime(root, chapter, task_id=task_id or uuid4().hex)
     # MVP will produce a new guide before using it. Review stages can use the
     # selected existing guide as separately identified planning evidence.
-    ctx = context(root, chapter, runtime=runtime, chapter_drafts=not check)
+    ctx = context(root, chapter, runtime=runtime, chapter_drafts=not check,
+                  archive_observation=archive_observation)
     adopted = load(root, f"planning/chapters/{chapter}.json")
     adopted_note = ''
     if adopted:
@@ -611,6 +702,12 @@ def prepare_context(root, chapter, check=False, *, task_id=None):
     text = "# 本章共同创作上下文\n\n## 当前创作契约\n" + priority
     text += "\n\n## 已确认的动态状态\n" + ctx["state_text"]
     text += "\n\n## 已确认的世界状态\n" + readable(ctx["world_current"])
+    text += '\n\n## 卷级承接与滚动规划（作者统筹资料，不赋予角色知识）\n'+json.dumps(ctx['serial'],ensure_ascii=False,indent=2)
+    text += '\n\n## 远距离原文与认知来源\n' + json.dumps(ctx['memory'],ensure_ascii=False,indent=2)
+    text += ('\n\n检索命中是核对资料，不要求逐项写进正文。作者掌握的身份映射和世界事实不直接赋予人物；'
+             '误信、传言、获知过程与客观事实分别使用。未记录获知来源不等于确定不知，可保留有依据的常识与推断。'
+             '叙述者是否可知、是否可靠、揭示时机及有意歧义依本书契约，不以限知规则统一约束全部作品。'
+             '倒叙、插叙或跨时序场景不能直接沿用上一叙事位置的全部人物状态；明确世界时间时按该时间核对，未知则保留待核实。')
     text += "\n\n## 本书依据与最近正文\n" + "\n\n".join(
         f"### {s['source_id']}\n{s['content']}" for s in ctx['sources']
         if s['source_id'] not in {*PRIORITY_FILES, 'outline/volume_outline.md', 'outline/near_term_outline.md'})
@@ -655,6 +752,7 @@ def prepare_context(root, chapter, check=False, *, task_id=None):
         write(root, "cache/story-support/context.md", text)
     write(root, f"story/{chapter}/planning_context.json", {"chapter": chapter, "adopted_request": (adopted or {}).get("request_id", ""),
           "adopted_option": (adopted or {}).get("option_id", ""), "source_hashes": ctx["source_hashes"],
+          "memory_dependencies": ctx['memory']['read_set'],
           "projects": [p["project"] for p in json.loads((HERE/"UPSTREAM.json").read_text())["projects"]]})
     return ctx | {"prose_policy_runtime": runtime}
 
@@ -692,21 +790,48 @@ def commit_reader(root, chapter):
     return report
 
 
+def review_file(chapter, name):
+    task = os.environ.get('TASK_ID', '')
+    if task:
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', task):
+            raise ValueError('审核任务编号无效')
+        return f'cache/story-support/reviews/{task}/{chapter}/{name}'
+    return {'observer.json':'cache/observer/obs_output.json',
+            'arbiter.json':'cache/arbiter/arb_output.json'}.get(name, f'cache/story-support/{chapter}/{name}')
+
+
 def begin_review(root, chapter):
+    archive_store().recover(root)
     chapter = chapter_id(chapter)
     body = read(root, f"story/{chapter}/chapter.md")
     if not body.strip():
         raise ValueError("本章还没有正文。")
-    write(root, f"cache/story-support/{chapter}/review-source.json", {"chapter": chapter,
+    hashes = source_hashes(root, include_outline=False, before=chapter)
+    previous, _ = confirmed(root, before=int(chapter))
+    hashes.update({f"story/{s['chapter']}/confirmed_state.json": digest(root, f"story/{s['chapter']}/confirmed_state.json") for s in previous})
+    write(root, review_file(chapter, 'review-source.json'), {"chapter": chapter,
+          "task_id": os.environ.get('TASK_ID', ''),
           "body_sha256": digest(root, f"story/{chapter}/chapter.md"),
-          "source_hashes": source_hashes(root, include_outline=False, before=chapter)})
+          "source_hashes": hashes,
+          "book_contract_sha256": archive_store().contract(root)})
     # Bind the review to this chapter's inputs, never a different chapter's cache.
     base = chapter_start_indexes(root, chapter)
-    write(root, f'cache/story-support/{chapter}/indexes-before.json', base)
+    write(root, review_file(chapter, 'indexes-before.json'), base)
+    dependencies = load(root,f'story/{chapter}/planning_context.json',{}).get('memory_dependencies',[])
+    write(root,review_file(chapter,'memory-dependencies.json'),dependencies)
+    source = load(root, review_file(chapter, 'review-source.json'))
+    source['serial_contract_sha256']=digest(root,'meta/serial_contract.json')
+    source['memory_dependencies'] = dependencies
+    source['source_hashes'].update({relative: digest(root, relative) for relative in (
+        review_file(chapter, 'indexes-before.json'),
+        review_file(chapter, 'memory-dependencies.json'),
+        f'story/{chapter}/planned_world_state.json', f'story/{chapter}/planned_hooks.json',
+        f'story/{chapter}/planned_debts.json')})
+    write(root, review_file(chapter, 'review-source.json'), source)
 
 
 def confirmed_indexes(root, chapter, proposed, arb, body):
-    base = load(root, f'cache/story-support/{chapter}/indexes-before.json', {})
+    base = load(root, review_file(chapter, 'indexes-before.json'), {})
     result = {}
     for key, prefix in [('hooks', 'h'), ('debts', 'd')]:
         entries = {item['id']: dict(item) for item in base.get(key, []) if isinstance(item, dict) and item.get('id')}
@@ -759,42 +884,119 @@ def observed_characters(proposed, body):
 def validate_observation(root, chapter):
     chapter = chapter_id(chapter)
     body = read(root, f"story/{chapter}/chapter.md")
-    obs = load(root, "cache/observer/obs_output.json", {})
+    obs = load(root, review_file(chapter, "observer.json"), {})
     proposed = obs.get('confirmed_state') if isinstance(obs, dict) else None
     list(observed_characters(proposed, body))
     confirmed_indexes(root, chapter, proposed, {}, body)
 
 
-def commit(root, chapter):
+@lru_cache(maxsize=1)
+def observation_cache():
+    spec = importlib.util.spec_from_file_location('archive_observation', HERE/'archive_observation.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def reuse_observation(root, chapter):
     chapter = chapter_id(chapter)
-    source = load(root, f"cache/story-support/{chapter}/review-source.json")
+    source = load(root, review_file(chapter, 'review-source.json'))
+    journal = archive_store()
+    guard = journal.execution_guard()
+    cache = observation_cache()
+    binding = cache.identity(root, source, journal, guard)
+    prior = cache.previous(root, source, binding, journal)
+    if prior is None:
+        if source.get('task_id'):
+            journal.event(root, 'archive_observation_miss', {'task_id': source['task_id'], 'chapter': chapter})
+        return False
+    guard.assert_current(root)
+    verify(root, source['source_hashes'])
+    if source['body_sha256'] != digest(root, f'story/{chapter}/chapter.md'):
+        raise ValueError('观察复用期间正文已有变化')
+    observation, receipt, origin = prior
+    write(root, review_file(chapter, 'observer.json'), observation)
+    try:
+        validate_observation(root, chapter)
+    except ValueError:
+        journal.event(root, 'archive_observation_miss', {'task_id': source['task_id'], 'chapter': chapter})
+        return False
+    journal.event(root, 'archive_observation_reuse', {
+        'task_id': source['task_id'], 'origin_commit_id': origin, 'observer_sha256': receipt['observer_sha256'],
+    })
+    return True
+
+
+def validate_cached_observation(root, chapter):
+    chapter = chapter_id(chapter)
+    source = load(root, review_file(chapter, 'review-source.json'))
+    journal = archive_store()
+    guard = journal.execution_guard()
+    guard.assert_current(root)
+    verify(root, source['source_hashes'])
+    if source['body_sha256'] != digest(root, f'story/{chapter}/chapter.md'):
+        raise ValueError('观察复用期间正文已有变化')
+    observation = load(root, review_file(chapter, 'observer.json'))
+    if observation_cache().provenance(root, source, observation, journal, guard) is None:
+        raise ValueError('观察结果缺少当前来源与可信归档凭据')
+    validate_observation(root, chapter)
+
+
+def commit(root, chapter):
+    journal = archive_store()
+    journal.recover(root)
+    archive_revision = journal.revision(root)
+    chapter = chapter_id(chapter)
+    source = load(root, review_file(chapter, 'review-source.json'))
     if not source or source["body_sha256"] != digest(root, f"story/{chapter}/chapter.md"):
         raise ValueError("正文在审核过程中有变化，请重新质量审核。")
     verify(root, source["source_hashes"])
-    obs = load(root, "cache/observer/obs_output.json", {})
-    arb = load(root, "cache/arbiter/arb_output.json", {})
+    if source.get('serial_contract_sha256',digest(root,'meta/serial_contract.json'))!=digest(root,'meta/serial_contract.json'):
+        raise ValueError('审核期间卷级契约已有变化，请重新核对')
+    if source.get('book_contract_sha256', journal.contract(root)) != journal.contract(root):
+        raise ValueError('本书规则在审核过程中已有变化，请重新审核')
+    obs = load(root, review_file(chapter, "observer.json"), {})
+    arb = load(root, review_file(chapter, "arbiter.json"), {})
     if not isinstance(obs, dict) or not isinstance(arb, dict) or "story_confirmed" not in arb:
         raise ValueError("后验产物不完整，未更新正式档案。")
+    inputs = {'source': source, 'observer_candidate': obs, 'arbiter_confirmed': arb}
+    provenance = observation_cache().provenance(root, source, obs, journal, journal.execution_guard())
+    if provenance is None and source.get('task_id') and journal.events(
+            root, kind='archive_observation_reuse', task_id=source['task_id']):
+        raise ValueError('复用观察的依据已有变化，请重新运行完整观察和裁决')
+    if provenance:
+        inputs['observation_reuse'] = provenance
+    commit_id = journal.identity([chapter, inputs, journal.contract(root)])
+    saved = journal.existing(root, commit_id)
+    if saved:
+        return saved
     body = read(root, f"story/{chapter}/chapter.md")
     prior, _ = confirmed(root, before=int(chapter))
     previous = prior[-1] if prior else {}
-    chars = {c["name"]: c for c in previous.get("characters", []) if c.get("name")}
     proposed = obs.get("confirmed_state", {})
+    observed = [item for item,quote in observed_characters(proposed,body)]
+    old_characters, observed, identities = memory().canonicalize(root, previous.get('characters',[]), observed,
+                                                               arb.get('identity_rulings',[]), body, previous.get('entities',[]))
+    memory_events = memory().validate_events(root,chapter,arb.get('memory_events',[]),prior,identities,body)
+    serial_progress=serial().validate_progress(root,chapter,arb.get('serial_progress',[]),body)
+    chars = {c['entity_id']:c for c in old_characters}
     evidence_changes = []
-    for item, quote in observed_characters(proposed, body):
+    for item in observed:
+        quote = validated_evidence(item['evidence'],body,'人物证据无效')
         name = item["name"]
-        old = chars.get(name, {"name": name})
-        chars[name] = {**old, **item, "evidence": quote, "source_chapter": chapter}
+        key = item['entity_id']
+        old = chars.get(key, {"name": name})
+        chars[key] = {**old, **item, "evidence": quote, "source_chapter": chapter}
         for field in ('snapshot', 'drives'):
             if field in item and not isinstance(item[field], dict):
                 raise ValueError('人物处境与动机必须是结构化状态。')
-            chars[name][field] = {**old.get(field, {}), **{k:v for k,v in item.get(field, {}).items() if v not in ('', None)}}
+            chars[key][field] = {**old.get(field, {}), **{k:v for k,v in item.get(field, {}).items() if v not in ('', None)}}
         if 'relationships' in item:
             if not isinstance(item['relationships'], list) or any(not isinstance(r, dict) for r in item['relationships']):
                 raise ValueError('人物关系格式无效。')
             relationships = {r.get('target'): r for r in old.get('relationships', [])}
             relationships.update({r.get('target'): r for r in item['relationships'] if r.get('target')})
-            chars[name]['relationships'] = list(relationships.values())
+            chars[key]['relationships'] = list(relationships.values())
         evidence_changes.append({"name": name, "change": item.get("snapshot", {}), "evidence": quote})
     # Existing books can be reviewed without inventing full states; retain the
     # observer's sourced deltas for next CM, but label incomplete snapshots.
@@ -811,28 +1013,49 @@ def commit(root, chapter):
     if authored:
         world["作者规划的幕后演进（不等于角色已知）"] = authored
     indexes_before, indexes = confirmed_indexes(root, chapter, proposed, arb, body)
-    snapshot = {"version": 1, "chapter": chapter, "updated_at": now(), "body_sha256": source["body_sha256"],
-                "source_hashes": source["source_hashes"], "characters": list(chars.values()), "world": world,
+    snapshot = {"version": 1, "archive_commit_id": commit_id, "task_id": source.get('task_id', ''), "chapter": chapter, "updated_at": now(), "body_sha256": source["body_sha256"],
+                "source_hashes": {p: h for p, h in source["source_hashes"].items() if not p.startswith('cache/')}, "characters": list(chars.values()), "world": world,
                 "indexes_before": indexes_before, "indexes": indexes,
                 "character_changes": changes, "story_changes": arb["story_confirmed"],
+                "memory_events": memory_events,
+                "serial_progress":serial_progress,
+                "entities": list(identities.values()),
+                "world_time_key": authored.get('world_time_key'),
+                "memory_dependencies": source.get('memory_dependencies',[]),
                 "pending_world": [i for i in arb.get("world_rulings", {}).get("entries", []) if i.get("verdict") != "adopt"]}
     target = f"story/{chapter}/confirmed_state.json"
     old = load(root, target)
+    outputs = {target: snapshot}
     if old and old != snapshot:
-        write(root, f"archive/history/{chapter}/{old['body_sha256'][:16]}.json", old)
-    write(root, target, snapshot)
-    for key, items in indexes.items():
-        write(root, f'archive/{key}.json', items)
-        write(root, f'meta/{key}.md', ('# 已确认伏笔' if key == 'hooks' else '# 已确认叙事债务') + '\n\n' + (readable(items) or '暂无确认条目。'))
-    write(root, f"story/{chapter}/confirmed_state.md", f"# 第 {int(chapter)} 章结束后的确认状态\n\n" + readable({"人物状态": snapshot["characters"], "世界局势": world, "人物变化": changes}))
-    refresh_archive(root)
-    return snapshot
-
-
-def refresh_archive(root):
+        outputs[f"archive/history/{chapter}/{old['body_sha256'][:16]}-{journal.identity(old)[:12]}.json"] = old
+    outputs[f"story/{chapter}/confirmed_state.md"] = f"# 第 {int(chapter)} 章结束后的确认状态\n\n" + readable({"人物状态": snapshot["characters"], "世界局势": world, "人物变化": changes})
     states, stale = confirmed(root)
-    status = archive_status(root)
+    # Earlier edits invalidate dependent snapshots through their source hashes.
+    dependents = [s['chapter'] for s in states if target in s.get('source_hashes', {})]
+    states = sorted([s for s in states if s['chapter'] != chapter and s['chapter'] not in dependents] + [snapshot], key=lambda s: s['chapter'])
+    refresh_archive(root, _states=(states, sorted(set(n for n in stale if n != chapter) | set(dependents))), _write=lambda r, p, v: outputs.update({p: v}), _replacements={chapter:snapshot})
+    guards = {**source['source_hashes'], f'story/{chapter}/chapter.md': source['body_sha256']}
+    guards['meta/serial_contract.json']=source.get('serial_contract_sha256',digest(root,'meta/serial_contract.json'))
+    return journal.publish(root, snapshot, outputs, guards, inputs, archive_revision,transient_guards=['meta/serial_contract.json'])
+
+
+def refresh_archive(root, _states=None, _write=None, _replacements=None):
+    if _states is None:
+        def guards():
+            values = source_hashes(root, include_outline=False)
+            values.update({p.relative_to(root).as_posix(): digest(root, p.relative_to(root).as_posix()) for p in Path(root).glob('story/[0-9][0-9][0-9][0-9]/confirmed_state.json')})
+            return values
+        archive_store().publish_views(root,
+            lambda sink: refresh_archive(root, _states=confirmed(root), _write=sink), guards)
+        return archive_status(root)
+    write = _write or globals()['write']
+    states, stale = confirmed(root) if _states is None else _states
+    status = archive_status(root, (states, stale))
     write(root, "archive/current_status.json", status)
+    if serial().contract(root):
+        target=str(int(states[-1]['chapter'])+1).zfill(4) if states else '0001'
+        write(root,'planning/serial/status.json',serial().status(root,target,states=states))
+    write(root, 'archive/impact_report.json', memory().impact(root,states=states,stale=stale,replacements=_replacements))
     latest = states[-1] if states else {}
     # A revision of an early chapter can invalidate later snapshots. Rebuild
     # shared indexes from the latest still-valid snapshot, never future facts.
@@ -852,24 +1075,58 @@ def refresh_archive(root):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["context", "begin-reader", "commit-reader", "begin-review", "validate-observation", "commit", "preflight", "refresh"])
+    parser.add_argument("command", choices=["context", "begin-reader", "commit-reader", "begin-review",
+        "validate-observation", "reuse-observation", "validate-cached-observation", "commit", "preflight",
+        "refresh", "recover", "abandon-commit", "recall", "impact", "serial"])
     parser.add_argument("--chapter", default="0001")
+    parser.add_argument("--commit-id", default="")
+    parser.add_argument('--query', default='')
+    parser.add_argument('--serial-action',default='status',choices=['bootstrap','prepare','normalize','commit','approve','status'])
     parser.add_argument("--check", action='store_true')
+    parser.add_argument("--archive-observation", action='store_true')
+    parser.add_argument("--emit-effective-context", action='store_true')
     parser.add_argument("--policy-alias", action="append", default=[])
     args = parser.parse_args()
     root = Path.cwd().resolve()
+    if args.command=='serial':
+        serial().main([args.serial_action,'--chapter',args.chapter]);return
+    if args.command in {'recall','impact'}:
+        archive_store().recover(root)
+        result=memory().retrieve(root,args.chapter,args.query) if args.command=='recall' else memory().impact(root)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        return
+    if args.command in {'recover', 'abandon-commit'}:
+        if args.command == 'recover':
+            archive_store().recover(root)
+        else:
+            archive_store().abandon(root, None if args.commit_id else chapter_id(args.chapter), args.commit_id or None)
+        print(json.dumps(archive_store().publications(root), ensure_ascii=False))
+        return
     if args.command == "validate-observation":
         try:
             validate_observation(root, args.chapter)
         except ValueError:
-            print('<WF_REJECT_UPSTREAM target="agent_obs">[archive_evidence] 对照本章原文重新复制证据，'
+            _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_obs">[archive_evidence] 对照本章原文重新复制证据，'
                   '包括代词、原标点，不能把“她”改成人名。首次进入正文的伏笔和债务用 plant；'
                   '缺乏原文依据则不收录。</WF_REJECT_UPSTREAM>')
+        return
+    if args.command == 'reuse-observation':
+        guard = archive_store().execution_guard()
+        if guard.reuse_profile(root, ('agent_obs',)):
+            guard.request_budget(root, 'agent_obs')
+        hit = reuse_observation(root, args.chapter)
+        print(f'<WF_VAR>archive_observation_reused:{"yes" if hit else "no"}</WF_VAR>')
+        if hit:
+            print(f'<WF_VAR>archive_reuse_body_file:story/{chapter_id(args.chapter)}/chapter.md</WF_VAR>')
+        return
+    if args.command == 'validate-cached-observation':
+        validate_cached_observation(root, args.chapter)
         return
     action = {"context": prepare_context, "begin-reader": begin_reader, "commit-reader": commit_reader,
               "begin-review": begin_review, "commit": commit, "preflight": preflight}
     result = (refresh_archive(root) if args.command == "refresh" else
-              prepare_context(root, args.chapter, args.check, task_id=os.environ.get("TASK_ID"))
+              prepare_context(root, args.chapter, args.check, task_id=os.environ.get("TASK_ID"),
+                              archive_observation=args.archive_observation)
               if args.command == 'context' else action[args.command](root, args.chapter))
     if args.command == "context":
         if os.environ.get('TASK_ID'):
@@ -878,11 +1135,14 @@ def main():
             frozen=contract_module.freeze(root,os.environ['TASK_ID'])
             print(f"<WF_VAR>book_contract_file:{frozen['prompt_file']}</WF_VAR>")
         runtime = result["prose_policy_runtime"]
-        print(f"<WF_VAR>revision_context_path:{runtime.get('common_file') or 'cache/story-support/context.md'}</WF_VAR>")
-        if runtime["directory"]:
-            print(f"<WF_VAR>prose_policy_runtime:{runtime['directory']}</WF_VAR>")
-            print(f"<WF_VAR>prose_policy_prompt:{runtime['prompt_file']}</WF_VAR>")
-            print(f"<WF_VAR>story_support_context:{runtime['common_file']}</WF_VAR>")
+        common = runtime.get('common_file') or 'cache/story-support/context.md'
+        print(f"<WF_VAR>revision_context_path:{common}</WF_VAR>")
+        if runtime["directory"] or args.emit_effective_context:
+            # A whitespace value decodes to an explicit empty string in the
+            # host's WF_VAR parser when the book inherits its existing prose.
+            print(f"<WF_VAR>prose_policy_runtime:{runtime['directory'] or ' '}</WF_VAR>")
+            print(f"<WF_VAR>prose_policy_prompt:{runtime['prompt_file'] or ' '}</WF_VAR>")
+            print(f"<WF_VAR>story_support_context:{common}</WF_VAR>")
         for spec in args.policy_alias:
             key, sep, source_id = spec.partition("=")
             if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
@@ -894,9 +1154,12 @@ def main():
                 if alias == source_id:
                     alias = policy.compact_mirror_alias(root, runtime["directory"], source_id,
                                                         task_id=runtime["task_id"])
-                if alias != source_id:
-                    print(f"<WF_VAR>{key}:{alias}</WF_VAR>")
+            if alias != source_id or args.emit_effective_context:
+                print(f"<WF_VAR>{key}:{alias or ' '}</WF_VAR>")
             if key=='pp_learning_context':print(f"<WF_VAR>revision_reference_path:{alias}</WF_VAR>")
+    if args.command == 'begin-review':
+        for key, name in [('obs_output_file','observer.json'), ('archive_observer_path','observer.json'), ('archive_arbiter_path','arbiter.json')]:
+            print(f'<WF_VAR>{key}:{review_file(chapter_id(args.chapter), name)}</WF_VAR>')
     if args.command == "preflight" and not result["ready"]:
         raise ValueError(result["message"])
     print(json.dumps({"status": "completed", "command": args.command, "chapter": args.chapter}, ensure_ascii=False))

@@ -163,6 +163,93 @@ def test_optional_unconfigured_length_does_not_block_content_revision(tmp_path):
     m.candidate(tmp_path,out['revision_dir'])
 
 
+def test_short_candidate_retry_retains_latest_patch_before_review_input_exists(tmp_path):
+    m=module();put(tmp_path,'story/0001/chapter.md','甲'*100)
+    out=m.prepare(tmp_path,'0001','short-patch','150-200')
+    put(tmp_path,'cache/sc/critique.json',{'issues':[]});m.writer_input(tmp_path,out['revision_dir'],'cache/sc/critique.json')
+    source=json.loads((tmp_path/out['revision_input']).read_text(encoding='utf-8'))
+    assert source['length_edit_budget']['source_word_count']==100
+    assert source['length_edit_budget']['net_change_minimum']==50
+    payload={'source_sha256':source['source_sha256'],'edits':[{
+        'paragraph_id':'p0001','old':'甲','occurrence':1,'replacement':'甲'*50}]}
+    put(tmp_path,out['revision_patch_path'],payload)
+    with pytest.raises(m.Retry) as failure:m.candidate(tmp_path,out['revision_dir'])
+    assert not (tmp_path/out['revision_review_input']).exists()
+    feedback=m.retry_feedback(tmp_path,out['revision_dir'],failure.value)
+    assert '"net_change_minimum": 50' in feedback and 'rejected_edits' in feedback and '不累计' in feedback
+    (tmp_path/out['revision_patch_path']).unlink()
+    snapshot=json.loads((tmp_path/out['revision_dir']/'last-rejected-patch.json').read_text(encoding='utf-8'))
+    assert snapshot['rejected_edits']==payload['edits'] and snapshot['candidate_length']['actual']==149
+    assert (tmp_path/'story/0001/chapter.md').read_text(encoding='utf-8')=='甲'*100
+
+
+def test_malformed_patch_still_returns_writer_retry_feedback(tmp_path):
+    m,out=setup(tmp_path)
+    (tmp_path/out['revision_patch_path']).write_text('{"edits":',encoding='utf-8')
+    with pytest.raises(m.Retry) as failure:m.candidate(tmp_path,out['revision_dir'])
+    feedback=m.retry_feedback(tmp_path,out['revision_dir'],failure.value)
+    assert '冻结原文' in feedback and 'source_word_count' in feedback
+    assert not (tmp_path/out['revision_dir']/'last-rejected-patch.json').exists()
+    assert (tmp_path/'story/0001/chapter.md').read_bytes()==BODY.encode()
+
+
+def test_structured_scope_conflict_never_publishes_or_retries_same_writer(tmp_path):
+    m,out=setup(tmp_path);source=json.loads((tmp_path/out['revision_input']).read_text(encoding='utf-8'))
+    payload={'source_sha256':source['source_sha256'],'edits':[],'status':'needs_replan',
+        'reason':'在当前范围内压缩复述后不足，不能用同义动作补足。','evidence':['第二段重复说明。']}
+    put(tmp_path,out['revision_patch_path'],payload)
+    with pytest.raises(m.CompositionConflict):m.candidate(tmp_path,out['revision_dir'])
+    task={'task_id':'local-test','status':'failed','parameter_values':{**out,'revision_patch_result':json.dumps(payload,ensure_ascii=False)},
+        'node_states':{'agent_pl':{'status':'completed'},'script_local_candidate':{'status':'failed'}}}
+    assert m.verify_conflict(tmp_path,task)['kind']=='content_length_conflict'
+    assert not (tmp_path/out['revision_review_input']).exists()
+    assert (tmp_path/'story/0001/chapter.md').read_bytes()==BODY.encode()
+    task['parameter_values']['revision_patch_result']='{}'
+    with pytest.raises(ValueError):m.verify_conflict(tmp_path,task)
+
+
+def test_repeated_short_content_repair_keeps_length_gate_without_invented_scope_conflict(tmp_path):
+    m=module();put(tmp_path,'story/0001/chapter.md','甲'*200)
+    put(tmp_path,'story/0001/reader_report.json',{'body_sha256':m.sha(('甲'*200).encode()),
+        'issues':[{'id':'repeat','priority':'medium','goal':'合并复述','excerpts':['甲甲']} ]})
+    out=m.prepare(tmp_path,'0001','short-content','180-220');put(tmp_path,'cache/sc/critique.json',{'issues':[]})
+    m.writer_input(tmp_path,out['revision_dir'],'cache/sc/critique.json')
+    for count in (101,102):
+        payload={'source_sha256':m.sha(('甲'*200).encode()),'edits':[{'paragraph_id':'p0001','old':'甲'*200,'occurrence':1,'replacement':'乙'*count}]}
+        put(tmp_path,out['revision_patch_path'],payload)
+        with pytest.raises(m.Retry):m.candidate(tmp_path,out['revision_dir'])
+    assert not (tmp_path/out['revision_dir']/'composition-conflict.json').exists()
+    assert (tmp_path/'story/0001/chapter.md').read_text(encoding='utf-8')=='甲'*200
+
+
+def test_automatic_advice_is_not_promoted_above_original_author_requirements(tmp_path):
+    m=module();put(tmp_path,'story/0001/chapter.md','原正文。')
+    put(tmp_path,'author.md','保留心理和抒情，不增加无关动作。')
+    put(tmp_path,'auto/instructions.md','旧自动建议：用更多操作补到四千字。')
+    original=(tmp_path/'author.md').read_text(encoding='utf-8')
+    put(tmp_path,'auto/automatic-origin.json',{'origin':'automatic','feedback_sha256':m.sha((tmp_path/'auto/instructions.md').read_bytes()),
+        'retained_feedback_sources':[{'source_id':'author.md','sha256':m.sha((tmp_path/'author.md').read_bytes()),'text':original}]})
+    out=m.prepare(tmp_path,'0001','layers','1-5000',feedback_path='auto/instructions.md')
+    data=json.loads((tmp_path/out['revision_source_input']).read_text(encoding='utf-8'))
+    assert data['author_feedback']==original
+    assert '旧自动建议' in data['automatic_revision_advice']
+    put(tmp_path,'author.md','作者后来修改了要求。')
+    with pytest.raises(ValueError):m.bound(tmp_path,out['revision_dir'])
+
+
+def test_repeated_content_rejection_alone_does_not_prove_scope_conflict(tmp_path):
+    m,out=setup(tmp_path)
+    for i,text in enumerate(('第二段简明。','第二段新的说明。')):
+        payload=patch(m,out,tmp_path,text);m.candidate(tmp_path,out['revision_dir'])
+        report=json.loads(approved(m,out,tmp_path));report['change_reviews'][0]['effect']='regressed'
+        put(tmp_path,out['revision_review_path'],report);raw=json.dumps(report,ensure_ascii=False)
+        with pytest.raises(m.Retry):m.commit(tmp_path,out['revision_dir'],raw)
+    task={'task_id':'local-test','status':'failed','parameter_values':{**out,'revision_patch_result':json.dumps(payload,ensure_ascii=False),
+        'revision_review_result':raw},'node_states':{'agent_pl':{'status':'completed'},'agent_local_review':{'status':'completed'},'script_local_commit':{'status':'failed'}}}
+    assert not (tmp_path/out['revision_dir']/'composition-conflict.json').exists()
+    assert (tmp_path/'story/0001/chapter.md').read_bytes()==BODY.encode()
+
+
 @pytest.mark.parametrize('changed',['story/0001/chapter.md','story/0001/diff_story_confirmed.md',
     'planning/chapters/0003.json','learning/active_context.md','learning/character_center/preferences.json'])
 def test_old_history_and_adopted_planning_are_bound_even_when_context_cache_is_unchanged(tmp_path,changed):
@@ -192,3 +279,18 @@ def test_direct_workflow_feedback_override_is_frozen_and_cannot_drift(tmp_path):
     assert source['author_feedback']=='本次作者要求。'
     put(tmp_path,'new.md','本次意见又改变。')
     with pytest.raises(ValueError):m.bound(tmp_path,out['revision_dir'])
+
+
+def test_two_bad_length_candidates_do_not_invent_reading_scope_conflict(tmp_path):
+    m=module();body=tmp_path/'story/0001/chapter.md';body.parent.mkdir(parents=True);body.write_bytes(BODY.encode())
+    out=m.prepare(tmp_path,'0001','length-rejections','1-5000')
+    put(tmp_path,'cache/sc/critique.json',{'issues':[{'severity':'medium','description':'说明重复',
+        'suggestion':'合并无作用说明','evidence':['第二段重复说明。']}]})
+    m.writer_input(tmp_path,out['revision_dir'],'cache/sc/critique.json')
+    for count in (5001,5002):
+        patch(m,out,tmp_path,'乙'*count)
+        with pytest.raises(m.Retry) as exc:m.candidate(tmp_path,out['revision_dir'])
+        assert exc.value.target=='agent_pl'
+    assert not (tmp_path/out['revision_dir']/'composition-conflict.json').exists()
+    assert len(json.loads((tmp_path/out['revision_dir']/'length-candidates.json').read_text(encoding='utf8')))==2
+    assert body.read_bytes()==BODY.encode()

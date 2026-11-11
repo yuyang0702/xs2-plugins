@@ -33,6 +33,19 @@ def test_advisor_receives_json_overrides_and_protected_devices(tmp_path):
     assert '独有的树木独白' in c['style_intent'] and '本书规则契约' in system
 
 
+def test_advisor_uses_author_brief_and_existing_planning_without_assuming_ending(tmp_path):
+    put(tmp_path,'meta/character_profiles.md','舟子拒绝替兄长作证。')
+    put(tmp_path,'meta/story_plan.md','主线从渡口失约开始。')
+    jobs=service().create_assistant(lambda **_:None,lambda **_:None)
+    system,user,*_=jobs._general_messages(tmp_path,'q',{'purpose':'advisor','question':'补一下规划',
+        'project':{'advisor_brief':'终局保留开放结尾。','values':{'premise':'渡口失约'}}})
+    basis=json.loads(user.split('参考上下文：\n',1)[1])['规划依据']
+    assert basis['作者简报']=='终局保留开放结尾。'
+    assert basis['已备资料']=={'人物':'meta/character_profiles.md','结构':'meta/story_plan.md'}
+    assert '终局' not in basis['已备资料']
+    assert '只补' in system
+
+
 def test_advisor_cannot_publish_advice_after_world_changes_during_model_call(tmp_path):
     put(tmp_path,'meta/world_foundation.md','不能让记忆恢复。')
     class Model:

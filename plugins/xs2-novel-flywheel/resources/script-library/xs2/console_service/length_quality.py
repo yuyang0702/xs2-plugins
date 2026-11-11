@@ -1,6 +1,7 @@
 """Plugin-owned deterministic manuscript length evidence and correction budgets."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 import copy
 import hashlib
 import importlib.util
@@ -35,6 +36,7 @@ def chapter_number(chapter):
 
 
 def count_prose(text):
+    text = text.removeprefix('\ufeff')
     lines, first = [], True
     for line in text.splitlines():
         value = line.strip()
@@ -66,6 +68,18 @@ def target_range(target):
 
 
 def resolve_target(root, target):
+    policy_path=safe_path(root,'meta/length_policy.json')
+    if policy_path.is_file():
+        source=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
+        spec=importlib.util.spec_from_file_location('effective_composition_length',source)
+        planner=importlib.util.module_from_spec(spec);spec.loader.exec_module(planner)
+        project=safe_path(root,'.novel-project.json')
+        values=json.loads(project.read_text(encoding='utf-8-sig')).get('values',{}) if project.is_file() else {}
+        quota=planner.current(root,chapter_number(str(values.get('chapter_number','0001')).zfill(4)))
+        if quota:
+            effective=f"{quota['minimum']}-{quota['maximum']}"
+            if not str(target or '').strip() or str(target).strip() in (str(values.get('target_word_count','')).strip(),effective):
+                return quota['minimum'],quota['maximum']
     if str(target or '').strip():
         return target_range(target)
     project = safe_path(root, '.novel-project.json')
@@ -607,15 +621,32 @@ def fragment_instructions(raw, fragment, result):
             +'【插入/替换前文】\n'+before+'\n【仅需替换的段落；补写时为空】\n'+selected+'\n【插入/替换后文】\n'+after+'\n')
 
 
-def _atomic_body(path, raw, check):
+def _execution_guard():
+    source=Path(__file__).resolve().parents[1]/'production_guard/production_guard.py'
+    spec=importlib.util.spec_from_file_location('focused_length_execution_guard',source)
+    guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+    return guard
+
+
+def _publication(root):
+    if os.environ.get('TASK_ID') and os.environ.get('WORKFLOW_ID'):
+        return _execution_guard().publication(root)
+    return nullcontext(None)
+
+
+def _atomic_body(path, raw, check, root=None, after_replace=None):
+    path=Path(path).resolve()
+    workspace=Path(root).resolve() if root is not None else path.parents[2]
     temporary = None
     try:
         fd, name = tempfile.mkstemp(prefix='.fragment-', suffix='.tmp', dir=path.parent)
         temporary = Path(name)
         with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-        check()
-        os.replace(temporary, path)
+            stream.write(raw);stream.flush();os.fsync(stream.fileno())
+        with _publication(workspace) as proof:
+            check()
+            os.replace(temporary, path)
+            if after_replace:after_replace(proof)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -693,8 +724,6 @@ def focused_commit(root, chapter, expected_sha, guard_path, guard_sha, task_id, 
         if guard.get('semantic_review_required'):
             fragment_review_decision(root, task_id, guard_sha, review_binding, review_binding_sha, model_review_text, review_sha)
     check()
-    if not rejected:
-        _atomic_body(safe_path(root, guard['body_path']), merged, check)
     receipt = {'task_id': task_id, 'chapter_number': chapter, 'strategy': LENGTH_REPAIR_STRATEGY,
                'operation': guard['fragment']['kind'],
                'selected_span_range': [guard['fragment']['start'], guard['fragment']['end']],
@@ -704,8 +733,15 @@ def focused_commit(root, chapter, expected_sha, guard_path, guard_sha, task_id, 
                'input_body_sha256': expected_sha, 'body_sha256': hashlib.sha256(merged).hexdigest(),
                'guard_sha256': guard_sha, 'review_binding_sha': review_binding_sha, 'review_sha256': review_sha, 'accepted': not bool(rejected), 'actual': actual, 'rejection_reason': rejected,
                'status': ('rejected' if rejected else 'accepted' if guard['assessment']['lower'] <= actual <= guard['assessment']['upper'] else 'accepted_partial')}
-    atomic_text(existing, json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
-    atomic_text(safe_path(root, f'quality/length/{chapter}-last-attempt.json'), json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
+    def publish_receipt(proof):
+        if proof:receipt['execution_fence']=proof
+        atomic_text(existing, json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
+        atomic_text(safe_path(root, f'quality/length/{chapter}-last-attempt.json'), json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
+    if not rejected:
+        _atomic_body(safe_path(root, guard['body_path']), merged, check,root=root,after_replace=publish_receipt)
+    else:
+        with _publication(root) as proof:
+            check();publish_receipt(proof)
     return {'length_attempt_receipt': receipt_path, 'length_attempt_receipt_sha': hashlib.sha256(existing.read_bytes()).hexdigest()}
 
 

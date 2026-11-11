@@ -4,12 +4,43 @@
   "version": 6,
   "nodes": [
     {
+      "id": "script_production_start",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "start",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001"
+        ],
+        "timeout": 30
+      }
+    },
+    {
       "id": "agent_corelaws",
       "label": "维度一：核心法则",
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-corelaws",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n请生成世界观维度一：核心法则。这决定整个世界的底层运行逻辑。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n请生成世界观维度一：核心法则。这决定整个世界的底层运行逻辑。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
       "position": {
         "x": -60,
         "y": 100
@@ -34,7 +65,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-spacetime",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n\n请根据以上信息，生成世界观维度二：时空地理。你的设定必须与已确立的核心法则相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n\n请根据以上信息，生成世界观维度二：时空地理。你的设定必须与已确立的核心法则相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
       "position": {
         "x": 260,
         "y": 130
@@ -59,7 +90,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-society",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n\n请根据以上信息，生成世界观维度三：社会权力。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n\n请根据以上信息，生成世界观维度三：社会权力。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
       "position": {
         "x": 570,
         "y": 140
@@ -84,7 +115,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-historyculture",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n\n请根据以上信息，生成世界观维度四：历史文化。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n\n请根据以上信息，生成世界观维度四：历史文化。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
       "position": {
         "x": -90,
         "y": 350
@@ -109,7 +140,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-existence",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n\n请根据以上信息，生成世界观维度五：存在基础。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n\n请根据以上信息，生成世界观维度五：存在基础。你的设定必须与已确立的前序维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
       "position": {
         "x": 240,
         "y": 350
@@ -134,7 +165,7 @@
       "node_type": "agent",
       "agent_type": "novel-worldbuilder-information",
       "system_prompt_template": "",
-      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n存在基础：\n{{agent_existence_output}}\n\n请根据以上信息，生成世界观维度六：信息传播。你的设定必须与已确立的前五维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【前序维度】\n核心法则：\n{{agent_corelaws_output}}\n时空地理：\n{{agent_spacetime_output}}\n社会权力：\n{{agent_society_output}}\n历史文化：\n{{agent_historyculture_output}}\n存在基础：\n{{agent_existence_output}}\n\n请根据以上信息，生成世界观维度六：信息传播。你的设定必须与已确立的前五维度相容。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
       "position": {
         "x": 530,
         "y": 380
@@ -373,7 +404,7 @@
       },
       "var_bindings": {},
       "node_params": {},
-      "first_message": "作者题材创意：\n{{premise}}\n题材：{{genre}}；叙事视角：{{narrative_pov}}；输出语言：{{language}}。\n已确认抽象写法：\n{{learning_context}}\n按系统JSON契约一次建立必要世界基础。",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n作者题材创意：\n{{premise}}\n题材：{{genre}}；叙事视角：{{narrative_pov}}；输出语言：{{language}}。\n已确认抽象写法：\n{{learning_context}}\n按系统JSON契约一次建立必要世界基础。",
       "auto_flow": true,
       "enable_complete_node_task": false,
       "save_output_to_file": true,
@@ -406,6 +437,268 @@
       "save_output_to_file": false,
       "output_file_path": "",
       "output_variable": ""
+    },
+    {
+      "id": "script_production_finish",
+      "label": "核对执行凭据",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "finish",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_corelaws",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_corelaws"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_spacetime",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_spacetime"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_society",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_society"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_historyculture",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_historyculture"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_existence",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_existence"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_information",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_information"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_short_world",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "build",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_short_world"
+        ],
+        "timeout": 30
+      }
     }
   ],
   "edges": [
@@ -417,7 +710,7 @@
     {
       "id": "edge-script_persist_corelaws-agent_spacetime",
       "source": "script_persist_corelaws",
-      "target": "agent_spacetime"
+      "target": "script_budget_agent_spacetime"
     },
     {
       "id": "edge-agent_spacetime-script_persist_spacetime",
@@ -427,7 +720,7 @@
     {
       "id": "edge-script_persist_spacetime-agent_society",
       "source": "script_persist_spacetime",
-      "target": "agent_society"
+      "target": "script_budget_agent_society"
     },
     {
       "id": "edge-agent_society-script_persist_society",
@@ -437,7 +730,7 @@
     {
       "id": "edge-script_persist_society-agent_historyculture",
       "source": "script_persist_society",
-      "target": "agent_historyculture"
+      "target": "script_budget_agent_historyculture"
     },
     {
       "id": "edge-agent_historyculture-script_persist_historyculture",
@@ -447,7 +740,7 @@
     {
       "id": "edge-script_persist_historyculture-agent_existence",
       "source": "script_persist_historyculture",
-      "target": "agent_existence"
+      "target": "script_budget_agent_existence"
     },
     {
       "id": "edge-agent_existence-script_persist_existence",
@@ -457,7 +750,7 @@
     {
       "id": "edge-script_persist_existence-agent_information",
       "source": "script_persist_existence",
-      "target": "agent_information"
+      "target": "script_budget_agent_information"
     },
     {
       "id": "edge-agent_information-script_persist_information",
@@ -472,17 +765,17 @@
     {
       "id": "edge-script_merge_world-__end__",
       "source": "script_merge_world",
-      "target": "__end__"
+      "target": "script_production_finish"
     },
     {
       "id": "edge-__start__-gw-short-build",
-      "source": "__start__",
+      "source": "script_production_start",
       "target": "gw-short-build"
     },
     {
       "id": "edge-gw-short-build-agent_short_world",
       "source": "gw-short-build",
-      "target": "agent_short_world",
+      "target": "script_budget_agent_short_world",
       "condition": {
         "expression": "{{preparation_mode}}==compact AND {{conflict_plan_mode}}==short_full",
         "label": "独立短篇轻量",
@@ -492,7 +785,7 @@
     {
       "id": "edge-gw-short-build-agent_corelaws",
       "source": "gw-short-build",
-      "target": "agent_corelaws",
+      "target": "script_budget_agent_corelaws",
       "condition": {
         "expression": "",
         "label": "完整准备",
@@ -507,7 +800,43 @@
     {
       "id": "edge-script_short_world-__end__",
       "source": "script_short_world",
+      "target": "script_production_finish"
+    },
+    {
+      "source": "__start__",
+      "target": "script_production_start"
+    },
+    {
+      "source": "script_production_finish",
       "target": "__end__"
+    },
+    {
+      "source": "script_budget_agent_corelaws",
+      "target": "agent_corelaws"
+    },
+    {
+      "source": "script_budget_agent_spacetime",
+      "target": "agent_spacetime"
+    },
+    {
+      "source": "script_budget_agent_society",
+      "target": "agent_society"
+    },
+    {
+      "source": "script_budget_agent_historyculture",
+      "target": "agent_historyculture"
+    },
+    {
+      "source": "script_budget_agent_existence",
+      "target": "agent_existence"
+    },
+    {
+      "source": "script_budget_agent_information",
+      "target": "agent_information"
+    },
+    {
+      "source": "script_budget_agent_short_world",
+      "target": "agent_short_world"
     }
   ],
   "variables": [

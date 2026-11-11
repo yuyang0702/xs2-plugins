@@ -1,3 +1,4 @@
+from runtime_graph import literary_graph
 import copy
 import hashlib
 import importlib.util
@@ -78,6 +79,12 @@ def test_blind_input_is_allowlisted_and_task_frozen(tmp_path):
     assert r.prepare(tmp_path, '0001', 'task-b')['reader_blind_input'] != outputs['reader_blind_input']
 
 
+def test_reader_binding_cannot_survive_a_changed_chapter_composition_budget(tmp_path):
+    r=review();book(tmp_path);outputs=r.prepare(tmp_path,'0001','quota-review')
+    write(tmp_path,'planning/length/0001.json',{'new_plan':'不同的分段意图与预算'})
+    with pytest.raises(ValueError):r._bound(tmp_path,outputs['reader_review_binding'],outputs['reader_review_binding_sha'])
+
+
 @pytest.mark.parametrize('quote', ['从未出现的话', '买方说……付给陆。', '买方说不同意就付给陆。陆同意分付。'])
 def test_causal_findings_require_actual_continuous_manuscript_evidence(quote):
     r = review(); data = blind(); data['issues'][0]['excerpts'] = [quote]
@@ -141,7 +148,7 @@ def test_invalid_context_report_retries_only_the_auditor_not_changed_source(tmp_
         assert expected in (tmp_path/outputs['reader_'+stage+'_feedback']).read_text(encoding='utf-8')
         assert not (tmp_path/'story/0001/reader_report.json').exists()
         assert (tmp_path/'story/0001/chapter.md').read_text(encoding='utf-8')==BODY
-        wf=json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8'))
+        wf=literary_graph(json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8')))
         merge=next(n for n in wf['nodes'] if n['id']==('script_reader_merge' if stage=='context' else 'script_reader_blind_commit'))
         assert merge['enable_reject_upstream'] and merge['max_reject_count']==3
 
@@ -208,7 +215,7 @@ def test_actual_initial_agent_receives_only_frozen_input_and_has_no_file_tools(t
     from src.workflow.runtime_models import NodeExecutionState
     from src.agent.definition import _config_to_definition, resolve_agent_tools
     r = review(); book(tmp_path); outputs = r.prepare(tmp_path, '0001', 'task-a')
-    definition = json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8'))
+    definition = literary_graph(json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8')))
     wf = WorkflowDef.from_dict(definition)
     node = next(n for n in wf.nodes if n.id == 'agent_blind_reader')
     captured = {}
@@ -318,7 +325,8 @@ def test_contextual_expression_verdict_can_refer_to_preserved_initial_findings()
     assert r.gate_review(merged, BODY)==merged
 
 
-def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_path, monkeypatch):
+@pytest.mark.parametrize('case',['findings','pass','retry_context'])
+def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_path, monkeypatch,case):
     """Model boundary uses fixtures; scheduler, rendered inputs, CLIs and publication are real."""
     import asyncio
     import os
@@ -334,17 +342,27 @@ def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_pat
     from test_length_quality import policy
     book(tmp_path)
     original = (tmp_path/'story/0001/chapter.md').read_bytes()
-    raw=json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8'))
+    raw=literary_graph(json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8')))
     wf=WorkflowDef.from_dict(raw); assert not wf.validate()
-    calls=[]
+    calls=[];started=set();both_started=asyncio.Event()
     class Manager:
         sessions={}
         main_session_id=''
         async def create_sub_session(self, **kwargs):
             node=kwargs['node_id'];calls.append(node)
+            if node in ('agent_blind_reader','agent_context_reader'):
+                started.add(node)
+                if len(started)==2:both_started.set()
+                await asyncio.wait_for(both_started.wait(),timeout=3)
             if node=='agent_blind_reader':
                 assert 'SECRET_' not in kwargs['task_description']
                 output=blind()
+                if case!='findings':output.update(verdict='pass',issues=[],decisions=[])
+            elif node=='agent_context_reader':
+                assert 'SECRET_SCOPE' in kwargs['task_description']
+                assert 'blind-1' not in kwargs['task_description']
+                output=final();output['revision_scope']['assessments']=[];output['blind_resolutions']=[]
+                if case=='retry_context' and calls.count(node)==1:output['blind_resolutions']=[{'issue_id':'guessed'}]
             else:
                 assert 'SECRET_SCOPE' in kwargs['task_description']
                 assert 'blind-1' in kwargs['task_description']
@@ -380,12 +398,24 @@ def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_pat
     values={v['key']:v.get('default','') for v in raw['variables']};values.update(policy().parameters(state,raw))
     task=WorkflowTask(task_id='task-reader-integration',workflow_id=wf.workflow_id,status='running',parameter_values=values)
     async def run():
-        return await engine._execute_plan_segment(definition=wf,task=task,execution_plan=wf.get_execution_plan(),
-            disabled_ids=set(),shared_ws=tmp_path,parent_id='test',on_node_started=lambda *_:None,
-            needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
+        from src.workflow.failure_policy import activate_scheduled_retry
+        for _ in range(8):
+            for key,value in list(task.node_states.items()):
+                if value.status=='retry_waiting':task.node_states[key]=activate_scheduled_retry(value)
+            outcome=await engine._execute_plan_segment(definition=wf,task=task,execution_plan=wf.get_execution_plan(),
+                disabled_ids=set(),shared_ws=tmp_path,parent_id='test',on_node_started=lambda *_:None,
+                needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
+            if outcome!='retry_waiting':return outcome
     assert asyncio.run(run())=='completed', {key:s.error for key,s in task.node_states.items() if s.error}
-    assert calls.index('agent_blind_reader') < calls.index('script_story_context') < calls.index('agent_reader')
+    assert started=={'agent_blind_reader','agent_context_reader'}
+    assert calls.index('script_story_context') < calls.index('agent_blind_reader') < calls.index('script_reader_join')
+    assert calls.count('agent_blind_reader')==1
+    assert calls.count('agent_context_reader')==(2 if case=='retry_context' else 1)
+    assert calls.count('agent_reader')==(1 if case=='findings' else 0)
+    frozen=json.loads(next((tmp_path/'cache/reader-review').rglob('parallel-sources.json')).read_text(encoding='utf8'))
+    assert frozen['context_path']=='cache/story-support/context.md'
     report=json.loads((tmp_path/'story/0001/reader_report.json').read_text(encoding='utf-8'))
-    assert report['verdict']=='revise' and report['requires_scope_confirmation'] is True
+    assert report['verdict']==('revise' if case=='findings' else 'pass')
+    assert report['requires_scope_confirmation']==(case=='findings')
     assert report['review_binding']['task_id']=='task-reader-integration'
     assert (tmp_path/'story/0001/chapter.md').read_bytes()==original

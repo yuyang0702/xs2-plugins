@@ -14,6 +14,37 @@
   },
   "nodes": [
     {
+      "id": "script_production_start",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "start",
+          "--stage",
+          "reader-sim",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "timeout": 30
+      }
+    },
+    {
       "id": "script_story_context",
       "label": "核对前文并读取采用方案",
       "node_type": "script",
@@ -63,7 +94,7 @@
       "node_type": "agent",
       "agent_type": "xs2-reader-sim",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "【章节号】\n{{chapter_number}}\n\n【章节正文】\n{{chapter_file}}\n\n【本章目标字数】\n{{target_word_count}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【写作方向】\n{{human_intent}}\n\n请输出模拟读者评估报告。\n\n==== 本次创作范围（优先于通用连载规则） ====\n范围：{{conflict_plan_mode}}。当范围为 short_full，本次产出是整篇短篇，必须在同一个章节内完成核心生存目标、全部递进冲突、关键伏笔回收和明确结局。不得把终局留到后续章节；允许结尾余味，不允许以待办事项作为待续。篇幅遵循作品设置和本次目标字数，应筛选主线并压缩背景人物。\n\n==== 短篇终局与连载章末区分 ====\nshort_full 的末尾必须让读者明确看到：开篇目标的实际结果、主角承担的具体代价、关键伏笔兑现及人物最后的选择。手续完成或规则说明不能代替现场结果和情感落点。允许世界仍有风险，但不能把本篇关键行动停在准备阶段，不能用“后续还要核验/以后再处理”作最后落点。正文末段避免新增任务、参与栏或新危机的章末钩子。连载则完成本章局部目标并保留有前置依据的下一章压力，不能强制整书完结。\n\n==== 作者本次返修意见 ====\n{{author_feedback_file}}\n作者的明确要求优先；维护既定事实与世界规则。\n\n【既定人物档案】\n{{pp_character_profiles_file}}\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 结尾层级契约 ====\n创作范围：{{conflict_plan_mode}}；本次章末类型：{{chapter_ending_mode}}。\n1. short_full：本次为整篇短篇，完成核心目标、主要冲突及关键伏笔，给人物选择和情绪落点；世界可有余味，核心故事不能待续。\n2. 长篇且 chapter_ending_mode=continue（默认）：只推进当前章/阶段的局部目标，保留主线未解决压力、角色关系和未到回收时点的伏笔。章末可在行动、选择、信息变化或已有因果的悬念处停下；允许安静过渡，不要求每章强钩子。不得把全书目标提前完成、全员命运总结或写成终章。\n3. 长篇且 chapter_ending_mode=book_final：仅当前明确指定的终章按全书完结处理，回收主线、核心角色弧和重要伏笔；未解释的世界留白不能替代主线收束。大纲或用户明确指定终章时可据此判断，不得因为导出或本批次最后一章就认定全书完结。\n读者检查按对应层级判断：普通长篇章节保留主线不是“未讲完”的缺陷；短篇及全书终章停在核心任务未完成才是收尾缺陷。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n【人物声线】\n{{pp_character_voice_file}}\n【本章人物状态（既定基础）】\n{{pp_character_state_long_file}}\n【配角状态】\n{{pp_character_minor_file}}\n【上一章人物状态】\n{{pp_prev_character_state}}\n返修维护已经发生的事实；情绪表现、对话方式可按作者意见调整，不能悄悄改变结局事实。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；事实冲突需说明，不把计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n\n【本书人物对白适配（已确认补充约定）】\n{{character_voice_adaptations_file}}\n只对列出的本书人物使用；同一人物有多次补充时，以最近一次通过检查的适配为准，并结合当前关系和处境，不覆盖既定档案、原有声线与事实。不把参考人物或原句移入本书；没有补充时沿用既有角色设定。\n\n\n字数口径为正文实字：中文按汉字、英文和数字按词，标题、标点、空白不计。插件会独立复核，不能以token数或含标点字符数声称已达标。\n\n【当前正文实测篇幅】\n{{length_context_file}}\n这是当前待评正文的插件实测，以此为准；先前作者意见、旧评语中的字数只描述旧稿，不得当作当前稿计数。不要自行估算篇幅或重复已过期的字数问题。\n\n==== 已核验的独立初审（先核原文证据；不能因历史任务边界隐藏问题） ====\n{{reader_blind_report}}\n\n整篇质量照常判断。另给revision_scope，逐项分类初审问题是否属于本次修改权限；不在范围内仍保留质量问题。若初审误判，仅可用blind_resolutions附当前正文反证解释，不以旧评分、计划内容或修改权限充当反证。\n初审问题由插件保留合并，不重复抄写；复评新增问题用context-前缀id，避免权限分类串用。\n\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}\n按公开文风与叙述权限评读，不默认限知、白描或高动作密度。有意复沓、抒情、技术说明、全知和不可靠叙述本身不是问题；须判断其正文功能与读者实际获得的信息。可用evidence_catalog中的{ref_id:编号}或{start_ref:编号,end_ref:编号}作为excerpts元素，程序回取当前原文。\n【同一冻结稿的编号依据】\n{{reader_blind_input}}\n【审稿报告格式反馈】\n{{reader_context_feedback}}\n复评新增的每个表达问题必须有唯一id（例如context-1）；revision_scope.assessments只引用本轮真实问题id，不引用未生成的编号。\n本轮须提交逐维度expression_checks，使用当前原文和本书风格说明实际作用；不因允许某种风格就跳过该段判断。",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【无损输入视图】全文按source_body/candidate/manuscript的paragraphs依序提供，id就是段落引用，before与suffix保留空白。这不是摘要。逐字补丁的paragraph_id取source_body.paragraphs的id；候选证据取candidate或manuscript段落id，也可用连续原句，不引用未提供的编号。\n【修改权限的来源】reader_revision_context中author_feedback及human_intent才是作者要求；automatic_revision_advice是旧自动建议，其段落锚点和停止条款不能创建作者禁改范围。没有作者局部限制时revision_scope按整章权限分类，同时维护本书规则、事实和风格；质量问题仍须如实保留。\n【章节号】\n{{chapter_number}}\n\n【章节正文】\n{{chapter_file}}\n\n【本章目标字数】\n{{target_word_count}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【写作方向】\n{{human_intent}}\n\n请输出模拟读者评估报告。\n\n==== 本次创作范围（优先于通用连载规则） ====\n范围：{{conflict_plan_mode}}。当范围为 short_full，本次产出是整篇短篇，必须在同一个章节内完成核心生存目标、全部递进冲突、关键伏笔回收和明确结局。不得把终局留到后续章节；允许结尾余味，不允许以待办事项作为待续。篇幅遵循作品设置和本次目标字数，应筛选主线并压缩背景人物。\n\n==== 短篇终局与连载章末区分 ====\nshort_full 的末尾必须让读者明确看到：开篇目标的实际结果、主角承担的具体代价、关键伏笔兑现及人物最后的选择。手续完成或规则说明不能代替现场结果和情感落点。允许世界仍有风险，但不能把本篇关键行动停在准备阶段，不能用“后续还要核验/以后再处理”作最后落点。正文末段避免新增任务、参与栏或新危机的章末钩子。连载则完成本章局部目标并保留有前置依据的下一章压力，不能强制整书完结。\n\n==== 作者范围与自动建议的来源分层 ====\n{{reader_revision_context}}\n作者的明确要求优先；维护既定事实与世界规则。\n\n【既定人物档案】\n{{pp_character_profiles_file}}\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 结尾层级契约 ====\n创作范围：{{conflict_plan_mode}}；本次章末类型：{{chapter_ending_mode}}。\n1. short_full：本次为整篇短篇，完成核心目标、主要冲突及关键伏笔，给人物选择和情绪落点；世界可有余味，核心故事不能待续。\n2. 长篇且 chapter_ending_mode=continue（默认）：只推进当前章/阶段的局部目标，保留主线未解决压力、角色关系和未到回收时点的伏笔。章末可在行动、选择、信息变化或已有因果的悬念处停下；允许安静过渡，不要求每章强钩子。不得把全书目标提前完成、全员命运总结或写成终章。\n3. 长篇且 chapter_ending_mode=book_final：仅当前明确指定的终章按全书完结处理，回收主线、核心角色弧和重要伏笔；未解释的世界留白不能替代主线收束。大纲或用户明确指定终章时可据此判断，不得因为导出或本批次最后一章就认定全书完结。\n读者检查按对应层级判断：普通长篇章节保留主线不是“未讲完”的缺陷；短篇及全书终章停在核心任务未完成才是收尾缺陷。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n【人物声线】\n{{pp_character_voice_file}}\n【本章人物状态（既定基础）】\n{{pp_character_state_long_file}}\n【配角状态】\n{{pp_character_minor_file}}\n【上一章人物状态】\n{{pp_prev_character_state}}\n返修维护已经发生的事实；情绪表现、对话方式可按作者意见调整，不能悄悄改变结局事实。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；事实冲突需说明，不把计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n\n【本书人物对白适配（已确认补充约定）】\n{{character_voice_adaptations_file}}\n只对列出的本书人物使用；同一人物有多次补充时，以最近一次通过检查的适配为准，并结合当前关系和处境，不覆盖既定档案、原有声线与事实。不把参考人物或原句移入本书；没有补充时沿用既有角色设定。\n\n\n字数口径为正文实字：中文按汉字、英文和数字按词，标题、标点、空白不计。插件会独立复核，不能以token数或含标点字符数声称已达标。\n\n【当前正文实测篇幅】\n{{length_context_file}}\n这是当前待评正文的插件实测，以此为准；先前作者意见、旧评语中的字数只描述旧稿，不得当作当前稿计数。不要自行估算篇幅或重复已过期的字数问题。\n\n==== 已核验的独立初审（先核原文证据；不能因历史任务边界隐藏问题） ====\n{{reader_blind_report}}\n\n整篇质量照常判断。另给revision_scope，逐项分类初审问题是否属于本次修改权限；不在范围内仍保留质量问题。若初审误判，仅可用blind_resolutions附当前正文反证解释，不以旧评分、计划内容或修改权限充当反证。\n初审问题由插件保留合并，不重复抄写；复评新增问题用context-前缀id，避免权限分类串用。\n\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}\n按公开文风与叙述权限评读，不默认限知、白描或高动作密度。有意复沓、抒情、技术说明、全知和不可靠叙述本身不是问题；须判断其正文功能与读者实际获得的信息。可用evidence_catalog中的{ref_id:编号}或{start_ref:编号,end_ref:编号}作为excerpts元素，程序回取当前原文。\n【同一冻结稿的编号依据】\n{{reader_blind_model}}\n【审稿报告格式反馈】\n{{reader_context_feedback}}\n复评新增的每个表达问题必须有唯一id（例如context-1）；revision_scope.assessments只引用本轮真实问题id，不引用未生成的编号。\n本轮须提交逐维度expression_checks，使用当前原文和本书风格说明实际作用；不因允许某种风格就跳过该段判断。\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"verdict\",\n    \"continue_reading_score\",\n    \"summary\",\n    \"issues\",\n    \"dimensions\",\n    \"repair_constraints\",\n    \"fact_review\",\n    \"expression_review\",\n    \"revision_scope\",\n    \"expression_checks\"\n  ],\n  \"properties\": {\n    \"verdict\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"pass\",\n        \"revise\",\n        \"reject\"\n      ]\n    },\n    \"continue_reading_score\": {\n      \"type\": \"integer\",\n      \"minimum\": 0,\n      \"maximum\": 100\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"dimensions\": {\n      \"type\": \"object\"\n    },\n    \"issues\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"location\",\n          \"impact\",\n          \"goal\",\n          \"priority\"\n        ],\n        \"properties\": {\n          \"location\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"impact\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"goal\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"priority\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"high\",\n              \"medium\",\n              \"low\"\n            ]\n          }\n        }\n      }\n    },\n    \"repair_constraints\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"fact_review\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"verdict\",\n        \"summary\"\n      ],\n      \"properties\": {\n        \"verdict\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"revise\",\n            \"reject\"\n          ]\n        },\n        \"summary\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      }\n    },\n    \"expression_review\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"verdict\",\n        \"summary\",\n        \"issues\"\n      ],\n      \"properties\": {\n        \"verdict\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"revise\",\n            \"reject\"\n          ]\n        },\n        \"summary\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"issues\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"location\",\n              \"priority\",\n              \"excerpts\",\n              \"impact\",\n              \"goal\",\n              \"id\"\n            ],\n            \"properties\": {\n              \"location\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"impact\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"goal\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"priority\": {\n                \"type\": \"string\",\n                \"enum\": [\n                  \"high\",\n                  \"medium\",\n                  \"low\"\n                ]\n              },\n              \"excerpts\": {\n                \"type\": \"array\",\n                \"minItems\": 1,\n                \"items\": {\n                  \"anyOf\": [\n                    {\n                      \"type\": \"string\",\n                      \"minLength\": 1\n                    },\n                    {\n                      \"type\": \"object\",\n                      \"properties\": {\n                        \"ref_id\": {\n                          \"type\": \"string\"\n                        }\n                      },\n                      \"required\": [\n                        \"ref_id\"\n                      ],\n                      \"additionalProperties\": false\n                    },\n                    {\n                      \"type\": \"object\",\n                      \"properties\": {\n                        \"start_ref\": {\n                          \"type\": \"string\"\n                        },\n                        \"end_ref\": {\n                          \"type\": \"string\"\n                        }\n                      },\n                      \"required\": [\n                        \"start_ref\",\n                        \"end_ref\"\n                      ],\n                      \"additionalProperties\": false\n                    }\n                  ]\n                }\n              },\n              \"id\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              }\n            }\n          }\n        }\n      }\n    },\n    \"revision_scope\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"mode\",\n        \"summary\",\n        \"assessments\"\n      ],\n      \"properties\": {\n        \"mode\": {\n          \"enum\": [\n            \"unrestricted\",\n            \"restricted\",\n            \"unclear\"\n          ]\n        },\n        \"summary\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"assessments\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"issue_id\",\n              \"status\",\n              \"reason\"\n            ],\n            \"properties\": {\n              \"issue_id\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"status\": {\n                \"enum\": [\n                  \"editable\",\n                  \"outside_scope\",\n                  \"unclear\"\n                ]\n              },\n              \"reason\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              }\n            }\n          }\n        }\n      }\n    },\n    \"blind_resolutions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"issue_id\",\n          \"reason\",\n          \"excerpts\"\n        ],\n        \"properties\": {\n          \"issue_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"minItems\": 1,\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"expression_checks\": {\n      \"type\": \"array\",\n      \"minItems\": 6,\n      \"maxItems\": 6,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"dimension\",\n          \"status\",\n          \"excerpts\",\n          \"reason\",\n          \"style_basis\",\n          \"issue_ids\"\n        ],\n        \"properties\": {\n          \"dimension\": {\n            \"enum\": [\n              \"semantic_increment\",\n              \"constraint_transcription\",\n              \"imagery_function\",\n              \"dialogue_function\",\n              \"ending_function\",\n              \"voice_alignment\"\n            ]\n          },\n          \"status\": {\n            \"enum\": [\n              \"pass\",\n              \"issue\",\n              \"not_applicable\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"style_basis\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"issue_ids\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            },\n            \"uniqueItems\": true\n          }\n        },\n        \"additionalProperties\": false\n      }\n    },\n    \"reading_checks\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"goal_id\",\n          \"status\",\n          \"priority\",\n          \"excerpts\",\n          \"reason\",\n          \"style_basis\"\n        ],\n        \"properties\": {\n          \"goal_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"status\": {\n            \"enum\": [\n              \"pass\",\n              \"revise\",\n              \"not_applicable\"\n            ]\n          },\n          \"priority\": {\n            \"enum\": [\n              \"low\",\n              \"medium\",\n              \"high\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"style_basis\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          }\n        },\n        \"additionalProperties\": false\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。\n仅对reading_contract中本书显式采用的目标提交reading_checks，未采用时省略或为空。每项交goal_id、status(pass/revise/not_applicable)、priority(low/medium/high)、excerpts、reason、style_basis。pass/revise须引当前正文，not_applicable须说明本书题材或范围为何无对应对象，不能因风格允许而免检。revise由程序展开为阅读目标问题；中高优先级独立阻止通过。区分作者、人物、叙述者和读者的信息；有意不可靠叙述、慢热或无反转本身不是错误。不固定第一人称、句长、反转数量、高潮或段长，不在正文复述检查项。 阅读目标问题使用reading_checks，不伪装成事实问题或错误的表达类别。盲读只核对style_contract提供的公开目标。",
       "position": {
         "x": 320,
         "y": 180
@@ -478,6 +509,88 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "reading_checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "goal_id",
+                  "status",
+                  "priority",
+                  "excerpts",
+                  "reason",
+                  "style_basis"
+                ],
+                "properties": {
+                  "goal_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "enum": [
+                      "pass",
+                      "revise",
+                      "not_applicable"
+                    ]
+                  },
+                  "priority": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "excerpts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "ref_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref_id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "start_ref": {
+                              "type": "string"
+                            },
+                            "end_ref": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "start_ref",
+                            "end_ref"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "style_basis": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
             }
           }
         }
@@ -580,7 +693,8 @@
         "script_name": "manuscript_quality",
         "script_args": "gate-reader --chapter {{chapter_number}} --target \"{{target_word_count}}\"",
         "timeout": 30
-      }
+      },
+      "first_message": ""
     },
     {
       "id": "script_length_context",
@@ -607,7 +721,8 @@
         "script_name": "manuscript_quality",
         "script_args": "guidance --chapter {{chapter_number}} --target \"{{target_word_count}}\"",
         "timeout": 30
-      }
+      },
+      "first_message": ""
     },
     {
       "id": "script_reader_review_prepare",
@@ -629,7 +744,8 @@
         "script_argv": [
           "prepare",
           "--chapter",
-          "{{chapter_number}}"
+          "{{chapter_number}}",
+          "--parallel"
         ],
         "timeout": 30
       },
@@ -649,7 +765,7 @@
       "node_type": "agent",
       "agent_type": "xs2-blind-reader",
       "system_prompt_template": "",
-      "first_message": "只审阅下面冻结的整篇正文与最低必要约束，输出初审JSON。\n{{reader_blind_input}}\n按公开文风与叙述权限评读，不默认限知、白描或高动作密度。有意复沓、抒情、技术说明、全知和不可靠叙述本身不是问题；须判断其正文功能与读者实际获得的信息。可用evidence_catalog中的{ref_id:编号}或{start_ref:编号,end_ref:编号}作为excerpts元素，程序回取当前原文。\n【本轮报告格式反馈】\n{{reader_blind_feedback}}\n本轮须提交逐维度expression_checks，使用当前原文和本书风格说明实际作用；不因允许某种风格就跳过该段判断。",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【无损输入视图】全文按source_body/candidate/manuscript的paragraphs依序提供，id就是段落引用，before与suffix保留空白。这不是摘要。逐字补丁的paragraph_id取source_body.paragraphs的id；候选证据取candidate或manuscript段落id，也可用连续原句，不引用未提供的编号。\n只审阅下面冻结的整篇正文与最低必要约束，输出初审JSON。\n{{reader_blind_model}}\n按公开文风与叙述权限评读，不默认限知、白描或高动作密度。有意复沓、抒情、技术说明、全知和不可靠叙述本身不是问题；须判断其正文功能与读者实际获得的信息。可用evidence_catalog中的{ref_id:编号}或{start_ref:编号,end_ref:编号}作为excerpts元素，程序回取当前原文。\n【本轮报告格式反馈】\n{{reader_blind_feedback}}\n本轮须提交逐维度expression_checks，使用当前原文和本书风格说明实际作用；不因允许某种风格就跳过该段判断。\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"verdict\",\n    \"summary\",\n    \"issues\",\n    \"decisions\",\n    \"expression_checks\"\n  ],\n  \"properties\": {\n    \"verdict\": {\n      \"enum\": [\n        \"pass\",\n        \"revise\",\n        \"reject\"\n      ]\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"issues\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"id\",\n          \"kind\",\n          \"location\",\n          \"priority\",\n          \"excerpts\",\n          \"impact\",\n          \"goal\"\n        ],\n        \"properties\": {\n          \"id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"location\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"impact\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"goal\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"decision_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"kind\": {\n            \"enum\": [\n              \"fact\",\n              \"expression\",\n              \"causality\"\n            ]\n          },\n          \"priority\": {\n            \"enum\": [\n              \"low\",\n              \"medium\",\n              \"high\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"minItems\": 1,\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"decisions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"id\",\n          \"actor\",\n          \"choice\",\n          \"known_before\",\n          \"leverage\",\n          \"alternatives\",\n          \"consequence\",\n          \"assessment\",\n          \"excerpts\"\n        ],\n        \"properties\": {\n          \"id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"actor\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"choice\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"known_before\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"leverage\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"alternatives\": {\n            \"anyOf\": [\n              {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              {\n                \"type\": \"array\",\n                \"minItems\": 1,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              }\n            ]\n          },\n          \"consequence\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"assessment\": {\n            \"enum\": [\n              \"supported\",\n              \"gap\",\n              \"uncertain\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"minItems\": 1,\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          }\n        }\n      }\n    },\n    \"expression_checks\": {\n      \"type\": \"array\",\n      \"minItems\": 6,\n      \"maxItems\": 6,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"dimension\",\n          \"status\",\n          \"excerpts\",\n          \"reason\",\n          \"style_basis\",\n          \"issue_ids\"\n        ],\n        \"properties\": {\n          \"dimension\": {\n            \"enum\": [\n              \"semantic_increment\",\n              \"constraint_transcription\",\n              \"imagery_function\",\n              \"dialogue_function\",\n              \"ending_function\",\n              \"voice_alignment\"\n            ]\n          },\n          \"status\": {\n            \"enum\": [\n              \"pass\",\n              \"issue\",\n              \"not_applicable\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"style_basis\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"issue_ids\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            },\n            \"uniqueItems\": true\n          }\n        },\n        \"additionalProperties\": false\n      }\n    },\n    \"reading_checks\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"goal_id\",\n          \"status\",\n          \"priority\",\n          \"excerpts\",\n          \"reason\",\n          \"style_basis\"\n        ],\n        \"properties\": {\n          \"goal_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"status\": {\n            \"enum\": [\n              \"pass\",\n              \"revise\",\n              \"not_applicable\"\n            ]\n          },\n          \"priority\": {\n            \"enum\": [\n              \"low\",\n              \"medium\",\n              \"high\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"style_basis\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          }\n        },\n        \"additionalProperties\": false\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。\n仅对reading_contract中本书显式采用的目标提交reading_checks，未采用时省略或为空。每项交goal_id、status(pass/revise/not_applicable)、priority(low/medium/high)、excerpts、reason、style_basis。pass/revise须引当前正文，not_applicable须说明本书题材或范围为何无对应对象，不能因风格允许而免检。revise由程序展开为阅读目标问题；中高优先级独立阻止通过。区分作者、人物、叙述者和读者的信息；有意不可靠叙述、慢热或无反转本身不是错误。不固定第一人称、句长、反转数量、高潮或段长，不在正文复述检查项。 阅读目标问题使用reading_checks，不伪装成事实问题或错误的表达类别。盲读只核对style_contract提供的公开目标。",
       "position": {
         "x": 160,
         "y": 100
@@ -970,6 +1086,88 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "reading_checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "goal_id",
+                  "status",
+                  "priority",
+                  "excerpts",
+                  "reason",
+                  "style_basis"
+                ],
+                "properties": {
+                  "goal_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "enum": [
+                      "pass",
+                      "revise",
+                      "not_applicable"
+                    ]
+                  },
+                  "priority": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "excerpts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "ref_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref_id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "start_ref": {
+                              "type": "string"
+                            },
+                            "end_ref": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "start_ref",
+                            "end_ref"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "style_basis": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
             }
           }
         }
@@ -1047,7 +1245,9 @@
           "--binding-sha",
           "{{reader_review_binding_sha}}",
           "--blind-sha",
-          "{{reader_blind_report_sha}}"
+          "{{reader_blind_report_sha}}",
+          "--context-sha",
+          "{{reader_preflight_sha}}"
         ],
         "timeout": 30
       },
@@ -1060,12 +1260,816 @@
       "output_file_path": "",
       "sub_workflow_params": {},
       "fail_auto_skip": false
+    },
+    {
+      "id": "agent_context_reader",
+      "label": "独立资料审稿",
+      "node_type": "agent",
+      "agent_type": "xs2-reader-sim",
+      "system_prompt_template": "{{prose_policy_prompt}}",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n【无损输入视图】全文按source_body/candidate/manuscript的paragraphs依序提供，id就是段落引用，before与suffix保留空白。这不是摘要。逐字补丁的paragraph_id取source_body.paragraphs的id；候选证据取candidate或manuscript段落id，也可用连续原句，不引用未提供的编号。\n【修改权限的来源】reader_revision_context中author_feedback及human_intent才是作者要求；automatic_revision_advice是旧自动建议，其段落锚点和停止条款不能创建作者禁改范围。没有作者局部限制时revision_scope按整章权限分类，同时维护本书规则、事实和风格；质量问题仍须如实保留。\n【章节号】\n{{chapter_number}}\n\n【章节正文】\n{{chapter_file}}\n\n【本章目标字数】\n{{target_word_count}}\n\n【叙事视角】\n{{narrative_pov}}\n\n【写作方向】\n{{human_intent}}\n\n请输出模拟读者评估报告。\n\n==== 本次创作范围（优先于通用连载规则） ====\n范围：{{conflict_plan_mode}}。当范围为 short_full，本次产出是整篇短篇，必须在同一个章节内完成核心生存目标、全部递进冲突、关键伏笔回收和明确结局。不得把终局留到后续章节；允许结尾余味，不允许以待办事项作为待续。篇幅遵循作品设置和本次目标字数，应筛选主线并压缩背景人物。\n\n==== 短篇终局与连载章末区分 ====\nshort_full 的末尾必须让读者明确看到：开篇目标的实际结果、主角承担的具体代价、关键伏笔兑现及人物最后的选择。手续完成或规则说明不能代替现场结果和情感落点。允许世界仍有风险，但不能把本篇关键行动停在准备阶段，不能用“后续还要核验/以后再处理”作最后落点。正文末段避免新增任务、参与栏或新危机的章末钩子。连载则完成本章局部目标并保留有前置依据的下一章压力，不能强制整书完结。\n\n==== 作者范围与自动建议的来源分层 ====\n{{reader_revision_context}}\n作者的明确要求优先；维护既定事实与世界规则。\n\n【既定人物档案】\n{{pp_character_profiles_file}}\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 结尾层级契约 ====\n创作范围：{{conflict_plan_mode}}；本次章末类型：{{chapter_ending_mode}}。\n1. short_full：本次为整篇短篇，完成核心目标、主要冲突及关键伏笔，给人物选择和情绪落点；世界可有余味，核心故事不能待续。\n2. 长篇且 chapter_ending_mode=continue（默认）：只推进当前章/阶段的局部目标，保留主线未解决压力、角色关系和未到回收时点的伏笔。章末可在行动、选择、信息变化或已有因果的悬念处停下；允许安静过渡，不要求每章强钩子。不得把全书目标提前完成、全员命运总结或写成终章。\n3. 长篇且 chapter_ending_mode=book_final：仅当前明确指定的终章按全书完结处理，回收主线、核心角色弧和重要伏笔；未解释的世界留白不能替代主线收束。大纲或用户明确指定终章时可据此判断，不得因为导出或本批次最后一章就认定全书完结。\n读者检查按对应层级判断：普通长篇章节保留主线不是“未讲完”的缺陷；短篇及全书终章停在核心任务未完成才是收尾缺陷。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n【人物声线】\n{{pp_character_voice_file}}\n【本章人物状态（既定基础）】\n{{pp_character_state_long_file}}\n【配角状态】\n{{pp_character_minor_file}}\n【上一章人物状态】\n{{pp_prev_character_state}}\n返修维护已经发生的事实；情绪表现、对话方式可按作者意见调整，不能悄悄改变结局事实。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；事实冲突需说明，不把计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n\n【本书人物对白适配（已确认补充约定）】\n{{character_voice_adaptations_file}}\n只对列出的本书人物使用；同一人物有多次补充时，以最近一次通过检查的适配为准，并结合当前关系和处境，不覆盖既定档案、原有声线与事实。不把参考人物或原句移入本书；没有补充时沿用既有角色设定。\n\n\n字数口径为正文实字：中文按汉字、英文和数字按词，标题、标点、空白不计。插件会独立复核，不能以token数或含标点字符数声称已达标。\n\n【当前正文实测篇幅】\n{{length_context_file}}\n这是当前待评正文的插件实测，以此为准；先前作者意见、旧评语中的字数只描述旧稿，不得当作当前稿计数。不要自行估算篇幅或重复已过期的字数问题。\n\n【独立资料审稿】本轮与盲读并行，尚未获得盲读结果。独立完成全部整章审稿维度、事实、认知边界和作者范围判断。blind_resolutions必须为[]，不得猜测初审编号；新增问题用context-前缀。汇合后必要时进行依序复评。\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}\n按公开文风与叙述权限评读，不默认限知、白描或高动作密度。有意复沓、抒情、技术说明、全知和不可靠叙述本身不是问题；须判断其正文功能与读者实际获得的信息。可用evidence_catalog中的{ref_id:编号}或{start_ref:编号,end_ref:编号}作为excerpts元素，程序回取当前原文。\n【同一冻结稿的编号依据】\n{{reader_blind_model}}\n【审稿报告格式反馈】\n{{reader_preflight_feedback}}\n复评新增的每个表达问题必须有唯一id（例如context-1）；revision_scope.assessments只引用本轮真实问题id，不引用未生成的编号。\n本轮须提交逐维度expression_checks，使用当前原文和本书风格说明实际作用；不因允许某种风格就跳过该段判断。\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"verdict\",\n    \"continue_reading_score\",\n    \"summary\",\n    \"issues\",\n    \"dimensions\",\n    \"repair_constraints\",\n    \"fact_review\",\n    \"expression_review\",\n    \"revision_scope\",\n    \"expression_checks\",\n    \"blind_resolutions\"\n  ],\n  \"properties\": {\n    \"verdict\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"pass\",\n        \"revise\",\n        \"reject\"\n      ]\n    },\n    \"continue_reading_score\": {\n      \"type\": \"integer\",\n      \"minimum\": 0,\n      \"maximum\": 100\n    },\n    \"summary\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"dimensions\": {\n      \"type\": \"object\"\n    },\n    \"issues\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"location\",\n          \"impact\",\n          \"goal\",\n          \"priority\"\n        ],\n        \"properties\": {\n          \"location\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"impact\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"goal\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"priority\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"high\",\n              \"medium\",\n              \"low\"\n            ]\n          }\n        }\n      }\n    },\n    \"repair_constraints\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      }\n    },\n    \"fact_review\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"verdict\",\n        \"summary\"\n      ],\n      \"properties\": {\n        \"verdict\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"revise\",\n            \"reject\"\n          ]\n        },\n        \"summary\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      }\n    },\n    \"expression_review\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"verdict\",\n        \"summary\",\n        \"issues\"\n      ],\n      \"properties\": {\n        \"verdict\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"pass\",\n            \"revise\",\n            \"reject\"\n          ]\n        },\n        \"summary\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"issues\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"location\",\n              \"priority\",\n              \"excerpts\",\n              \"impact\",\n              \"goal\",\n              \"id\"\n            ],\n            \"properties\": {\n              \"location\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"impact\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"goal\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"priority\": {\n                \"type\": \"string\",\n                \"enum\": [\n                  \"high\",\n                  \"medium\",\n                  \"low\"\n                ]\n              },\n              \"excerpts\": {\n                \"type\": \"array\",\n                \"minItems\": 1,\n                \"items\": {\n                  \"anyOf\": [\n                    {\n                      \"type\": \"string\",\n                      \"minLength\": 1\n                    },\n                    {\n                      \"type\": \"object\",\n                      \"properties\": {\n                        \"ref_id\": {\n                          \"type\": \"string\"\n                        }\n                      },\n                      \"required\": [\n                        \"ref_id\"\n                      ],\n                      \"additionalProperties\": false\n                    },\n                    {\n                      \"type\": \"object\",\n                      \"properties\": {\n                        \"start_ref\": {\n                          \"type\": \"string\"\n                        },\n                        \"end_ref\": {\n                          \"type\": \"string\"\n                        }\n                      },\n                      \"required\": [\n                        \"start_ref\",\n                        \"end_ref\"\n                      ],\n                      \"additionalProperties\": false\n                    }\n                  ]\n                }\n              },\n              \"id\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              }\n            }\n          }\n        }\n      }\n    },\n    \"revision_scope\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"mode\",\n        \"summary\",\n        \"assessments\"\n      ],\n      \"properties\": {\n        \"mode\": {\n          \"enum\": [\n            \"unrestricted\",\n            \"restricted\",\n            \"unclear\"\n          ]\n        },\n        \"summary\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"assessments\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"issue_id\",\n              \"status\",\n              \"reason\"\n            ],\n            \"properties\": {\n              \"issue_id\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              },\n              \"status\": {\n                \"enum\": [\n                  \"editable\",\n                  \"outside_scope\",\n                  \"unclear\"\n                ]\n              },\n              \"reason\": {\n                \"type\": \"string\",\n                \"minLength\": 1\n              }\n            }\n          }\n        }\n      }\n    },\n    \"blind_resolutions\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"issue_id\",\n          \"reason\",\n          \"excerpts\"\n        ],\n        \"properties\": {\n          \"issue_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"minItems\": 1,\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          }\n        }\n      },\n      \"maxItems\": 0\n    },\n    \"expression_checks\": {\n      \"type\": \"array\",\n      \"minItems\": 6,\n      \"maxItems\": 6,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"dimension\",\n          \"status\",\n          \"excerpts\",\n          \"reason\",\n          \"style_basis\",\n          \"issue_ids\"\n        ],\n        \"properties\": {\n          \"dimension\": {\n            \"enum\": [\n              \"semantic_increment\",\n              \"constraint_transcription\",\n              \"imagery_function\",\n              \"dialogue_function\",\n              \"ending_function\",\n              \"voice_alignment\"\n            ]\n          },\n          \"status\": {\n            \"enum\": [\n              \"pass\",\n              \"issue\",\n              \"not_applicable\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"style_basis\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"issue_ids\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            },\n            \"uniqueItems\": true\n          }\n        },\n        \"additionalProperties\": false\n      }\n    },\n    \"reading_checks\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"goal_id\",\n          \"status\",\n          \"priority\",\n          \"excerpts\",\n          \"reason\",\n          \"style_basis\"\n        ],\n        \"properties\": {\n          \"goal_id\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"status\": {\n            \"enum\": [\n              \"pass\",\n              \"revise\",\n              \"not_applicable\"\n            ]\n          },\n          \"priority\": {\n            \"enum\": [\n              \"low\",\n              \"medium\",\n              \"high\"\n            ]\n          },\n          \"excerpts\": {\n            \"type\": \"array\",\n            \"items\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"ref_id\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"ref_id\"\n                  ],\n                  \"additionalProperties\": false\n                },\n                {\n                  \"type\": \"object\",\n                  \"properties\": {\n                    \"start_ref\": {\n                      \"type\": \"string\"\n                    },\n                    \"end_ref\": {\n                      \"type\": \"string\"\n                    }\n                  },\n                  \"required\": [\n                    \"start_ref\",\n                    \"end_ref\"\n                  ],\n                  \"additionalProperties\": false\n                }\n              ]\n            }\n          },\n          \"reason\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"style_basis\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          }\n        },\n        \"additionalProperties\": false\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。\n仅对reading_contract中本书显式采用的目标提交reading_checks，未采用时省略或为空。每项交goal_id、status(pass/revise/not_applicable)、priority(low/medium/high)、excerpts、reason、style_basis。pass/revise须引当前正文，not_applicable须说明本书题材或范围为何无对应对象，不能因风格允许而免检。revise由程序展开为阅读目标问题；中高优先级独立阻止通过。区分作者、人物、叙述者和读者的信息；有意不可靠叙述、慢热或无反转本身不是错误。不固定第一人称、句长、反转数量、高潮或段长，不在正文复述检查项。 阅读目标问题使用reading_checks，不伪装成事实问题或错误的表达类别。盲读只核对style_contract提供的公开目标。",
+      "position": {
+        "x": 320,
+        "y": 180
+      },
+      "var_bindings": {
+        "length_context_file": {
+          "var_key": "length_context_file",
+          "mode": "reference"
+        },
+        "reader_preflight_feedback": {
+          "var_key": "reader_preflight_feedback"
+        }
+      },
+      "node_params": {
+        "output_selection": "completion_tool_message",
+        "json_repair_policy": "validate_only",
+        "json_output_schema": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "continue_reading_score",
+            "summary",
+            "issues",
+            "dimensions",
+            "repair_constraints",
+            "fact_review",
+            "expression_review",
+            "revision_scope",
+            "expression_checks",
+            "blind_resolutions"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "revise",
+                "reject"
+              ]
+            },
+            "continue_reading_score": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dimensions": {
+              "type": "object"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "location",
+                  "impact",
+                  "goal",
+                  "priority"
+                ],
+                "properties": {
+                  "location": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "impact": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "goal": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "priority": {
+                    "type": "string",
+                    "enum": [
+                      "high",
+                      "medium",
+                      "low"
+                    ]
+                  }
+                }
+              }
+            },
+            "repair_constraints": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fact_review": {
+              "type": "object",
+              "required": [
+                "verdict",
+                "summary"
+              ],
+              "properties": {
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "revise",
+                    "reject"
+                  ]
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "expression_review": {
+              "type": "object",
+              "required": [
+                "verdict",
+                "summary",
+                "issues"
+              ],
+              "properties": {
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "revise",
+                    "reject"
+                  ]
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "location",
+                      "priority",
+                      "excerpts",
+                      "impact",
+                      "goal",
+                      "id"
+                    ],
+                    "properties": {
+                      "location": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "impact": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "goal": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "priority": {
+                        "type": "string",
+                        "enum": [
+                          "high",
+                          "medium",
+                          "low"
+                        ]
+                      },
+                      "excerpts": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "ref_id": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "ref_id"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "start_ref": {
+                                  "type": "string"
+                                },
+                                "end_ref": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "start_ref",
+                                "end_ref"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "revision_scope": {
+              "type": "object",
+              "required": [
+                "mode",
+                "summary",
+                "assessments"
+              ],
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "unrestricted",
+                    "restricted",
+                    "unclear"
+                  ]
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "assessments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "issue_id",
+                      "status",
+                      "reason"
+                    ],
+                    "properties": {
+                      "issue_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "status": {
+                        "enum": [
+                          "editable",
+                          "outside_scope",
+                          "unclear"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "blind_resolutions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "issue_id",
+                  "reason",
+                  "excerpts"
+                ],
+                "properties": {
+                  "issue_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "excerpts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "ref_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref_id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "start_ref": {
+                              "type": "string"
+                            },
+                            "end_ref": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "start_ref",
+                            "end_ref"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "maxItems": 0
+            },
+            "expression_checks": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "required": [
+                  "dimension",
+                  "status",
+                  "excerpts",
+                  "reason",
+                  "style_basis",
+                  "issue_ids"
+                ],
+                "properties": {
+                  "dimension": {
+                    "enum": [
+                      "semantic_increment",
+                      "constraint_transcription",
+                      "imagery_function",
+                      "dialogue_function",
+                      "ending_function",
+                      "voice_alignment"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "pass",
+                      "issue",
+                      "not_applicable"
+                    ]
+                  },
+                  "excerpts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "ref_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref_id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "start_ref": {
+                              "type": "string"
+                            },
+                            "end_ref": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "start_ref",
+                            "end_ref"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "style_basis": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "issue_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "reading_checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "goal_id",
+                  "status",
+                  "priority",
+                  "excerpts",
+                  "reason",
+                  "style_basis"
+                ],
+                "properties": {
+                  "goal_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "enum": [
+                      "pass",
+                      "revise",
+                      "not_applicable"
+                    ]
+                  },
+                  "priority": {
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "excerpts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "ref_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref_id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "start_ref": {
+                              "type": "string"
+                            },
+                            "end_ref": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "start_ref",
+                            "end_ref"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "style_basis": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      },
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 2,
+      "save_output_to_file": true,
+      "output_file_path": "{{reader_preflight_raw_path}}",
+      "sub_workflow_params": {},
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5,
+      "fail_auto_skip": false,
+      "require_non_empty_output": true
+    },
+    {
+      "id": "script_reader_context_commit",
+      "label": "验证独立资料审稿",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 80,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reader_review",
+        "script_argv": [
+          "commit-context",
+          "--binding",
+          "{{reader_review_binding}}",
+          "--binding-sha",
+          "{{reader_review_binding_sha}}"
+        ],
+        "timeout": 30
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": true,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_reader_freeze",
+      "label": "冻结共同审稿来源",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 80,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reader_review",
+        "script_argv": [
+          "freeze-parallel",
+          "--binding",
+          "{{reader_review_binding}}",
+          "--binding-sha",
+          "{{reader_review_binding_sha}}",
+          "--context",
+          "{{revision_context_path}}",
+          "--runtime",
+          "{{prose_policy_runtime}}"
+        ],
+        "timeout": 30
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": true,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_reader_join",
+      "label": "核对并行分支及复评需要",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 80,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reader_review",
+        "script_argv": [
+          "join",
+          "--binding",
+          "{{reader_review_binding}}",
+          "--binding-sha",
+          "{{reader_review_binding_sha}}",
+          "--blind-sha",
+          "{{reader_blind_report_sha}}",
+          "--context-sha",
+          "{{reader_preflight_sha}}"
+        ],
+        "timeout": 30
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": true,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_reader_reconcile_bypass",
+      "label": "初审无待复核问题",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 80,
+        "y": 100
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "reader_review",
+        "script_argv": [
+          "bypass",
+          "--binding",
+          "{{reader_review_binding}}",
+          "--binding-sha",
+          "{{reader_review_binding_sha}}"
+        ],
+        "timeout": 30
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": true,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_production_finish",
+      "label": "核对执行凭据",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "finish",
+          "--stage",
+          "reader-sim",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_reader",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "reader-sim",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_reader"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_blind_reader",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "reader-sim",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_blind_reader"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_context_reader",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "reader-sim",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_context_reader"
+        ],
+        "timeout": 30
+      }
     }
   ],
   "edges": [
     {
       "id": "edge-start-reader",
-      "source": "__start__",
+      "source": "script_production_start",
       "target": "script_reader_review_prepare"
     },
     {
@@ -1087,28 +2091,93 @@
     },
     {
       "source": "script_length_gate",
-      "target": "__end__"
-    },
-    {
-      "id": "edge-reader-length-current",
-      "source": "script_length_context",
-      "target": "agent_reader"
-    },
-    {
-      "source": "script_reader_review_prepare",
-      "target": "agent_blind_reader"
+      "target": "script_production_finish"
     },
     {
       "source": "agent_blind_reader",
       "target": "script_reader_blind_commit"
     },
     {
-      "source": "script_reader_blind_commit",
+      "source": "script_reader_merge",
+      "target": "script_reader_commit"
+    },
+    {
+      "source": "script_reader_review_prepare",
       "target": "script_story_context"
     },
     {
-      "source": "script_reader_merge",
-      "target": "script_reader_commit"
+      "source": "script_length_context",
+      "target": "script_reader_freeze"
+    },
+    {
+      "source": "script_reader_freeze",
+      "target": "gw_reader_parallel"
+    },
+    {
+      "source": "gw_reader_parallel",
+      "target": "script_budget_agent_blind_reader"
+    },
+    {
+      "source": "gw_reader_parallel",
+      "target": "script_budget_agent_context_reader"
+    },
+    {
+      "source": "script_reader_blind_commit",
+      "target": "gw_reader_join"
+    },
+    {
+      "source": "agent_context_reader",
+      "target": "script_reader_context_commit"
+    },
+    {
+      "source": "script_reader_context_commit",
+      "target": "gw_reader_join"
+    },
+    {
+      "source": "gw_reader_join",
+      "target": "script_reader_join"
+    },
+    {
+      "source": "script_reader_join",
+      "target": "gw_reader_reconcile"
+    },
+    {
+      "source": "gw_reader_reconcile",
+      "target": "script_budget_agent_reader",
+      "condition": {
+        "expression": "{{reader_reconcile_required}} == yes"
+      }
+    },
+    {
+      "source": "gw_reader_reconcile",
+      "target": "script_reader_reconcile_bypass",
+      "condition": {
+        "is_default": true
+      }
+    },
+    {
+      "source": "script_reader_reconcile_bypass",
+      "target": "script_reader_merge"
+    },
+    {
+      "source": "__start__",
+      "target": "script_production_start"
+    },
+    {
+      "source": "script_production_finish",
+      "target": "__end__"
+    },
+    {
+      "source": "script_budget_agent_reader",
+      "target": "agent_reader"
+    },
+    {
+      "source": "script_budget_agent_blind_reader",
+      "target": "agent_blind_reader"
+    },
+    {
+      "source": "script_budget_agent_context_reader",
+      "target": "agent_context_reader"
     }
   ],
   "variables": [
@@ -1473,7 +2542,8 @@
       "type": "file",
       "required": false,
       "hidden": true,
-      "default": ""
+      "default": "",
+      "source_type": "output"
     },
     {
       "key": "reader_blind_feedback",
@@ -1481,9 +2551,108 @@
       "type": "file",
       "required": false,
       "hidden": true,
+      "default": "",
+      "source_type": "output"
+    },
+    {
+      "key": "reader_revision_context",
+      "name": "作者范围与自动建议",
+      "type": "file",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "reader_blind_model",
+      "name": "reader_blind_model",
+      "type": "file",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "reader_preflight_raw_path",
+      "name": "reader_preflight_raw_path",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
       "default": ""
+    },
+    {
+      "key": "reader_preflight_path",
+      "name": "reader_preflight_path",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "reader_preflight_feedback",
+      "name": "reader_preflight_feedback",
+      "type": "file",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "reader_parallel_sources",
+      "name": "reader_parallel_sources",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "reader_preflight_sha",
+      "name": "reader_preflight_sha",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "reader_reconcile_required",
+      "name": "reader_reconcile_required",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "revision_context_path",
+      "name": "共同资料路径",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": "cache/story-support/context.md"
     }
   ],
-  "gateways": [],
+  "gateways": [
+    {
+      "id": "gw_reader_parallel",
+      "gateway_type": "parallel",
+      "label": "并行独立审稿",
+      "converge_gateway_id": "gw_reader_join"
+    },
+    {
+      "id": "gw_reader_join",
+      "gateway_type": "converge",
+      "label": "完整汇合"
+    },
+    {
+      "id": "gw_reader_reconcile",
+      "gateway_type": "condition",
+      "label": "有初审发现时依序复评"
+    }
+  ],
   "execution_schemes": []
 }

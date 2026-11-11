@@ -179,7 +179,7 @@ def validator_node(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('repair', [False, True])
 @pytest.mark.parametrize('defect', ['missing', 'quote', 'combined'])
-def test_native_scriptnode_engine_feedback_and_two_retry_exhaustion(gate, tmp_path, monkeypatch, repair, defect):
+def test_native_scriptnode_engine_feedback_and_bounded_retry_exhaustion(gate, tmp_path, monkeypatch, repair, defect):
     from src.workflow.definition import WorkflowDef, WorkflowEdge, WorkflowNode, WorkflowRunRecord, WorkflowTask
     from src.workflow.engine import WorkflowEngine
     from src.workflow.failure_policy import activate_scheduled_retry
@@ -240,12 +240,13 @@ def test_native_scriptnode_engine_feedback_and_two_retry_exhaustion(gate, tmp_pa
         assert not (book / 'meta/character_profiles.md').exists()
         task.node_states[AGENT] = activate_scheduled_retry(task.node_states[AGENT])
     state = task.node_states[AGENT]
-    assert len(engine.messages) == (2 if repair else 3)
+    deterministic_stop=not repair and defect in ('quote','combined')
+    assert len(engine.messages) == (2 if repair or deterministic_stop else 3)
     assert '下游校验反馈' not in engine.messages[0]
     assert '林叶' in engine.messages[1]
     assert ('personality' if defect == 'missing' else 'want') in engine.messages[1]
     assert '第 1/2 次重试' in engine.messages[1]
-    assert state.automatic_retry_count == (1 if repair else 2)
+    assert state.automatic_retry_count == (1 if repair or deterministic_stop else 2)
     codes = (['character_review_missing_evidence'] if defect == 'missing' else
              ['character_review_quote_mismatch'] if defect == 'quote' else
              ['character_review_missing_evidence', 'character_review_quote_mismatch'])
@@ -254,6 +255,10 @@ def test_native_scriptnode_engine_feedback_and_two_retry_exhaustion(gate, tmp_pa
         assert outcomes == ['retry_waiting', 'completed']
         assert (book / 'meta/character_profiles.md').exists()
         assert state.rejection_history[-1]['resolution'] == 'passed'
+    elif deterministic_stop:
+        assert outcomes==['retry_waiting','failed']
+        assert 'RETRY_STOP' in task.node_states[VALIDATOR].stderr
+        assert not (book/'meta/character_profiles.md').exists()
     else:
         assert outcomes == ['retry_waiting', 'retry_waiting', 'failed']
         assert '第 2/2 次重试' in engine.messages[2]

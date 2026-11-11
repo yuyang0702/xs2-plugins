@@ -1,11 +1,25 @@
 """Plugin-owned continuation of verified MVP publication, never a body rewrite."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 
 TAIL = ('sync_up_si', 'script_check_originality')
 SCRIPT_NAMES = {'sync_up_si': 'local_archive', 'script_check_originality': 'reference_intelligence_helper'}
+
+
+def _review():
+    spec=importlib.util.spec_from_file_location('verified_draft_review_checkpoint',Path(__file__).with_name('draft_review_checkpoint.py'))
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
+
+def prepare_review(root,state,task,chapter):return _review().prepare(root,state,task,chapter)
+
+
+def validate_review_publication(root,state,task):
+    validate_selection(task,state['automaticCheckpoint'])
+    return _review().verify(root,state,task,require_tail=False)
 
 
 def _digest(path):
@@ -59,6 +73,8 @@ def prepare(root, state, task, chapter):
 
 
 def validate(root, state, checkpoint):
+    if isinstance(checkpoint,dict) and checkpoint.get('kind')=='draft_review':
+        return _review().validate(root,state,checkpoint)
     if not isinstance(checkpoint, dict) or checkpoint.get('stage') != 'mvp':
         raise ValueError('正文恢复凭据缺失')
     if checkpoint.get('chapter') != str(state.get('values', {}).get('chapter_number', '0001')).zfill(4):
@@ -76,6 +92,8 @@ def validate(root, state, checkpoint):
 
 def options(root, state, definition, source):
     checkpoint = state.get('automaticCheckpoint')
+    if isinstance(checkpoint,dict) and checkpoint.get('kind')=='draft_review':
+        return _review().options(root,state,definition,source)
     validate(root, state, checkpoint)
     if (not source or source.get('task_id') != checkpoint['source_task_id'] or source.get('status') != 'failed'
             or Path(source.get('workspace_override') or '').resolve() != Path(root).resolve()
@@ -97,9 +115,16 @@ def options(root, state, definition, source):
 
 
 def validate_selection(task, checkpoint):
+    if checkpoint.get('kind')=='draft_review':
+        values=task.get('parameter_values',{})
+        if values.get('guard_source_file')!=checkpoint.get('source_file') or values.get('multi_dir')!=checkpoint.get('multi_dir'):
+            raise ValueError('审稿恢复任务没有使用冻结种子与原计划目录')
     selected = set(checkpoint['selected_node_ids'])
     disabled = set(task.get('disabled_node_ids') or [])
     definitions = task.get('snapshot_definition', {}).get('nodes', [])
+    if any(n['id']=='script_production_start' for n in definitions):
+        selected|={'script_production_start','script_production_finish'}
+        selected|={'script_budget_'+n['id'] for n in definitions if n['id'] in checkpoint['selected_node_ids'] and n['node_type']=='agent'}
     if not selected.issubset({node['id'] for node in definitions}):
         raise ValueError('正文恢复任务缺少需要执行的检查节点')
     for node in definitions:
@@ -112,6 +137,7 @@ def verify(root, state, task):
     checkpoint = state.get('automaticCheckpoint')
     validate(root, state, checkpoint)
     validate_selection(task, checkpoint)
+    if checkpoint.get('kind')=='draft_review':return _review().verify(root,state,task)
     nodes = task.get('node_states') or {}
     for key in checkpoint['selected_node_ids']:
         if nodes.get(key, {}).get('status') != 'completed':

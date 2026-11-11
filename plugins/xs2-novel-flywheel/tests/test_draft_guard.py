@@ -82,6 +82,20 @@ def test_contract_drift_cannot_reuse_repair_or_audit_files(tmp_path,monkeypatch,
         run(m,tmp_path,monkeypatch,capsys,'candidate')
 
 
+def test_new_signed_budget_after_draft_freeze_cannot_reuse_old_guard(tmp_path,monkeypatch,capsys):
+    m,d=prepared(tmp_path,monkeypatch,capsys)
+    from test_composition_plan import module as composition
+    composer=composition();save(tmp_path/'meta/length_policy.json',{'schema':1,'ownership':'planner'})
+    request=composer.prepare(tmp_path,'0001','later-budget','1-500')
+    plan={'request_digest':request['request_digest'],'status':'ready','reason':'按本书阅读作用分配。','minimum':1,'maximum':500,
+        'segments':[{'id':'one','purpose':'关系发展','development':'选择得到回应。','minimum':1,'maximum':500}]}
+    review={'request_digest':request['request_digest'],'plan_digest':composer.identity(plan),'verdict':'approve','scope_preserved':True,
+        'length_feasible':True,'reason':'作用成立。','checks':[{'segment_id':'one','develops_function':True,'style_basis':'本书声线','reason':'有发展'}]}
+    composer.accept(tmp_path,'later-budget',plan,review)
+    body,_=evidence();save(d/'facts-draft.json',{'body':body})
+    with pytest.raises(ValueError,match='预算|篇幅'):run(m,tmp_path,monkeypatch,capsys,'candidate')
+
+
 def test_edited_approved_fact_body_cannot_keep_the_old_auditor_approval(tmp_path,monkeypatch,capsys):
     m,d,body=accepted_facts(tmp_path,monkeypatch,capsys)
     approved=json.loads((d/'facts-approved.json').read_text(encoding='utf-8'))

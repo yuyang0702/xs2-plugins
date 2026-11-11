@@ -24,4 +24,23 @@ containing separate sentences/lines are checked passage by passage and saved as
 an array. Chapter and source hashes must still match the review snapshot.
 
 Original upstream files and pinned versions are retained under `vendor/`. Runtime adapters are in
-`upstream.py`; no upstream service, database, credentials or autonomous write loop is started.
+`upstream.py`; no upstream service, credentials or autonomous write loop is started.
+
+Plugin-owned `archive/longform.sqlite3` stores durable publication intents and run
+receipts. `recover` replays compatible pending commits; `abandon-commit --chapter
+0001` explicitly preserves and abandons a conflicting intent before fresh review.
+See the plugin's `docs/longform-p0.md`. No command changes novel prose or style.
+
+P1 adds `recall --chapter 0201 --query "..."` and `impact`. Shared context
+automatically includes sourced distant passages, explicit alias ambiguities,
+separate character cognition, correction chains and temporal boundaries.
+The disposable SQLite memory index is rebuildable; canonical evidence stays
+in P0 snapshots. See `docs/longform-p1.md` for optional registry/event schemas.
+
+P2 adds `serial --serial-action status --chapter 0031` and the outline workflow's
+rolling branch. It plans only unwritten chapters within the book's declared
+volume scope, validates actual handoff/progress, and publishes through P0.
+`serial --serial-action approve` adopts an unchanged author-reviewed candidate
+for the current TASK_ID. Continuous dispatch budgets and task reservations are
+durable across restarts. See `docs/longform-p2.md` for book-owned configuration
+and the limits of offline verification.

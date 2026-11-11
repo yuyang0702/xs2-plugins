@@ -36,9 +36,11 @@ def test_confirmed_voice_adaptations_reach_writer_branches_and_reviewers(tmp_pat
             from test_book_contract import put
             put(tmp_path,'story/0001/chapter.md','正文。')
             put(tmp_path,'meta/character_voice_adaptations.md','CONFIRMED_BOOK_ROLE_VOICE')
-            outputs=module().prepare(tmp_path,'0001','voice-input','1-5000')
-            frozen=(tmp_path/outputs['revision_source_input']).read_text(encoding='utf8')
-            values.update(revision_source_input=frozen,revision_input=frozen)
+            m=module();outputs=m.prepare(tmp_path,'0001','voice-input','1-5000')
+            put(tmp_path,'critique.json',{'feels_human':True,'issues':[]})
+            m.writer_input(tmp_path,outputs['revision_dir'],'critique.json')
+            for key in ('revision_source_model','revision_editor_model'):
+                values[key]=(tmp_path/outputs[key]).read_text(encoding='utf8')
         for node in definition['nodes']:
             if node['id'] in nodes:
                 assert 'CONFIRMED_BOOK_ROLE_VOICE' in expand(node.get('first_message', ''), values), (stage, node['id'])

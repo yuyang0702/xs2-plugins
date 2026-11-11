@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import importlib.util
+import copy
 from pathlib import Path
 from decimal import Decimal
 from fractions import Fraction
@@ -51,6 +52,25 @@ def amount(text,units):
     return int(value)
 
 
+class Arithmetic:
+    """Reuse a calculation, while the caller checks the quote in the current prose."""
+
+    def __init__(self, calculate, verified=None):
+        self.calculate = calculate
+        self.values = dict(verified or {})
+        self.hits = self.misses = 0
+
+    def __call__(self, text, units):
+        evidence = json.dumps([text, units], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        key = hashlib.sha256(evidence.encode()).hexdigest()
+        if key in self.values:
+            self.hits += 1
+        else:
+            self.values[key] = self.calculate(text, units)
+            self.misses += 1
+        return self.values[key]
+
+
 def _constrained_units(units,equations):
     if not units:return
     keys=list(units);matrix=[]
@@ -77,6 +97,70 @@ def contract_digest(contract):
     return hashlib.sha256(json.dumps(contract,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
+def _modern_cny_evidence(quote, units):
+    # Scope evidence must identify both the currency and this ledger's unit.
+    if not isinstance(quote,str):return False
+    # Every clause must fit the affirmative grammar. Selecting only a positive
+    # substring would discard retractions or an unknown competing currency.
+    clauses=[part.strip() for part in re.split(r'[，,。；;\n]',quote) if part.strip()]
+    quantity=r'[一二三四五六七八九十百千万零〇两0-9]+\s*(?P<unit>元|块)(?:钱|整)?'
+    scoped=False;unit_seen=False
+    for part in clauses:
+        if re.fullmatch(r'本账(?:使用|采用|以|用)(?:现代)?人民币(?:计价|结算)?',part):
+            scoped=True;continue
+        direct=re.fullmatch(r'人民币\s*'+quantity,part)
+        amount_clause=direct or re.fullmatch(r'(?:收款|付款|支付|收入|支出|余额|期初|余款|现钱)?\s*'+quantity,part)
+        if amount_clause is None:return False
+        if direct:scoped=True
+        if amount_clause['unit'] in units:unit_seen=True
+    return scoped and unit_seen
+
+
+def enrich_unit_aliases(ledger, source_quote):
+    """Return a copy scoped to source-backed modern CNY; caller supplies ledger evidence only.
+
+    Validate the resulting contract against the full approved sources before freezing its digest.
+    Never pass a whole-book blob mixing independent currencies/resource ledgers here.
+    """
+    _require(_modern_cny_evidence(source_quote,ledger.get('units',{})), '缺少本账人民币单位的明确资料依据')
+    result=copy.deepcopy(ledger)
+    result['currency_scope']={'code':'CNY','source_quote':source_quote}
+    effective_units(result)
+    return result
+
+
+def effective_units(ledger):
+    """Expand only this ledger's proven synonyms, retaining its canonical rate matrix."""
+    canonical=ledger.get('units',{});result=dict(canonical)
+    aliases=ledger.get('unit_aliases',[])
+    _require(isinstance(aliases,list),'本账单位别名须为数组')
+    seen=set()
+    for row in aliases:
+        _require(isinstance(row,dict),'单位别名格式无效')
+        alias,unit,quote=(row.get(k) for k in ('alias','unit','source_quote'))
+        _require(isinstance(alias,str) and alias.strip() and alias not in canonical and alias not in seen
+                 and unit in canonical and isinstance(quote,str),'单位别名重复、冲突或没有标准单位')
+        # An explicit one-to-one statement is required, not mere co-occurrence.
+        pair=lambda a,b: r'\s*(?:一|1)\s*'+re.escape(a)+r'\s*(?:等于|就是|=|＝)\s*(?:一|1)\s*'+re.escape(b)+r'\s*[。.;；]?\s*'
+        _require(re.fullmatch(pair(unit,alias),quote) or re.fullmatch(pair(alias,unit),quote),'单位别名须有完整肯定的一比一等值依据')
+        result[alias]=canonical[unit];seen.add(alias)
+    scope=ledger.get('currency_scope')
+    if scope is not None:
+        _require(isinstance(scope,dict) and scope.get('code')=='CNY'
+                 and _modern_cny_evidence(scope.get('source_quote'),canonical),'人民币作用域缺少本账单位依据')
+        known=[u for u in ('元','块') if u in canonical]
+        _require(known and len({canonical[u] for u in known})==1,'本账元与块倍率冲突')
+        for alias in ('元','块'):
+            _require(alias not in result or result[alias]==canonical[known[0]],'人民币别名倍率冲突')
+            result[alias]=canonical[known[0]]
+    return result
+
+
+def evidence_unit_names(contract):
+    """Catalog vocabulary only; arithmetic always uses each ledger independently."""
+    return dict.fromkeys([*effective_units(contract),*(u for row in contract.get('resource_ledgers',[]) for u in effective_units(row))],1)
+
+
 def _rows(rows,label):
     _require(isinstance(rows,list),label+'须为数组')
     result={}
@@ -88,6 +172,7 @@ def _rows(rows,label):
 
 def resource_contract(parent,row):
     return {'schema':1,'focus':parent['focus'],'facts':[],'events':parent['events'],
+            **{k:row[k] for k in ('unit_aliases','currency_scope') if k in row},
             **{k:row[k] for k in ('units','unit_equations','accounts','transfers')}}
 
 
@@ -112,6 +197,9 @@ def validate_contract(data,sources,scene_count):
         _require(all(isinstance(row.get(k),str) and row[k].strip() and row[k] in quote for k in ('left','right')),'换算两侧须逐字出自依据')
         _require(amount(row['left'],units)==amount(row['right'],units),'本书单位与所引换算依据不一致')
     _constrained_units(units,equations)
+    for alias in data.get('unit_aliases',[]):supported(alias)
+    if data.get('currency_scope') is not None:supported(data['currency_scope'])
+    units=effective_units(data)
     accounts=_rows(data.get('accounts'),'账户');balances={}
     for key,row in accounts.items():
         _require(type(row.get('opening')) is int and row['opening']>=0,'期初现钱须明确为非负整数')
@@ -160,19 +248,31 @@ def located(span,body):
     return start,start+len(span['text'])
 
 
-def audit_issues(report,body,contract,phase):
+def audit_issues(report,body,contract,phase,*,arithmetic=None):
     _require(phase in ('facts','expression') and isinstance(report,dict) and report.get('schema')==1,'核验报告格式无效')
     _require(report.get('candidate_sha256')==hashlib.sha256(body.encode()).hexdigest()
              and report.get('contract_sha256')==contract_digest(contract),'核验报告与当前候选或事实契约不匹配')
-    report=audit_evidence.resolve_report(report,body,audit_evidence.unit_names(contract))
+    report=audit_evidence.resolve_report(report,body,evidence_unit_names(contract))
     categories=HARD+(('repetition',) if phase=='expression' else ())
     required=[k for k in categories if k!='resources' or contract.get('resource_ledgers')]
     _require(isinstance(report.get('checks'),dict) and all(report['checks'].get(k) is True for k in required),'核验报告未检查全部必需维度')
+    semantic=report.get('issues');_require(isinstance(semantic,list),'语义问题须明确提供数组')
+    for row in semantic:
+        _require(isinstance(row,dict) and row.get('category') in categories
+                 and all(isinstance(row.get(k),str) and row[k].strip() for k in ('reason','goal'))
+                 and isinstance(row.get('excerpts'),list) and row['excerpts']
+                 and all(isinstance(q,str) and q.strip() and q in body for q in row['excerpts']),'核验问题缺少当前正文原文与修订目标')
     issues=[]
+    calculate = amount if arithmetic is None else arithmetic
+    units = None
     def issue(category,reason,quotes):
         issues.append({'category':category,'reason':reason,'excerpts':quotes,'goal':'按冻结契约修正实际正文，保持已成立的其他事实与情节边界'})
     def observed_amount(text,label):
-        try:return amount(text,contract['units'])
+        nonlocal units
+        try:
+            if units is None:
+                units = effective_units(contract)
+            return calculate(text,units)
         except ValueError as exc:raise ValueError(label+'：'+str(exc)+'；仅使用明确的数字数量，持有或状态描写另作语义核查。引文：'+text[:100]) from exc
     def observations(name,expected):
         actual=_rows(report.get(name),name);_require(set(actual)==set(expected),name+'遗漏或新增了约定核验项')
@@ -187,7 +287,13 @@ def audit_issues(report,body,contract,phase):
                 _require(max(positions[dep][0],positions[key][0])>=min(positions[dep][1],positions[key][1]),
                          '前后事件凭据重叠，请分别引用独立动作的最小分句，不能据宽引文断言正文反序')
             if key in positions and dep in positions and positions[dep][1]>positions[key][0]:
-                issue('handoff',dep+' 必须先于 '+key,[event_obs[dep]['quote']['text'],event_obs[key]['quote']['text']])
+                explicit=any(isinstance(item,dict) and item.get('category')=='handoff'
+                    and dep in str(item.get('reason','')) and key in str(item.get('reason',''))
+                    for item in semantic)
+                _require(explicit,'事件凭据位置反向：'+dep+' / '+key+
+                    '。先核对实际完成时点并重取最小引文，不能用后文复述、追认或回忆的位置冒充发生时点。'
+                    '若实际履行确实违背依赖，请在issues的handoff中点名两个事件id，提供当前原文及因果说明；'
+                    '倒叙与复述本身不是正文因果错误，不据此要求作者改写正确顺序。')
     transfers=_rows(contract['transfers'],'钱款');money=observations('money_observations',transfers)
     for key,expected in transfers.items():
         obs=money[key];paid=obs.get('paid');change=obs.get('change')
@@ -262,14 +368,8 @@ def audit_issues(report,body,contract,phase):
                       'money_observations':resource_obs[key].get('money_observations'),
                       'balance_observations':resource_obs[key].get('balance_observations')}
         child_report.pop('resource_observations',None)
-        for found in audit_issues(child_report,body,child,phase):
+        for found in audit_issues(child_report,body,child,phase,arithmetic=arithmetic):
             if found['category']=='money':
                 issues.append({**found,'category':'resources','reason':key+'：'+found['reason']})
-    semantic=report.get('issues');_require(isinstance(semantic,list),'语义问题须明确提供数组')
-    for row in semantic:
-        _require(isinstance(row,dict) and row.get('category') in categories
-                 and all(isinstance(row.get(k),str) and row[k].strip() for k in ('reason','goal'))
-                 and isinstance(row.get('excerpts'),list) and row['excerpts']
-                 and all(isinstance(q,str) and q.strip() and q in body for q in row['excerpts']),'核验问题缺少当前正文原文与修订目标')
-        issues.append(row)
+    issues.extend(semantic)
     return sorted(issues,key=lambda i:i['category']=='repetition')

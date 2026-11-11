@@ -358,6 +358,18 @@ class NovelAssistantJobs:
                        '方案面向作者阅读，用中文解释设置和步骤，不输出内部变量名、文件路径或接口名称。'
                        '这只是可供用户确认的返修方案，不宣称已经改写正文或已经通过评估。')
         elif payload.get('purpose') == 'advisor':
+            project = payload.get('project', {})
+            material = {
+                '人物': 'meta/character_profiles.md',
+                '结构': 'meta/story_plan.md',
+                '大纲': 'outline/near_term_outline.md',
+            }
+            context['作品'] = {key: value for key, value in project.items() if key != 'advisor_brief'}
+            context['规划依据'] = {
+                '作者简报': project.get('advisor_brief') or '',
+                '已备资料': {label: relative for label, relative in material.items()
+                             if (root / relative).is_file() and (root / relative).read_bytes().strip()},
+            }
             system += ADVISOR_PROMPT
         elif payload.get('purpose') == 'configure':
             system += CONFIGURATION_PROMPT

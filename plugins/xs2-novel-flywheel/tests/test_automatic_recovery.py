@@ -1,4 +1,5 @@
 import copy
+import pytest
 
 from test_length_quality import policy
 
@@ -29,3 +30,19 @@ def test_recovery_does_not_spend_budget_twice_for_same_failed_task():
     task={'task_id':'summary','status':'failed','error':'开启了 save_output_to_file，但没有最终 AI 输出可保存'}
     first=p.recovery_action(state,'post-hoc',task);state.update(first['updates'])
     assert p.recovery_action(state,'post-hoc',task) is None
+
+
+@pytest.mark.parametrize('error',[
+    'No streaming chunk received for 120.0s (model=gpt-6.1-sol, chunks_received=6). The connection may be alive at the TCP layer but is not producing content.',
+    'StreamChunkTimeoutError: incomplete streaming response',
+])
+def test_native_stream_inactivity_is_bounded_operational_recovery(error):
+    p=policy();state={'values':{'chapter_number':'0002'}}
+    task={'task_id':'stream-timeout','status':'failed','node_states':{'agent_pl':{'status':'failed','error':error}}}
+    result=p.recovery_action(state,'polish',task)
+    assert result and result['stage']=='polish'
+    state.update(result['updates'])
+    assert p.recovery_action(state,'polish',task) is None
+    next_result=p.recovery_action(state,'polish',{**task,'task_id':'stream-timeout-2'})
+    assert next_result;state.update(next_result['updates'])
+    assert p.recovery_action(state,'polish',{**task,'task_id':'stream-timeout-3'}) is None

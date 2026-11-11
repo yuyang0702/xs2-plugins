@@ -5,6 +5,7 @@ import argparse
 import copy
 import hashlib
 import html
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -50,6 +51,12 @@ class ReviewCorrectionNeeded(ValueError):
 class EvidenceQuoteMismatch(ValueError):
     """An eligible source exists but its quoted text does not match exactly."""
 
+
+
+def _guarded_rejection(message):
+    spec=importlib.util.spec_from_file_location('plugin_rejection_transport',Path(__file__).resolve().parents[1]/'production_guard/rejections.py')
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value)
+    return value.emit(message)
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + '\n'
@@ -774,7 +781,7 @@ def main(argv=None):
     except ReviewCorrectionNeeded as error:
         if args.action == 'apply' and args.retry_review:
             reason = html.escape(str(error), quote=False)
-            print('<WF_REJECT_UPSTREAM target="agent_card_semantic_review">' + reason + '</WF_REJECT_UPSTREAM>')
+            _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_card_semantic_review">' + reason + '</WF_REJECT_UPSTREAM>')
             return
         parser.exit(1, 'character-review: ' + str(error) + '\n')
     except (ValueError, OSError, KeyError) as error:

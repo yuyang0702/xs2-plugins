@@ -1,3 +1,4 @@
+from runtime_graph import literary_graph
 import hashlib
 import importlib.util
 import json
@@ -35,6 +36,13 @@ def test_count_prose_excludes_titles_punctuation_and_formatting():
     q = quality()
     assert q.count_prose('# 第0001章\n\n第1章 · 补经痕迹\n\n“还我衣裳。”\nShe said, "Not today!"') == 8
     assert q.count_prose('𠀀说：“好。”') == 3
+
+
+@pytest.mark.parametrize('title',['# 第二章 标题','第2章 · 标题'])
+def test_frozen_text_budget_and_raw_measurement_agree_for_utf8_bom(title):
+    q=quality();body='\ufeff'+title+'\n\n正文。'
+    measured=q.measurement(body.encode('utf-8'),'0002',(1,10))
+    assert q.count_prose(body)==measured['actual']==2
 
 
 def test_parse_target_range_and_legacy_blank():
@@ -243,7 +251,7 @@ def test_unconfigured_old_book_has_no_new_length_requirement(tmp_path):
     write(tmp_path, 'story/0001/chapter.md', '已存在的旧作品。')
     assert q.assess(tmp_path, '0001', '')['status'] == 'unconfigured'
     assert q.gate_report(tmp_path, '0001', '', {'verdict': 'pass'})['verdict'] == 'pass'
-    definition = json.loads((PLUGIN / 'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8'))
+    definition = literary_graph(json.loads((PLUGIN / 'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8')))
     assert policy().parameters({'values': {'chapter_number': '0001'}}, definition)['target_word_count'] == ''
 
 
@@ -306,19 +314,20 @@ def test_feedback_origin_accepts_existing_short_chapter_number_inputs(tmp_path, 
 
 def test_polish_and_reader_workflows_wire_real_length_evidence():
     root = PLUGIN / 'resources/workflows'
-    polish = json.loads((root / 'polish/definition.json').read_text(encoding='utf-8'))
+    polish = literary_graph(json.loads((root / 'polish/definition.json').read_text(encoding='utf-8')))
     nodes = {n['id']: n for n in polish['nodes']}
     assert nodes['script_length_context']['node_params']['script_name'] == 'manuscript_quality'
     assert any(e['source'] == 'script_length_context' and e['target'] == 'gw_polish_scope' for e in polish['edges'])
     for name in ['agent_sc', 'agent_pl']:
-        key='revision_source_input' if name=='agent_sc' else 'revision_input'
+        key='revision_source_model' if name=='agent_sc' else 'revision_editor_model'
         assert '{{'+key+'}}' in nodes[name]['first_message']
     assert ('agent_pl','script_local_candidate') in {(e['source'],e['target']) for e in polish['edges']}
     assert nodes['script_local_prepare']['node_params']['script_name']=='local_revision'
     assert '{{pp_length_context_file}}' in nodes['agent_pp']['first_message']
     assert 'pp_length_context_file' in nodes['agent_pp']['var_bindings']
-    reader = json.loads((root / 'reader-sim/definition.json').read_text(encoding='utf-8'))
-    assert any(e['source'] == 'script_length_context' and e['target'] == 'agent_reader' for e in reader['edges'])
+    reader = literary_graph(json.loads((root / 'reader-sim/definition.json').read_text(encoding='utf-8')))
+    assert any(e['source'] == 'script_length_context' and e['target'] == 'script_reader_freeze' for e in reader['edges'])
+    assert any(e['source'] == 'gw_reader_parallel' and e['target'] == 'agent_context_reader' for e in reader['edges'])
     assert '{{length_context_file}}' in next(n for n in reader['nodes'] if n['id'] == 'agent_reader')['first_message']
     assert any(n['id'] == 'script_length_gate' for n in reader['nodes'])
     assert any(e['source'] == 'script_reader_commit' and e['target'] == 'script_length_gate' for e in reader['edges'])

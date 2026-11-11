@@ -1022,6 +1022,74 @@
           "type": "json_object"
         }
       }
+    },
+    "xs2-serial-planner": {
+      "description": "按本书约定规划有限的未来章节",
+      "prompt_template": "xs2-serial-planner",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 6,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
+    },
+    "xs2-serial-reviewer": {
+      "description": "独立核对卷级承接与滚动计划",
+      "prompt_template": "xs2-serial-reviewer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 6,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": []
+    },
+    "xs2-composition-planner": {
+      "description": "规划各段阅读作用及相应篇幅；明确承载范围、发展方式及冲突。",
+      "prompt_template": "xs2-composition-planner",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-composition-reviewer": {
+      "description": "独立核对每段实际作用、本书风格、世界与作者范围，以及预算可行性。不要因为要求了新动作就认为有新作用。",
+      "prompt_template": "xs2-composition-reviewer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
     }
   }
 }

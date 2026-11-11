@@ -26,6 +26,7 @@ def deep_copy(obj):
 
 def trim_world(world, subtract):
     """世界裁剪：按 subtract 中的维度→字段列表删二级字段。"""
+    if world.get('source_format')=='author_markdown':return deep_copy(world),0
     trimmed = deep_copy(world)
     removed = 0
     for dim, fields in subtract.items():
@@ -41,6 +42,7 @@ def trim_world(world, subtract):
 
 def trim_characters(characters, subtract):
     """角色裁剪：按 subtract.characters 中的名字列表移除角色。"""
+    if characters.get('source_format')=='author_markdown':return deep_copy(characters),0
     names_to_remove = set(subtract.get("characters", []))
     if not names_to_remove:
         return characters, 0

@@ -1,3 +1,4 @@
+from runtime_graph import literary_graph
 import importlib.util
 import json
 import hashlib
@@ -100,7 +101,7 @@ def test_historical_context_excludes_full_book_current_state_and_ledgers(tmp_pat
 def test_begin_review_never_uses_unfiltered_future_archive_as_chapter_start(tmp_path):
     commit_chapter(tmp_path)
     state = support.load(tmp_path, "story/0001/confirmed_state.json")
-    state["indexes_before"] = {}
+    state["indexes_before"] = {"hooks": [], "debts": []}
     support.write(tmp_path, "story/0001/confirmed_state.json", state)
     support.write(tmp_path, "archive/hooks.json", [
         {"id":"h002", "chapter_created":2, "description":"第二章未来伏笔"}])
@@ -230,9 +231,9 @@ def test_preflight_explains_the_next_action_before_chapter_generation(tmp_path):
 def commit_chapter(root, chapter='0001', content='赵磊关上通风阀，决定留下救人。'):
     support.write(root, f'story/{chapter}/chapter.md', content)
     support.begin_review(root, chapter)
-    support.write(root, 'cache/observer/obs_output.json', {'confirmed_state': {'characters': [{'name': '赵磊',
+    support.write(root, support.review_file(chapter, 'observer.json'), {'confirmed_state': {'characters': [{'name': '赵磊',
           'snapshot': {'location': '隔离站', 'knowledge': '通风异常', 'goal': '救人'}, 'evidence': '决定留下救人'}]}, 'character_diff': {'state_changes': []}})
-    support.write(root, 'cache/arbiter/arb_output.json', {'story_confirmed': {'landed': [{'planned': '留下救人', 'evidence': '章末'}]}, 'world_rulings': {'entries': []}})
+    support.write(root, support.review_file(chapter, 'arbiter.json'), {'story_confirmed': {'landed': [{'planned': '留下救人', 'evidence': '章末'}]}, 'world_rulings': {'entries': []}})
     return support.commit(root, chapter)
 
 
@@ -334,19 +335,29 @@ def test_missing_outline_requests_planning_instead_of_restarting_advisor(tmp_pat
 
 def test_workflow_graphs_connect_real_context_and_archive_commit():
     for stage in ('mvp','outline','story-plan','polish','reader-sim','post-hoc'):
-        data = json.loads((ROOT/f'resources/workflows/{stage}/definition.json').read_text(encoding='utf-8'))
+        data = literary_graph(json.loads((ROOT/f'resources/workflows/{stage}/definition.json').read_text(encoding='utf-8')))
         assert any(n['id']=='script_story_context' for n in data['nodes'])
         first = 'script_reader_review_prepare' if stage == 'reader-sim' else 'script_story_context'
+        if stage == 'outline':
+            first = 'gw-outline-mode'
+            assert any(e['source']==first and e['target']=='script_story_context' and e.get('condition',{}).get('is_default') for e in data['edges'])
         assert any(e['source']=='__start__' and e['target']==first for e in data['edges'])
         for node in data['nodes']:
             if node['node_type'] != 'agent':
                 continue
             if node['id'] == 'agent_blind_reader':
-                assert '{{reader_blind_input}}' in node['first_message']
+                assert '{{reader_blind_model}}' in node['first_message']
                 assert '{{story_support_context}}' not in node['first_message']
-                assert any(e['source']=='script_reader_blind_commit' and e['target']=='script_story_context' for e in data['edges'])
+                assert any(e['source']=='script_reader_blind_commit' and e['target']=='gw_reader_join' for e in data['edges'])
+                assert any(e['source']=='script_reader_review_prepare' and e['target']=='script_story_context' for e in data['edges'])
+            elif node['id'] in ('agent_composition_plan','agent_composition_review'):
+                key='composition_request_model' if node['id']=='agent_composition_plan' else 'composition_review_model'
+                assert '{{'+key+'}}' in node['first_message']
+                assert 'book_contract' in node['first_message']
+                assert '{{book_contract_file}}' not in node['first_message']
+                assert any(e['source']=='script_story_context' and e['target']=='script_composition_prepare' for e in data['edges'])
             elif stage=='polish' and node['id'] in ('agent_sc','agent_pl','agent_local_review'):
-                key={'agent_sc':'revision_source_input','agent_pl':'revision_input','agent_local_review':'revision_review_input'}[node['id']]
+                key={'agent_sc':'revision_source_model','agent_pl':'revision_editor_model','agent_local_review':'revision_review_model'}[node['id']]
                 assert '{{'+key+'}}' in node['first_message']
                 prep=next(n for n in data['nodes'] if n['id']=='script_local_prepare')
                 assert '{{revision_context_path}}' in prep['node_params']['script_argv']
@@ -359,12 +370,16 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                 # Guard inputs include the same confirmed context inside their
                 # frozen planning sources; avoid injecting a second live copy.
                 phase='expression' if 'expression' in node['id'] else 'facts'
-                key=f'guard_{phase}_audit_input' if node['id'].endswith('_audit') else f'guard_{phase}_input'
+                key=f'guard_{phase}_audit_model' if node['id'].endswith('_audit') else f'guard_{phase}_model'
                 assert '{{'+key+'}}' in node['first_message']
                 assert any(n['id']=='script_guard_prepare' for n in data['nodes'])
+            elif node['id'].startswith('agent_rolling_'):
+                assert '{{rolling_request_file}}' in node['first_message']
+                assert any(n['id']=='script_serial_prepare' for n in data['nodes'])
+                assert '{{story_support_context}}' not in node['first_message']
             else:
                 assert '{{story_support_context}}' in node['first_message']
-    post = json.loads((ROOT/'resources/workflows/post-hoc/definition.json').read_text(encoding='utf-8'))
+    post = literary_graph(json.loads((ROOT/'resources/workflows/post-hoc/definition.json').read_text(encoding='utf-8')))
     assert any(e['source']=='script_confirm_archive' and e['target']=='__end__' for e in post['edges'])
 
 

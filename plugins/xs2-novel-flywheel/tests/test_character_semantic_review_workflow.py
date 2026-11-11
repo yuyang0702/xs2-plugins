@@ -24,7 +24,8 @@ def document(name):
 
 
 def workflow():
-    return document("workflows/character/definition.json")
+    from runtime_graph import literary_graph
+    return literary_graph(document("workflows/character/definition.json"))
 
 
 def node_map():

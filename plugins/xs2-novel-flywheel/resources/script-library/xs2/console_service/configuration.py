@@ -16,7 +16,7 @@ FIELD_LABELS = {
 def advisor_catalog(catalog):
     """A source index for planning; detailed evidence is reserved for review."""
     fields = {'candidate_id', 'choice_id', 'mechanism', 'title', 'kind', 'layer', 'scopes',
-              'application_scope', 'target_pov', 'source_pov', 'pov_compatibility', 'risk_flags'}
+              'application_scope', 'target_pov', 'source_pov', 'pov_compatibility', 'risk_flags','reading_objectives'}
     result = []
     for library in catalog:
         source = library.get('candidates', {})
@@ -116,6 +116,10 @@ CONFIGURATION_PROMPT = (
 
 ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了“分析并完善设置”。', '本次用户正在与小说顾问讨论方向。') + (
     '本次是正式创作前的小说顾问交流，优先判断这本书写什么、主要看点是什么、适合怎么写。'
+    '先核对作者简报、已备人物和规划资料、已采用方案与本书规则，区分明确选择、已有草案和仍待决定的内容。'
+    '作者已明确人物、主线结构和终局时，只补会影响写作的缺口、矛盾与场景承接，不另起同义方案或替换作者选择。'
+    '资料存在不等于该部分已经完整，终局可在简报中明确，也可由作者选择有意留白。'
+    '作者尚无足够设定或明确要求探索新方向时，照常完整建模并给出可选方案。'
     '除reply和suggestions外，JSON还必须包含advisor_sections对象，其四个核心键均为中文Markdown字符串：'
     'direction（推荐的故事方向，具体主角、目标与故事起点，可给少量备选并明确推荐），'
     'hook（核心看点和读者期待，人物的独立欲望与选择），'

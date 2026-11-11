@@ -1,4 +1,5 @@
 import hashlib
+import json
 import importlib.util
 from pathlib import Path
 
@@ -34,6 +35,17 @@ def test_patch_never_guesses_a_stale_or_ambiguous_anchor(patch):
     with pytest.raises(ValueError):helper().apply_patches(SOURCE,payload(edit(**patch)))
 
 
+def test_bad_anchor_feedback_quotes_actual_frozen_paragraph_without_applying_a_guess():
+    source='对林安来说，门还开着。'
+    data={'source_sha256':hashlib.sha256(source.encode()).hexdigest(),'edits':[{
+        'paragraph_id':'p0001','old':'对林安来来说','occurrence':1,'replacement':'对林安来说'}]}
+    with pytest.raises(ValueError) as failure:helper().apply_patches(source,data)
+    assert source in str(failure.value)
+    assert '对林安来来说' in str(failure.value)
+    assert '逐字' in str(failure.value)
+    assert source=='对林安来说，门还开着。'
+
+
 def test_source_hash_and_overlapping_edits_are_rejected():
     with pytest.raises(ValueError):helper().apply_patches(SOURCE+'改',payload(edit()))
     with pytest.raises(ValueError,match='重叠'):
@@ -61,3 +73,23 @@ def test_expression_candidate_checks_length_before_requesting_an_audit(tmp_path,
     output=run(m,tmp_path,monkeypatch,capsys,'candidate','expression')
     assert 'agent_guard_expression_repair' in output and '600' in output
     assert not (d/'expression-audit-input.json').exists()
+
+
+def test_length_feedback_budget_uses_frozen_source_not_previous_candidate(tmp_path,monkeypatch,capsys):
+    from test_draft_guard import accepted_facts,save,run
+    m,d,_=accepted_facts(tmp_path,monkeypatch,capsys)
+    save(d/'expression-input.json',{'source_body':'甲'*100})
+    binding=json.loads((d/'binding.json').read_text(encoding='utf-8'));binding['target']='150-200'
+    binding['expression_format']='patches'
+    prior={'source_sha256':hashlib.sha256(('甲'*100).encode()).hexdigest(),'edits':[{
+        'paragraph_id':'p0001','old':'甲','occurrence':1,'replacement':'甲'*50}]}
+    save(d/'expression-draft.json',prior)
+    m.reject_candidate(d,'expression',binding,'甲'*149,[{'category':'length'}])
+    feedback=(d/'expression-feedback.md').read_text(encoding='utf-8')
+    assert '"source_word_count": 100' in feedback
+    assert '"net_change_minimum": 50' in feedback
+    assert '"net_change_maximum": 100' in feedback
+    assert '不累计' in feedback
+    assert 'previous_patch' in feedback and '"replacement": "'+('甲'*50)+'"' in feedback
+    (d/'expression-draft.json').unlink()
+    assert json.loads((d/'expression-last-rejected.json').read_text(encoding='utf-8'))['previous_patch']==prior

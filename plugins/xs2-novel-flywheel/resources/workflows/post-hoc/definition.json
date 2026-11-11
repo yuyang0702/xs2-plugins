@@ -1,8 +1,39 @@
 {
   "workflow_id": "post-hoc",
   "name": "章节后验管线",
-  "version": 9,
+  "version": 11,
   "nodes": [
+    {
+      "id": "script_production_start",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "start",
+          "--stage",
+          "post-hoc",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "timeout": 30
+      }
+    },
     {
       "id": "script_story_context",
       "label": "核对前文并读取采用方案",
@@ -32,7 +63,9 @@
           "--policy-alias",
           "pp_character_minor_file={{character_minor_file}}",
           "--policy-alias",
-          "pp_character_state_long_file={{character_state_long_file}}"
+          "pp_character_state_long_file={{character_state_long_file}}",
+          "--archive-observation",
+          "--emit-effective-context"
         ]
       },
       "auto_flow": false,
@@ -79,7 +112,7 @@
       "node_type": "agent",
       "agent_type": "novel-chapter-observer",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "运行章节观察。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== 章节正文 ====\n{{chapter_file}}\n\n==== 世界状态 ====\n{{world_state_file}}\n\n==== 世界事件 ====\n{{world_events_file}}\n\n==== 单章指导 ====\n{{pp_guide_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 长线角色状态 ====\n{{pp_character_state_long_file}}\n\n==== 次要角色库 ====\n{{pp_character_minor_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{pp_learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；如与已确认事实冲突，明确报错或保留冲突供作者选择，不悄悄忽略方案，也不把未写的计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n本章待写伏笔/债务计划（可能未实际发生）：story/{{chapter_number}}/planned_hooks.json、story/{{chapter_number}}/planned_debts.json；存在则读取，不存在则按正文与已确认账本分析。实际回收必须有完整正文依据。\n\n正文档案的 evidence 必须逐字复制连续原文，包括代词与标点，禁止用人名替换“她/他”或拼接不连续原句。引用不同段落时返回数组。没有核实的世界事实不进入已确认档案。章纲里的编号首次进入正文时用 plant，不把计划当作已发生。\n\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n运行章节观察。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== 章节正文 ====\n{{chapter_file}}\n\n==== 世界状态 ====\n{{world_state_file}}\n\n==== 世界事件 ====\n{{world_events_file}}\n\n==== 单章指导 ====\n{{pp_guide_file}}\n\n==== 伏笔列表 ====\n{{hooks_file}}\n\n==== 叙事债务 ====\n{{debts_file}}\n\n==== 长线角色状态 ====\n{{pp_character_state_long_file}}\n\n==== 次要角色库 ====\n{{pp_character_minor_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{pp_learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；如与已确认事实冲突，明确报错或保留冲突供作者选择，不悄悄忽略方案，也不把未写的计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n本章待写伏笔/债务计划（可能未实际发生）：story/{{chapter_number}}/planned_hooks.json、story/{{chapter_number}}/planned_debts.json；存在则读取，不存在则按正文与已确认账本分析。实际回收必须有完整正文依据。\n\n正文档案的 evidence 必须逐字复制连续原文，包括代词与标点，禁止用人名替换“她/他”或拼接不连续原句。引用不同段落时返回数组。没有核实的世界事实不进入已确认档案。章纲里的编号首次进入正文时用 plant，不把计划当作已发生。\n\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}",
       "position": {
         "x": 230,
         "y": 270
@@ -92,7 +125,7 @@
       "enable_reject_upstream": false,
       "max_reject_count": 3,
       "save_output_to_file": true,
-      "output_file_path": "cache/observer/obs_output.json",
+      "output_file_path": "{{archive_observer_path}}",
       "sub_workflow_params": {},
       "auto_retry_count": 2,
       "auto_retry_interval_seconds": 5,
@@ -104,7 +137,7 @@
       "node_type": "agent",
       "agent_type": "novel-arbiter",
       "system_prompt_template": "{{prose_policy_prompt}}",
-      "first_message": "运行后验裁决。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== Observer 差异报告 ====\n{{obs_output_file}}\n\n==== 现有伏笔 ====\n{{hooks_file}}\n\n==== 现有叙事债务 ====\n{{debts_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{pp_learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；如与已确认事实冲突，明确报错或保留冲突供作者选择，不悄悄忽略方案，也不把未写的计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n本章待写伏笔/债务计划（可能未实际发生）：story/{{chapter_number}}/planned_hooks.json、story/{{chapter_number}}/planned_debts.json；存在则读取，不存在则按正文与已确认账本分析。实际回收必须有完整正文依据。\n\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n运行后验裁决。本章：{{chapter_number}}。直接输出纯 JSON，引擎自动保存。\n\n==== Observer 差异报告 ====\n{{obs_output_file}}\n\n==== 现有伏笔 ====\n{{hooks_file}}\n\n==== 现有叙事债务 ====\n{{debts_file}}\n\n==== 世界观基础 ====\n{{world_foundation_file}}\n\n输出语言：{{language}}。\n\n==== 用户确认的参考机制 ====\n{{pp_learning_context}}\n\n仅使用其中的抽象机制指导结构、节奏和检查。不得复制来源作品的具体人物、事件、句子或包装。\n\n==== 叙事视角契约 ====\n人称基线：{{narrative_pov}}；叙述权限和有意视角转换遵循本书已确认的世界与文风约定。全知、变换视角、不可靠叙述或局部第一人称独白，依本书选择使用，不能只凭人称参数判为越界。仅在本书明确选择限知时约束当前焦点的叙述信息；无论采用何种叙述方式，人物行动仍须基于他实际可知或有据推断的信息。规划、正文、润色和审核使用同一约定。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n\n\n==== 共同故事上下文与已采用剧情方案 ====\n{{story_support_context}}\n已采用章节方案必须落实进现有单章指导/意图卡片/正文；如与已确认事实冲突，明确报错或保留冲突供作者选择，不悄悄忽略方案，也不把未写的计划记成已发生事实。\n\n\n==== 世界、人物与阅读体验的共同约定 ====\n以既有规则、人物各自目标、资源利益、信息差、关系、制度、时间和行动后果为依据，按题材选相关因素，不把所有作品套成末日或全员算计。配角可以合作、隐瞒、拒绝或坚持原则；不在镜头中也有自己的生活与目标，但无触发条件不强行新增事件。人物所知与作者设定分开，世界自主演进不能越过因果和能力限制。\n爽点按读者期待设计有依据的兑现，可为脱险、智胜、认可、真相、关系选择；不执行固定打脸、高潮、句式、段落或字数间隔配额。主要场景呈现目标、压力、选择、转折、代价与情感落点，例行过程可概述；安静场景可以建立关系或消化后果。人物不是规章解说员，描写从他此刻所知、所怕、所求出发。\n用户确认的风格基线和已采用写法优先，未采用候选不能自动替换；没有蒸馏照常原创。短篇完成核心故事，长篇普通章只按局部推进，不把批次最后章误作全书终章。\n\n本章待写伏笔/债务计划（可能未实际发生）：story/{{chapter_number}}/planned_hooks.json、story/{{chapter_number}}/planned_debts.json；存在则读取，不存在则按正文与已确认账本分析。实际回收必须有完整正文依据。\n\n【本书世界与文风：优先于通用表达建议，不作为逐条复述清单】\n{{book_contract_file}}\n\n本次远距检索、别名与认知约束均在共同上下文内。按后验格式将有依据的身份裁决和事实/认知增量写入 identity_rulings、memory_events；没有新增项则空数组。不得把作者目录、待写计划或人物误信升级为客观事实。\n\n若下列正文已提供，观察候选来自同版正文的可信归档。仍须独立通读当前全文，核对全部候选事实及未覆盖的变化、角色认知和矛盾。任何旧观察均不能代替当前裁决。\n==== 观察复用时的完整当前正文 ====\n{{archive_reuse_body_file}}",
       "position": {
         "x": 450,
         "y": 130
@@ -117,7 +150,7 @@
       "enable_reject_upstream": false,
       "max_reject_count": 3,
       "save_output_to_file": true,
-      "output_file_path": "cache/arbiter/arb_output.json",
+      "output_file_path": "{{archive_arbiter_path}}",
       "sub_workflow_params": {},
       "auto_retry_count": 2,
       "auto_retry_interval_seconds": 5,
@@ -139,7 +172,7 @@
         "script_source": "library",
         "script_type": "python",
         "script_name": "local_archive",
-        "script_args": "post-hoc --chapter {{chapter_number}}",
+        "script_args": "post-hoc --chapter {{chapter_number}} --observer {{archive_observer_path}} --arbiter {{archive_arbiter_path}}",
         "timeout": 30,
         "script_group": "nvl"
       },
@@ -262,12 +295,157 @@
         "enable_reject_upstream": true,
         "timeout": 30
       }
+    },
+    {
+      "id": "script_production_finish",
+      "label": "核对执行凭据",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "finish",
+          "--stage",
+          "post-hoc",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_obs",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "post-hoc",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_obs"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_budget_agent_arb",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "post-hoc",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_arb"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "script_reuse_observation",
+      "label": "检查已验证的章节观察",
+      "node_type": "script",
+      "agent_type": "default",
+      "auto_flow": true,
+      "position": {
+        "x": 250,
+        "y": 510
+      },
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_argv": [
+          "reuse-observation",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "enable_reject_upstream": false,
+        "timeout": 60
+      }
+    },
+    {
+      "id": "script_validate_cached_observation",
+      "label": "复核观察来源",
+      "node_type": "script",
+      "agent_type": "default",
+      "auto_flow": true,
+      "position": {
+        "x": 450,
+        "y": 510
+      },
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "xs2",
+        "script_name": "story_support",
+        "script_argv": [
+          "validate-cached-observation",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "enable_reject_upstream": false,
+        "timeout": 60
+      }
     }
   ],
   "edges": [
     {
       "id": "edge-start-sync_down",
-      "source": "__start__",
+      "source": "script_production_start",
       "target": "script_story_context"
     },
     {
@@ -301,16 +479,62 @@
     },
     {
       "source": "script_review_source",
-      "target": "agent_obs"
+      "target": "script_reuse_observation"
     },
     {
       "source": "script_confirm_archive",
-      "target": "__end__"
+      "target": "script_production_finish"
     },
     {
       "id": "edge-verified-observation-agent_arb",
       "source": "script_validate_observation",
+      "target": "script_budget_agent_arb"
+    },
+    {
+      "source": "__start__",
+      "target": "script_production_start"
+    },
+    {
+      "source": "script_production_finish",
+      "target": "__end__"
+    },
+    {
+      "source": "script_budget_agent_obs",
+      "target": "agent_obs"
+    },
+    {
+      "source": "script_budget_agent_arb",
       "target": "agent_arb"
+    },
+    {
+      "id": "edge-script_reuse_observation-gw_archive_observation_reused",
+      "source": "script_reuse_observation",
+      "target": "gw_archive_observation_reused"
+    },
+    {
+      "id": "edge-gw_archive_observation_reused-script_validate_cached_observation",
+      "source": "gw_archive_observation_reused",
+      "target": "script_validate_cached_observation",
+      "condition": {
+        "expression": "{{archive_observation_reused}} == yes",
+        "label": "复用",
+        "is_default": false
+      }
+    },
+    {
+      "id": "edge-gw_archive_observation_reused-agent_obs",
+      "source": "gw_archive_observation_reused",
+      "target": "script_budget_agent_obs",
+      "condition": {
+        "expression": "",
+        "label": "重新观察",
+        "is_default": true
+      }
+    },
+    {
+      "id": "edge-script_validate_cached_observation-script_budget_agent_arb",
+      "source": "script_validate_cached_observation",
+      "target": "script_budget_agent_arb"
     }
   ],
   "variables": [
@@ -438,11 +662,11 @@
       "key": "obs_output_file",
       "name": "Observer 产出",
       "type": "file",
-      "default": "cache/observer/obs_output.json",
+      "default": "",
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -486,7 +710,7 @@
       "key": "story_support_context",
       "name": "共同故事上下文",
       "type": "file",
-      "source_type": "input",
+      "source_type": "output",
       "default": "cache/story-support/context.md",
       "required": false,
       "hidden": true
@@ -499,7 +723,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -511,7 +735,7 @@
       "required": false,
       "description": "用户确认后的抽象创作机制；没有选择时为空",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -522,7 +746,7 @@
       "default": " ",
       "required": false,
       "hidden": true,
-      "source_type": "input"
+      "source_type": "output"
     },
     {
       "key": "prose_policy_runtime",
@@ -531,7 +755,7 @@
       "default": " ",
       "required": false,
       "hidden": true,
-      "source_type": "input"
+      "source_type": "output"
     },
     {
       "key": "pp_character_minor_file",
@@ -541,7 +765,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -553,7 +777,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -589,9 +813,55 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": false
+    },
+    {
+      "key": "archive_observer_path",
+      "name": "archive_observer_path",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": true,
+      "source_type": "output"
+    },
+    {
+      "key": "archive_arbiter_path",
+      "name": "archive_arbiter_path",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": true,
+      "source_type": "output"
+    },
+    {
+      "key": "archive_observation_reused",
+      "name": "是否复用已验证观察",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "hidden": true,
+      "source_type": "output"
+    },
+    {
+      "key": "archive_reuse_body_file",
+      "name": "复用时供独立复核的当前正文",
+      "type": "file",
+      "default": "",
+      "required": false,
+      "hidden": true,
+      "source_type": "output"
     }
   ],
-  "gateways": [],
+  "gateways": [
+    {
+      "id": "gw_archive_observation_reused",
+      "gateway_type": "condition",
+      "label": "是否复用已验证观察",
+      "position": {
+        "x": 350,
+        "y": 510
+      }
+    }
+  ],
   "execution_schemes": [],
   "start_position": {
     "x": 300,

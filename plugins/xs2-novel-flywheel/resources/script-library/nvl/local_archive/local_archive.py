@@ -2,17 +2,20 @@
 """Manage Bishu's file-only workspace archive.
 
 The current workflow workspace is the single source of truth. This helper only
-validates, combines, renders, and indexes files below that workspace; it never
-opens a database or creates an external identifier.
+validates, combines, renders, and indexes files below that workspace. Canonical
+rendering uses the plugin's existing archive database publication lock.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import tempfile
+from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -50,6 +53,15 @@ def _policy():
     return module
 
 
+@lru_cache(maxsize=1)
+def _execution_guard():
+    # _policy resolves the exact xs2 sibling in source and prepared layouts.
+    entry=Path(_policy().__file__).resolve().parents[1]/'production_guard/production_guard.py'
+    spec=importlib.util.spec_from_file_location('xs2_archive_render_execution_guard',entry)
+    guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
+    return guard
+
+
 def _workspace_path(raw_path: str) -> Path:
     path = Path(raw_path)
     if path.is_absolute() or ".." in path.parts:
@@ -82,7 +94,12 @@ def _write_json(raw_path: str, value: Any) -> None:
 def _write_text(raw_path: str, value: str) -> None:
     path = _workspace_path(raw_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value.rstrip() + "\n", encoding="utf-8")
+    fd,temporary=tempfile.mkstemp(prefix='.render-',suffix='.tmp',dir=path.parent)
+    try:
+        with os.fdopen(fd,'w',encoding='utf-8') as stream:
+            stream.write(value.rstrip()+'\n');stream.flush();os.fsync(stream.fileno())
+        os.replace(temporary,path)
+    finally:Path(temporary).unlink(missing_ok=True)
 
 
 def _require_files(raw_paths: str) -> None:
@@ -155,8 +172,29 @@ def _build_world_cache() -> None:
             data.get(dimension, data) if isinstance(data, dict) else data
         )
     if missing:
+        if len(missing)==len(WORLD_DIMENSIONS):
+            source=_markdown_source('meta/world_foundation.md')
+            if source:
+                _write_json('cache/sync/world.json',{'source_format':'author_markdown','foundation':source,
+                    'boundary':'原有文字设定，不是假装齐全的六维结构。未声明细节保持未知，不能据此改变本书规则。'})
+                return
         raise FileNotFoundError("世界观存档不完整: " + ", ".join(missing))
     _write_json("cache/sync/world.json", combined)
+
+
+def _markdown_source(relative):
+    file=_workspace_path(relative)
+    if not file.is_file():return None
+    text=file.read_text(encoding='utf-8')
+    if not text.strip():return None
+    return {'source_id':relative,'sha256':hashlib.sha256(file.read_bytes()).hexdigest(),'text':text}
+
+
+@lru_cache(maxsize=1)
+def _story_support():
+    entry=Path(_policy().__file__).resolve().parents[1]/'story_support/story_support.py'
+    spec=importlib.util.spec_from_file_location('xs2_managed_archive_source',entry)
+    support=importlib.util.module_from_spec(spec);spec.loader.exec_module(support);return support
 
 
 def _named_items(value: Any, key: str) -> dict[str, dict[str, Any]]:
@@ -176,6 +214,13 @@ def _named_items(value: Any, key: str) -> dict[str, dict[str, Any]]:
 
 
 def _build_character_cache(policy_runtime="", policy_characters_file="") -> None:
+    if not _workspace_path('cache/character/skeleton.json').is_file():
+        profiles=_markdown_source('meta/character_profiles.md')
+        if profiles:
+            _write_json('cache/sync/characters.json',{'source_format':'author_markdown','profiles':profiles,
+                'voice':_markdown_source('meta/character_voice.md'),
+                'boundary':'原有角色文字资料；不冒充已提取的完整人物列表。人物实际状态与认知须结合可信前文核对。'})
+            return
     skeleton = _read_json("cache/character/skeleton.json")
     if not isinstance(skeleton, dict) or not isinstance(
         skeleton.get("characters"), list
@@ -232,6 +277,17 @@ def _effective_character_cache(directory, voice_document, characters):
 
 
 def _render_near_term_context(policy_runtime="", policy_near_term_file="") -> None:
+    project=_workspace_path('.novel-project.json')
+    if project.is_file():
+        state=_read_json('.novel-project.json');number=str(state.get('values',{}).get('chapter_number','0001')).zfill(4)
+        plan_file=f'planning/chapters/{number}.json'
+        if re.fullmatch(r'[0-9]{4}',number) and _workspace_path(plan_file).is_file():
+            plan=_read_json(plan_file)
+            if isinstance(plan,dict) and plan.get('origin')=='rolling':
+                support=_story_support()
+                if not support.serial().need_plan(Path.cwd(),number).get('ready'):raise ValueError('当前滚动计划已失效，不能使用旧近期缓存代替')
+                _write_text('cache/sync/near_term_we.md','# 当前章采用计划（待写意图，不是已发生事实）\n\n'+support.render_plan(plan))
+                return
     source_path = _workspace_path("cache/no/near_term.json")
     if source_path.is_file():
         data = _read_json("cache/no/near_term.json")
@@ -321,13 +377,26 @@ def _render_files(inputs: str, outputs: str) -> int:
     output_paths = _split_paths(outputs)
     if len(input_paths) != len(output_paths):
         raise ValueError("--inputs 与 --outputs 数量必须一致")
-    for input_path, output_path in zip(input_paths, output_paths, strict=True):
-        data = _read_json(input_path)
-        _write_text(output_path, _render_document(input_path, data))
+    boundary=(_execution_guard().publication(Path.cwd())
+              if os.environ.get('TASK_ID') and os.environ.get('WORKFLOW_ID') else nullcontext(None))
+    with boundary:
+        rendered=[(output_path,_render_document(input_path,_read_json(input_path)))
+                  for input_path,output_path in zip(input_paths,output_paths,strict=True)]
+        for output_path,text in rendered:
+            _workspace_path(output_path)  # Validate every destination before the first replacement.
+        for output_path,text in rendered:_write_text(output_path,text)
     return len(input_paths)
 
 
 def _render_indexes() -> None:
+    root=Path.cwd()
+    if (root/'archive/longform.sqlite3').is_file():
+        support=_story_support();states,_=support.confirmed(root)
+        if any(state.get('archive_commit_id') for state in states):
+            # P0 owns these derived views. Reuse its canonical renderer so
+            # preparation cannot invalidate plans merely by reformatting them.
+            support.refresh_archive(root)
+            return
     _render_files(
         "archive/hooks.json,archive/debts.json",
         "meta/hooks.md,meta/debts.md",
@@ -381,8 +450,8 @@ def _checkpoint(args: argparse.Namespace) -> None:
 
 def _post_hoc(args: argparse.Namespace) -> None:
     chapter = _normalize_chapter(args.chapter)
-    arbiter = _read_json("cache/arbiter/arb_output.json")
-    observer = _read_json("cache/observer/obs_output.json")
+    arbiter = _read_json(args.arbiter)
+    observer = _read_json(args.observer)
     if not isinstance(arbiter, dict) or not isinstance(observer, dict):
         raise ValueError("后验输出必须是 JSON 对象")
 
@@ -447,6 +516,8 @@ def _parser() -> argparse.ArgumentParser:
 
     post_hoc = commands.add_parser("post-hoc", help="归档章节后验结果")
     post_hoc.add_argument("--chapter", required=True, help="章节号")
+    post_hoc.add_argument('--observer', default='cache/observer/obs_output.json')
+    post_hoc.add_argument('--arbiter', default='cache/arbiter/arb_output.json')
     post_hoc.set_defaults(handler=_post_hoc)
     return parser
 

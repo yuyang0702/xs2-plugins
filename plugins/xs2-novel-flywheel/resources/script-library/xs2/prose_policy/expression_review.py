@@ -3,13 +3,14 @@ import copy
 
 DIMENSIONS=('semantic_increment','constraint_transcription','imagery_function','dialogue_function','ending_function','voice_alignment')
 CATEGORIES=('action_dilation','object_inventory','scripted_dialogue','semantic_redundancy',
-            'generic_imagery','explanatory_psychology','ending_overstatement','constraint_transcription','voice_flattening')
+            'generic_imagery','explanatory_psychology','ending_overstatement','constraint_transcription','voice_flattening','unnecessary_precision')
 
 GUIDANCE='''逐项提交expression_checks，每项包含dimension、status(pass/issue/not_applicable)、excerpts、reason、style_basis、issue_ids。
 维度：semantic_increment核对相邻动作、对白、心理、比喻与总结是否重复同一信息；constraint_transcription核对后台账本、选择分析或修订意见是否被直译进正文；imagery_function判断意象与此人此景的关系；dialogue_function判断对话在当前交流中的作用；ending_function判断结尾是否再次解释已完成的选择；voice_alignment核对本书声线与修改前的有效表达。
 每项解释实际阅读作用，并联系本书风格。pass也给当前原文依据，不能只说本书允许就免检；issue必须指向实际issues编号，并说明已成立的信息、此处是否有新变化及影响。无对应内容才用not_applicable，voice_alignment始终适用。引用可选当前evidence_catalog编号。
 有意回环、议论、心理、技术说明、华丽意象、全知与安静场景可以成立。比喻多、语句整齐或出现某个词不构成问题；风格允许也不能为同义复述自动免责。不要以第三方检测分数、禁词、标点或固定句长判断质量。
-检查解决问题的净效果：补动机不能变成替人物答辩，补技术因果不能变成完整科普，删去重复不能换成同义说明或无关动作填回。保留充分的读者理解依据，不能为含蓄隐去真实争点。'''
+检查解决问题的净效果：补动机不能变成替人物答辩，补技术因果不能变成完整科普，删去重复不能换成同义说明或无关动作填回。保留充分的读者理解依据，不能为含蓄隐去真实争点。
+在semantic_increment和voice_alignment中核对精确计数的叙事作用；无用计数可用unnecessary_precision类别给逐字依据、影响和局部目标。金额、期限、技术规则、资源账、人物计数习惯、夸张或本书风格需要的数字应保留；不设数字上限，不把数字多当成质量失败。'''
 
 
 def schema(excerpt_schema=None):

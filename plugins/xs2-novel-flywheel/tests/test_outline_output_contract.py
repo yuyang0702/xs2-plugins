@@ -5,7 +5,7 @@ from pathlib import Path
 def test_outline_declares_current_turn_structured_output_contract():
     definition = json.loads((Path(__file__).parents[1] / "resources/workflows/outline/definition.json").read_text(encoding="utf-8"))
     agents = [node for node in definition["nodes"] if node["node_type"] == "agent"]
-    assert {node["id"] for node in agents} == {"agent_vo", "agent_no"}
+    assert {node["id"] for node in agents} == {"agent_vo", "agent_no", "agent_rolling_plan", "agent_rolling_review"}
     for node in agents:
         assert node["auto_flow"] is True
         assert node["enable_complete_node_task"] is False

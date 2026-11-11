@@ -62,6 +62,23 @@ def test_book_defined_units_and_ledger_close_without_float_rounding():
     body,report=evidence();assert m.audit_issues(report,body,c,'facts')==[]
 
 
+def test_reuse_exact_arithmetic_still_checks_new_body_event_order():
+    m=module();c=contract();body,report=evidence()
+    first=m.Arithmetic(m.amount)
+    assert m.audit_issues(report,body,c,'facts',arithmetic=first)==[]
+    revised='风过河面。'+body
+    report['candidate_sha256']=hashlib.sha256(revised.encode()).hexdigest()
+    def unexpected_parse(*args):
+        pytest.fail('unchanged arithmetic should use the validated exact quote')
+    second=m.Arithmetic(unexpected_parse,first.values)
+    assert m.audit_issues(report,revised,c,'facts',arithmetic=second)==[]
+    assert second.hits and not second.misses
+    wrong=revised.replace('她点收六两。她交清灯','她交清灯。她点收六两')
+    report['candidate_sha256']=hashlib.sha256(wrong.encode()).hexdigest()
+    with pytest.raises(ValueError,match='事件凭据位置反向'):
+        m.audit_issues(report,wrong,c,'facts',arithmetic=second)
+
+
 @pytest.mark.parametrize('patch',[{'amount':1020},{'balance':4980},{'amount':True},{'scene':3}])
 def test_invalid_planned_transfer_never_becomes_the_shared_truth(patch):
     c=contract();c['transfers'][1].update(patch)
@@ -92,7 +109,19 @@ def test_missing_payment_observation_cannot_hide_an_underpayment():
 def test_goods_handover_before_receipt_is_rejected_from_text_positions():
     body,report=evidence();body=body.replace('她点收六两。她交清灯','她交清灯。她点收六两')
     report['candidate_sha256']=hashlib.sha256(body.encode()).hexdigest()
+    with pytest.raises(ValueError,match='首次|复述|凭据'):module().audit_issues(report,body,contract(),'facts')
+    report['issues']=[{'category':'handoff','reason':'receive 必须先于 handover，但实际交付反序',
+        'excerpts':['她交清灯','她点收六两'],'goal':'按本书已有承接条件修正实际履行顺序'}]
     assert any(i['category']=='handoff' for i in module().audit_issues(report,body,contract(),'facts'))
+
+
+def test_late_restatement_is_not_automatically_a_body_order_error():
+    body,report=evidence();body+='她又想起她点收六两时的迟疑。'
+    report['candidate_sha256']=hashlib.sha256(body.encode()).hexdigest()
+    report['event_observations'][2]['quote']={'text':'她点收六两','occurrence':2}
+    with pytest.raises(ValueError,match='首次|复述'):module().audit_issues(report,body,contract(),'facts')
+    report['event_observations'][2]['quote']['occurrence']=1
+    assert module().audit_issues(report,body,contract(),'facts')==[]
 
 
 def test_wrong_shop_observation_cannot_claim_canonical_value():

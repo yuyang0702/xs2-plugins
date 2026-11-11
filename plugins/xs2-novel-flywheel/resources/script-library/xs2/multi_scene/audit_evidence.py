@@ -5,7 +5,11 @@ ZERO_PATTERN=r'(?<![^\s，。：:“「『（(])(?:零|0)(?=$|[，。！？；\s
 
 
 def unit_names(contract):
-    return dict.fromkeys([*contract.get('units',{}),*(u for r in contract.get('resource_ledgers',[]) for u in r['units'])],1)
+    import importlib.util
+    from pathlib import Path
+    spec=importlib.util.spec_from_file_location('catalog_scoped_units',Path(__file__).with_name('continuity_contract.py'))
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value)
+    return value.evidence_unit_names(contract)
 
 
 def _occurrence(body,text,start):

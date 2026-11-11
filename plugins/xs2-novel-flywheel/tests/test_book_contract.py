@@ -100,7 +100,13 @@ def test_writing_contextual_review_and_revision_share_the_contract_file():
         assert any(v['key']=='book_contract_file' and v['type']=='file' for v in d['variables'])
         for n in d['nodes']:
             if n['node_type']=='agent' and 'blind' not in n['id']:
-                assert '{{book_contract_file}}' in n['first_message'],(stage,n['id'])
+                model_views={'agent_sc':'revision_source_model','agent_pl':'revision_editor_model','agent_local_review':'revision_review_model',
+                    'agent_composition_plan':'composition_request_model','agent_composition_review':'composition_review_model',
+                    'agent_guard_facts_repair':'guard_facts_model','agent_guard_facts_audit':'guard_facts_audit_model',
+                    'agent_guard_expression_repair':'guard_expression_model','agent_guard_expression_audit':'guard_expression_audit_model'}
+                if n['id'] in model_views:
+                    assert '{{'+model_views[n['id']]+'}}' in n['first_message'] and 'book_contract' in n['first_message']
+                else:assert '{{book_contract_file}}' in n['first_message'],(stage,n['id'])
 
 
 def test_declared_refrain_and_variable_narration_are_not_scene_regex_errors():

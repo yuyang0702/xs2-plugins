@@ -28,6 +28,12 @@ def policy():
     value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
 
 
+@lru_cache(maxsize=1)
+def reading():
+    spec=importlib.util.spec_from_file_location('book_reading_contract',Path(__file__).with_name('reading_contract.py'))
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
+
 def resolve(root,project=None):
     root=Path(root).resolve();state=read(safe(root,'.novel-project.json')) if safe(root,'.novel-project.json').is_file() else {}
     values=state.get('values',{})
@@ -55,12 +61,16 @@ def resolve(root,project=None):
         if source.is_file():
             text=policy().effective_text(root,name)
             result[key].append({'path':name,'text':text,'sha256':hashlib.sha256(text.encode()).hexdigest()})
+    selected=reading().for_book(root)
+    if selected:result['reading_contract']=selected
     return result
 
 
 def public_style(contract):
-    return {k:contract[k] for k in ('genre','narrative_pov','narrator_scope','style_intent','intentional_devices',
+    result={k:contract[k] for k in ('genre','narrative_pov','narrator_scope','style_intent','intentional_devices',
                                    'protected_phrases','allow_repeated_passages','style_sources','prose_preference')}
+    if contract.get('reading_contract'):result['reading_contract']=reading().public(contract['reading_contract'])
+    return result
 
 
 def prompt(contract):
@@ -68,7 +78,8 @@ def prompt(contract):
         '\n按本书已声明的世界规则、叙述权限和表达目标写作与判断。题材不自动决定文风。未指定时保留已有声音，不默认限知或克制白描。'
         '全知、变换视角、不可靠叙述、抒情、复沓、象征、心理和技术说明可按本书约定发挥作用；人物所知仍与叙述者所知区分。'
         '规则用于后台核对，不要求在正文反复解释。判断重复须说明是否增加情绪、节奏、意象、信息或关系意义。'
-        '只有无意矛盾和没有相应功能的复述才需修正，不靠统一句式、动作密度或检测分数改造文风。\n')
+        '只有无意矛盾和没有相应功能的复述才需修正，不靠统一句式、动作密度或检测分数改造文风。\n'+
+        ('\n'+reading().GUIDANCE+'\n' if contract.get('reading_contract') else ''))
 
 
 def freeze(root,task_id,project=None):

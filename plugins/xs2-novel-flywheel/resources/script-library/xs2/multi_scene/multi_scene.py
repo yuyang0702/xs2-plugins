@@ -30,6 +30,12 @@ _FIRST = re.compile(r'(?m)(?:^\s*|[。！？!?；;：:]\s*)(?:我(?:们)?|俺|�
 _SLOT = re.compile(r'\[SLOT(?:_|\s|\])', re.I)
 
 
+
+def _guarded_rejection(message):
+    spec=importlib.util.spec_from_file_location('plugin_rejection_transport',Path(__file__).resolve().parents[1]/'production_guard/rejections.py')
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value)
+    return value.emit(message)
+
 def budgets(target, weights=None):
     return allocation_policy.weighted_bounds(length.target_range(target), WEIGHTS if weights is None else weights)
 
@@ -174,6 +180,11 @@ def planning_sources(root, chapter, policy_runtime='', task_id=None):
         values=read_json(project).get('values',{})
         parts.append('## 作者当前要求\n'+'\n'.join(str(values.get(k) or '') for k in ('premise','human_intent','world_intent','advisor_guidance')))
     parts.append(book_policy.prompt(book_policy.resolve(root)))
+    entry=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
+    spec=importlib.util.spec_from_file_location('scene_composition_budget',entry)
+    composer=importlib.util.module_from_spec(spec);spec.loader.exec_module(composer)
+    quota=composer.current(root,chapter)
+    if quota:parts.append('## 已独立审核的篇幅与阅读作用规划（意图，不是已发生事实）\n'+json.dumps(quota['plan'],ensure_ascii=False,indent=2))
     return '\n\n'.join(parts)
 
 
@@ -285,7 +296,7 @@ def accept_scene_attempt(directory, index, incoming, minimum, maximum, pov):
 
 
 def retry(node, reason):
-    print(f'<WF_REJECT_UPSTREAM target="{node}">{reason}</WF_REJECT_UPSTREAM>')
+    _guarded_rejection(f'<WF_REJECT_UPSTREAM target="{node}">{reason}</WF_REJECT_UPSTREAM>')
 
 
 def main():

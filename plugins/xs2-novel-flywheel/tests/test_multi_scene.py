@@ -1,3 +1,4 @@
+from runtime_graph import literary_graph
 import importlib.util
 import json
 from pathlib import Path
@@ -33,7 +34,7 @@ def test_assembly_refuses_short_duplicate_and_shifted_pov():
 
 
 def test_normal_mvp_routes_all_scene_writers_through_gate_before_body():
-    definition = json.loads((PLUGIN / 'resources/workflows/mvp/definition.json').read_text(encoding='utf8'))
+    definition = literary_graph(json.loads((PLUGIN / 'resources/workflows/mvp/definition.json').read_text(encoding='utf8')))
     nodes = {n['id']: n for n in definition['nodes']}
     assert '2000' not in str(nodes['agent_nw'].get('node_params'))
     edges = {(e['source'], e['target']) for e in definition['edges']}
@@ -152,7 +153,7 @@ def test_reset_scene_preserves_other_scenes_and_archives_failed_seed(tmp_path):
 
 def test_scene_specific_contract_follows_background_and_target_is_inside_budget(tmp_path, monkeypatch, capsys):
     m = module()
-    definition = json.loads((PLUGIN / 'resources/workflows/mvp/definition.json').read_bytes())
+    definition = literary_graph(json.loads((PLUGIN / 'resources/workflows/mvp/definition.json').read_bytes()))
     for node in definition['nodes']:
         if node.get('agent_type') == 'novel-multi-scene-writer':
             prompt = node['first_message']
