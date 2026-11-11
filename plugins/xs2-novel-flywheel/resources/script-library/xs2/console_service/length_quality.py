@@ -19,6 +19,10 @@ _WORD = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 _TITLE = re.compile(r'^第[一二三四五六七八九十百千零〇两0-9]+[章回节卷](?:\s|[·：:、.]).*$|^第[一二三四五六七八九十百千零〇两0-9]+[章回节卷]$')
 _BOOK_SPEC=importlib.util.spec_from_file_location('length_book_contract',Path(__file__).resolve().parents[1]/'prose_policy/book_contract.py')
 book_rules=importlib.util.module_from_spec(_BOOK_SPEC);_BOOK_SPEC.loader.exec_module(book_rules)
+_EXPRESSION_SPEC = importlib.util.spec_from_file_location('length_expression_policy',
+    Path(__file__).resolve().parents[1]/'prose_policy/expression_review.py')
+expression_rules = importlib.util.module_from_spec(_EXPRESSION_SPEC)
+_EXPRESSION_SPEC.loader.exec_module(expression_rules)
 
 
 def safe_path(root, relative):
@@ -241,6 +245,7 @@ def expression_gate(report, body):
         if (not isinstance(excerpts, list) or not excerpts
                 or any(not isinstance(quote, str) or not quote.strip() or quote not in body for quote in excerpts)):
             raise ValueError('表达审稿引用须为当前正文中连续存在的原句，不能拼接或改述')
+        expression_rules.validate_narrative_issue(item)
         blocking = blocking or item['priority'] in {'medium', 'high'}
         # Idempotent: this report is checked both at publication and dispatch.
         merged = dict(item, source='expression_review')
@@ -909,7 +914,9 @@ def fragment_expression_issues(report, candidate, context_regions=()):
     blocking = []
     for issue in review['issues']:
         if (not isinstance(issue, dict)
-                or issue.get('category') not in ('action_dilation', 'object_inventory', 'scripted_dialogue', 'semantic_redundancy')
+                or issue.get('category') not in (
+                    'action_dilation', 'object_inventory', 'scripted_dialogue', 'semantic_redundancy',
+                    'turning_point_summary', *expression_rules.STAGED_PROBLEMS)
                 or issue.get('priority') not in ('low', 'medium', 'high')
                 or any(not isinstance(issue.get(key), str) or not issue[key].strip() for key in ('impact', 'goal'))
                 or not isinstance(issue.get('excerpts'), list) or not issue['excerpts']
@@ -920,6 +927,7 @@ def fragment_expression_issues(report, candidate, context_regions=()):
                 or any(not isinstance(quote, str) or not quote.strip()
                        or not any(quote in region for region in context_regions) for quote in contextual)):
             raise ValueError('片段表达审查上下文引文不在冻结选区外的连续正文中，未发布')
+        expression_rules.validate_narrative_issue(issue, contextual)
         if issue['priority'] in {'medium', 'high'}:
             blocking.append(issue['category']+': '+issue['impact']+'；修复目标：'+issue['goal'])
     if (review['verdict'] == 'revise') != bool(blocking):

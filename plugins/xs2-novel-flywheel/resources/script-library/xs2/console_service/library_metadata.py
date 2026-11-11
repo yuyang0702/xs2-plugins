@@ -59,7 +59,9 @@ def library_metadata(manifest, profile, candidates):
         target.update(views)
         incomplete = incomplete or is_mixed or is_unknown
     target_status = ('partial' if incomplete else 'known') if target else 'unknown'
-    return {**manifest, 'pov_metadata': {
+    reading={'learning_direction':profile.get('learning_direction','general'),
+        'reading_objective_count':sum(len(row.get('reading_objectives',[])) for row in entries if isinstance(row.get('reading_objectives',[]),list))}
+    return {**manifest, **reading,'pov_metadata': {
         'source_pov': sorted(source), 'source_status': source_status, 'source_basis': basis,
         'target_pov': sorted(target), 'target_status': target_status,
     }}

@@ -7,6 +7,7 @@ import re
 
 
 def logical_step(target):
+    if target in ('agent_opening_lead','agent_opening_lead_review'):return 'opening-lead'
     if target.startswith('agent_composition_'):return 'composition'
     if target.startswith('agent_guard_'):return 'draft-review'
     if target in ('agent_sc','agent_pl','agent_local_review'):return 'local-revision'

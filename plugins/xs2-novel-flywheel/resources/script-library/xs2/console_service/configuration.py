@@ -10,7 +10,15 @@ FIELD_LABELS = {
     'foreshadowing_count': '伏笔数量', 'human_intent': '本章想写什么',
     'world_intent': '世界发生的变化',
     'narrator_scope': '叙述权限', 'style_intent': '本书文风要求',
+    'opening_lead': '正文前的独立导语',
 }
+
+OPENING_LEAD_ADVICE = (
+    '根据作者明确选择、样文开头的抽象结构、已采用写法及本书风格，判断本书是否适合在正文前放一段独立导语。'
+    '说明读者会提前知道什么、应该留住什么悬念，以及与第一节怎样交接。导语是独立正文入口，不计入正文章节、分节或正文目标字数。'
+    '体裁、平台和样文是否带导语都不能直接决定本书选项。可以保留直接入场、隐去核心谜底，或选择适合本书的其他导语作用。'
+    '用户已明确选择时遵守；否则仅提出建议供作者确认。顾问阶段不写导语正文。'
+)
 
 
 def advisor_catalog(catalog):
@@ -64,6 +72,8 @@ def parse_configuration(text: str, mode: str) -> tuple[str, list[dict]]:
             continue
         if key == 'narrator_scope' and value not in {'preserve','limited','omniscient','variable','unreliable'}:
             continue
+        if key == 'opening_lead' and value not in {'include', 'omit'}:
+            continue
         if key == 'estimated_length':
             if value[0] not in {'短', '中', '长'}:
                 continue
@@ -115,6 +125,8 @@ CONFIGURATION_PROMPT = (
 
 
 ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了“分析并完善设置”。', '本次用户正在与小说顾问讨论方向。') + (
+    OPENING_LEAD_ADVICE +
+    '在writing分区说明独立导语的取舍，在suggestions里用opening_lead给出include（添加）或omit（省略）以及理由；已有明确选择时保持该选择。'
     '本次是正式创作前的小说顾问交流，优先判断这本书写什么、主要看点是什么、适合怎么写。'
     '先核对作者简报、已备人物和规划资料、已采用方案与本书规则，区分明确选择、已有草案和仍待决定的内容。'
     '作者已明确人物、主线结构和终局时，只补会影响写作的缺口、矛盾与场景承接，不另起同义方案或替换作者选择。'

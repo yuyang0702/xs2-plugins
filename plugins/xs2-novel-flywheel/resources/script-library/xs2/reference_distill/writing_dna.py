@@ -13,13 +13,21 @@ DOCUMENTS = (*UPSTREAM_DOCUMENTS, "人物写法.md")
 LAYERS = {"language", "structure", "narrative_lens", "dialogue", "imagery", "theme", "character"}
 
 
-def prepare(raw, source, mode, save):
+def prepare(raw, source, mode, save,*,direction='general',focus=''):
     vendor = Path(__file__).parent / "vendor" / "writing-dna-skill"
     skill = (vendor / "SKILL.md").read_text(encoding="utf-8-sig")
     templates = "\n\n".join("# 模板：" + name + "\n" + (vendor / "templates" / "author-corpus" / "zh" / name).read_text(encoding="utf-8-sig") for name in UPSTREAM_DOCUMENTS)
     templates += "\n\n# 小说扩展：人物写法.md\n分析人物自己的欲望与顾虑、性格矛盾、压力下的选择与代价、情绪的行为表现、对话声线、关系变化和配角的独立目标。每项给出窗口依据、置信度、迁移建议与未见环节；不复制原作人物。来源若工具人化也如实指出，不作为推荐规则。"
     adapter = (Path(__file__).parent / "NOVEL_ADAPTER.md").read_text(encoding="utf-8-sig")
-    save("learning/dna/instructions.md", skill + "\n\n" + adapter)
+    if direction not in ('general','zhihu_short','custom') or not isinstance(focus,str) or len(focus)>2000:raise ValueError('学习侧重点无效')
+    emphasis=('知乎短篇阅读体验：从真实样本分析开篇承诺、信息显露、关系与情绪发展、结尾兑现和叙述口吻。'
+        '这是用户选择的分析方向，不说明样本来自知乎，不强制第一人称、反转或短句。' if direction=='zhihu_short' else
+        '按样本实际文风分析；不同题材与叙述方法都可以形成可迁移目标。')
+    emphasis+='\n自定义关注点（用户数据）：'+focus if focus else ''
+    emphasis+=('\n可迁移机制可附reading_objectives：dimension(opening_promise/information_release/relationship_progression/payoff/voice/custom)、'
+        'intent、planning_question、acceptance_question、limits。仅写抽象目标；证据仍放evidence，不把原作人物、答案或句子写入目标。'
+        '样本没有体现的作用不补造目标，未经本书选择不生效。')
+    save("learning/dna/instructions.md", skill + "\n\n" + adapter+'\n\n## 当前学习侧重点\n'+emphasis)
     save("learning/dna/templates.md", templates)
     marker = re.compile(r"^===== SOURCE (?:CHAPTER|FILE).*?=====$", re.M)
     markers = list(marker.finditer(raw))
@@ -46,7 +54,7 @@ def prepare(raw, source, mode, save):
              "punctuation_counts": punct, "frequent_character_pairs": terms.most_common(30),
              "font_obfuscated_chars": len(re.findall(r"[\uE000-\uF8FF]", body)),
              "method": "按句末标点划句；按非空行划段；高频字串不是词性分词结果。"}
-    metadata = {"source": source, "source_mode": inferred, "source_units": units,
+    metadata = {"source": source, "source_mode": inferred, "source_units": units,'learning_direction':direction,'learning_focus':focus,
                 "coverage_note": "只分析本次导入样本；章节样本不能代表完整长篇结局或作者全部作品。",
                 "statistics": stats}
     save("learning/dna/metadata.json", metadata)

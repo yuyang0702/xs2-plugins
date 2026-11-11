@@ -307,6 +307,7 @@ def validate_blind(report, body,reading_contract=None):
             raise ValueError('独立审稿问题编号、类别或等级无效')
         ids.add(issue['id'])
         _quotes(issue, body)
+        expression_rules.validate_narrative_issue(issue)
         if issue['kind'] == 'causality' and issue.get('decision_id') not in decisions:
             raise ValueError('因果问题缺少对应的关键决定检查')
     for key, decision in decisions.items():

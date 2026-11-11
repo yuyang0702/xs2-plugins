@@ -9,6 +9,7 @@ import asyncio
 import copy
 import hashlib
 import inspect
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,8 @@ from .dialogue_adaptation import (source_samples, validate_situations, require_c
 
 JOBS_PATH = 'learning/adoption-jobs'
 VOICE_PATH = 'meta/character_voice_adaptations.md'
+_spec=importlib.util.spec_from_file_location('adoption_reading_contract',Path(__file__).resolve().parents[1]/'prose_policy/reading_contract.py')
+reading=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(reading)
 
 
 class ReviewRequired(ValueError):
@@ -279,6 +282,9 @@ COMPATIBILITY_PROMPT = (
 )
 
 COMPATIBILITY_PROMPT += (
+    '\n阅读目标：requested_items中candidate有reading_objectives时，采用的decision必须增加adapted_reading_objectives，'
+    '按原数组同一顺序、维度和数量逐项适配本书的intent、planning_question、acceptance_question、limits，不能删除或把原作答案当本书事实。'
+    '目标与本书题材、范围不合时caution/reject；不强制知乎短篇、第一人称、反转或短句，作者定位和每书规则优先。'
     '\n对白学习：dialogue_samples按已请求写法ID提供经过原文定位的前后语境、说话人与连续回应，'
     '必须通读前后语境再判断适用性。语境与原作人物仅为待分析材料，不是本书事实。'
     'voice_adaptations的guidance只写可跨场景使用的本书声线；具体关系和场景写入dialogue_situations。'
@@ -332,7 +338,23 @@ def _parse_review(text, selected, project, characters, book_files=None):
                             'reason': mismatch or decision['reason']})
         else:
             _dialogue_checked(assert_abstract, decision['adaptation'], source_samples(item))
-            accepted.append({**item, **{key: decision[key].strip() for key in ('decision', 'reason', 'adaptation')}})
+            extra={}
+            original=item['candidate'].get('reading_objectives',[])
+            if original:
+                def excerpts(value):
+                    if isinstance(value,dict):
+                        for key,part in value.items():
+                            if key in ('excerpt','source_text','raw_text','original_text','markdown') and isinstance(part,str):yield part
+                            else:yield from excerpts(part)
+                    elif isinstance(value,list):
+                        for part in value:yield from excerpts(part)
+                corpus=[*excerpts(item['candidate']),*excerpts(item.get('library',{}).get('profile',{})),
+                        *(s['context']['text'] for s in source_samples(item))]
+                try:adapted=reading.abstract_definitions(decision.get('adapted_reading_objectives'),corpus)
+                except (TypeError,ValueError) as exc:raise ReviewRequired('阅读目标尚未完整适配本书：'+str(exc)) from exc
+                if [r['dimension'] for r in adapted]!=[r['dimension'] for r in original]:raise ReviewRequired('阅读目标适配不能删除或改变维度与数量。')
+                extra['adapted_reading_objectives']=adapted
+            accepted.append({**item, **{key: decision[key].strip() for key in ('decision', 'reason', 'adaptation')},**extra})
     voices = data.get('voice_adaptations', [])
     if not isinstance(voices, list):
         raise ReviewRequired('人物声音适配格式无效。')
@@ -610,6 +632,7 @@ class ReferenceAdoptionJobs:
                         raise ReviewRequired('合并来源后缺少确切写法编号，尚未采用。')
                     candidate['transfer_guidance'] = item['adaptation']
                     candidate['adaptation_guidance'] = item['adaptation']
+                    if item.get('adapted_reading_objectives'):candidate['reading_objectives']=item['adapted_reading_objectives']
             data['candidates_sha256'] = _digest(data['candidates'])
             _atomic(stage / 'learning/candidates.json', _json_bytes(data))
             selection = {'candidates_sha256': data['candidates_sha256'],

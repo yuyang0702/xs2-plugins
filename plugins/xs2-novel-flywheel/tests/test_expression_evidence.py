@@ -13,8 +13,40 @@ def module():
 
 
 def checks(m):
-    return [{'dimension':key,'status':'pass','excerpts':['她笑了。'],'reason':'此处回应了当下的见面选择，未再次释义。',
+    scene_dimensions=getattr(m,'SCENE_DIMENSIONS',())
+    return [{'dimension':key,'status':'not_applicable' if key in scene_dimensions else 'pass',
+             'excerpts':[] if key in scene_dimensions else ['她笑了。'],'reason':'此处回应了当下的见面选择，未再次释义。',
              'style_basis':'本书允许抒情与回环。','issue_ids':[]} for key in m.DIMENSIONS]
+
+
+@pytest.mark.parametrize('dimension, category', [
+    ('scene_conflict_progression', 'scene_conflict_stall'),
+    ('aftermath_transition', 'aftermath_transition_flat'),
+])
+def test_scene_review_requires_ordered_evidence_and_gives_legacy_reports_a_read_path(dimension, category):
+    m=module()
+    previous=[row for row in checks(m) if row['dimension'] not in ('scene_conflict_progression','aftermath_transition')]
+    assert m.validate_checks({'expression_checks':previous},BODY)==previous
+    rows=checks(m)
+    first,middle,last=BODY.split('\n\n')
+    target=next(row for row in rows if row['dimension']==dimension)
+    target.update(status='pass',excerpts=[first,last])
+    report={'expression_checks':rows,'issues':[]}
+    m.validate_checks(report,BODY)
+    target['excerpts']=[last,first]
+    with pytest.raises(ValueError,match='整场'):
+        m.validate_checks(report,BODY)
+    issue={'category':category,'id':'scene-1','excerpts':[first,middle,last]}
+    report['issues']=[issue]
+    target.update(status='issue',issue_ids=['scene-1'],excerpts=[first,last])
+    with pytest.raises(ValueError,match='整场'):
+        m.validate_checks(report,BODY)
+    target['excerpts']=[first,middle,last]
+    m.validate_checks(report,BODY)
+    m.validate_narrative_issue(issue)
+    issue['excerpts']=[first,first[:-1],last]
+    with pytest.raises(ValueError,match='三处'):
+        m.validate_narrative_issue(issue)
 
 
 def test_expression_checks_require_actual_text_and_book_style_reason():

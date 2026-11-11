@@ -9,16 +9,22 @@ from __future__ import annotations
 import argparse
 import difflib
 import hashlib
+import importlib.util
 import html
 import json
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from functools import lru_cache
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import writing_dna
 from dialogue_learning import normalize_dialogue_samples, combine_samples, render_adaptations
+@lru_cache(maxsize=1)
+def reading():
+    spec=importlib.util.spec_from_file_location('reference_reading_goals',Path(__file__).resolve().parents[1]/'prose_policy/reading_contract.py')
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
 
 MANIFEST = "learning/cache/windows.json"
 CANDIDATES = "learning/candidates.json"
@@ -116,7 +122,8 @@ def split(args):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(raw, encoding="utf-8")
     source = {"text_sha256": source_hash, "snapshot_path": snapshot, "characters": len(raw)}
-    writing_dna.prepare(raw, source, getattr(args, "source_mode", "auto"), save)
+    writing_dna.prepare(raw, source, getattr(args, "source_mode", "auto"), save,
+        direction=getattr(args,'learning_direction','general'),focus=getattr(args,'learning_focus',''))
     save("learning/dna/upstream.json", json.loads((Path(__file__).parent / "vendor/writing-dna-skill/UPSTREAM.json").read_text(encoding="utf-8")))
     windows = []
     start = 0
@@ -149,6 +156,7 @@ def split(args):
     save(MANIFEST, {"schema": "xs2.reference.windows.v1", "source": source, "windows": windows})
     for window in windows:
         save(f"learning/cache/{window['window_id']}.json", window)
+        save(f"learning/cache/{window['window_id']}.feedback.md",'')
     ids = json.dumps([item["window_id"] for item in windows])
     print(f"<WF_VAR>window_ids:{ids}</WF_VAR>")
     print(f"<script_out>已完整分窗：{len(windows)} 个窗口</script_out>")
@@ -261,6 +269,8 @@ def normalize(args):
                     "pov_compatibility": pov_compatibility,
                     "adaptation_guidance": adaptation_guidance, "risk_flags": risk_flags,
                     "application_scope": application_scope}
+        objectives=reading().abstract_definitions(item['reading_objectives'],[raw]) if item.get('reading_objectives',[])!=[] else []
+        if objectives:semantic['reading_objectives']=objectives
         candidates.append({"candidate_id": "mechanism-" + digest(semantic)[:20],
                            **semantic, "confidence": confidence, "evidence": checked})
         samples = normalize_dialogue_samples(item.get('dialogue_samples'), window, raw, evidence_position)
@@ -273,12 +283,48 @@ def normalize(args):
     print(f"<script_out>已校验 {window['window_id']}：{len(candidates)} 条候选，精确定位修正 {relocated} 条证据</script_out>")
 
 
+def validate_window(args):
+    """Retry the responsible analyst, never repair semantic claims in code."""
+    def binding():
+        data,raw=manifest()
+        window=next((w for w in data['windows'] if w['window_id']==args.window_id),None)
+        if window is None or not re.fullmatch(r'window-\d{4}',args.window_id):raise ValueError('未知窗口')
+        start,end=window['source_start'],window['source_end']
+        if window['text']!=raw[start:end]:raise ValueError('窗口与参考资料快照不一致')
+        for row in window.get('evidence_catalog',[]):
+            a,z=row['source_start'],row['source_end']
+            if not start<=a<z<=end or raw[a:z]!=row['excerpt']:raise ValueError('证据目录与参考资料快照不一致')
+        return digest(data),digest(raw)
+    original=binding() # Source-integrity failures must not be sent to a model.
+    input_path=path(args.input)
+    if not input_path.is_relative_to(path('learning/cache')):raise ValueError('模型回复必须位于本书学习缓存')
+    raw_bytes=input_path.read_bytes()
+    try:normalize(args)
+    except (ValueError,KeyError,TypeError) as exc:
+        if binding()!=original:raise ValueError('校验期间来源变化，未退回模型') from exc
+        if input_path.read_bytes()!=raw_bytes:raise ValueError('校验期间模型回复变化，未退回模型') from exc
+        message=str(exc)
+        try:response=json.loads(raw_bytes)
+        except (ValueError,UnicodeError):response=None
+        receipt={'window_id':args.window_id,'source_binding':original,'response_sha256':hashlib.sha256(raw_bytes).hexdigest(),
+            'response':response,'raw_text':raw_bytes.decode('utf8',errors='replace'),'error':message,
+            'note':'拒绝的实际模型回复，未修改、未验收、未采用；只能由分析者根据原文重新提交。'}
+        relative=f"learning/cache/rejected/{args.window_id}-{digest(receipt)[:20]}.json"
+        if not path(relative).exists():save(relative,receipt)
+        feedback=('当前窗口分析未通过：'+message+'\n逐项核对所有数组字段（source_pov、target_pov、application_scope等）及证据编号。'
+            '只能复制当前evidence_catalog中的真实evidence_id，不猜编号、不改来源、不编造引文，也不能为了过检悄悄丢掉仍有依据的分析。'
+            '若分析确实不成立，按原文重新判断。未通过回复已归档：'+relative)
+        save(f'learning/cache/{args.window_id}.feedback.md',feedback)
+        print('<WF_REJECT_UPSTREAM target="agent_distill_window">'+html.escape(feedback)+'</WF_REJECT_UPSTREAM>')
+
+
 def _candidate_similarity(left, right):
     """Conservative lexical similarity for paraphrased mechanisms.
 
     The Agent remains responsible for meaning; this only merges very close
     paraphrases after evidence validation and keeps all evidence/constraints.
     """
+    if left.get('reading_objectives',[])!=right.get('reading_objectives',[]):return 0
     if left.get("layer") != right.get("layer"):
         return 0.0
     left_text = re.sub(r"[\s，。；、：:（）()]+", "", left.get("mechanism", ""))
@@ -375,11 +421,12 @@ def review_page(data):
     cards = []
     for candidate in data["candidates"]:
         proofs = "".join(f"<p>{html.escape(proof['excerpt'])}（位置 {proof['source_start']}～{proof['source_end']}）</p>" for proof in candidate["evidence"])
+        goals=''.join('<p>阅读目标：'+html.escape(g['intent'])+'；验收：'+html.escape(g['acceptance_question'])+'；边界：'+html.escape('；'.join(g.get('limits',[])))+'</p>' for g in candidate.get('reading_objectives',[]))
         cards.append(f"<article><label><input type='checkbox' value='{candidate['candidate_id']}'>"
                      f" {html.escape(candidate['mechanism'])}</label><p>{html.escape(candidate['transfer_guidance'])}</p>"
                      f"<p>层次：{html.escape(candidate.get('layer', 'narrative_lens'))}；适用流程：{html.escape(', '.join(candidate['scopes']))}；置信度：{candidate['confidence']}；支持窗口：{candidate.get('support_count', 1)}</p>"
                      f"<p>视角兼容：{html.escape(candidate.get('pov_compatibility', 'adaptable'))}</p>"
-                     f"<p>边界：{html.escape('；'.join(candidate['constraints']))}</p>"
+                     f"<p>边界：{html.escape('；'.join(candidate['constraints']))}</p>{goals}"
                      f"<p>适配：{html.escape(candidate.get('adaptation_guidance', '无'))}</p>"
                      f"<p>风险：{html.escape('；'.join(candidate.get('risk_flags', [])) or '无')}</p><details><summary>查看依据</summary>{proofs}</details></article>")
     content = """<!doctype html><meta charset="utf-8"><title>选择参考写法</title>
@@ -456,6 +503,8 @@ def adopt(args):
             "candidate_id", "mechanism", "layer", "transfer_guidance", "constraints", "scopes",
             "source_pov", "target_pov", "pov_compatibility", "adaptation_guidance", "risk_flags",
             "application_scope", "support_count", "variants")}
+        if by_id[item].get('reading_objectives'):
+            mechanism['reading_objectives']=reading().definitions(by_id[item]['reading_objectives'])
         mechanism["source"] = by_id[item].get("source") or data["source"]
         mechanisms.append(mechanism)
     sources = list(previous.get("sources") or ([previous["source"]] if previous.get("source") else []))
@@ -644,6 +693,10 @@ def render(scope, chapter=None):
         lines.extend(dialogue_lines)
     if not has_reference:
         lines.append("本阶段没有已选参考写法，按作者原创设定正常创作。")
+    objectives=reading().for_book(Path.cwd()) if path(ACTIVE).exists() and any(r.get('reading_objectives') for r in blueprint.get('mechanisms',[])) else None
+    if objectives:
+        lines.extend(['','## 本书已采用阅读目标',json.dumps(objectives,ensure_ascii=False,indent=2),
+            '以上是本书自选目标；规划说明如何落实，写作体现其作用，验收引用当前正文逐项核对。与本书风格、世界和作者范围冲突时先说明，不强行套用。'])
     advisor_file = path("learning/advisor_report.json")
     if advisor_file.exists():
         try:
@@ -668,11 +721,17 @@ def main():
     split_parser.add_argument("--window", type=int, default=4200)
     split_parser.add_argument("--overlap", type=int, default=400)
     split_parser.add_argument("--source-mode", default="auto")
+    split_parser.add_argument("--learning-direction", choices=['general','zhihu_short','custom'], default='general')
+    split_parser.add_argument("--learning-focus", default='')
     split_parser.set_defaults(handler=split)
     normalize_parser = commands.add_parser("normalize")
     normalize_parser.add_argument("--input", required=True)
     normalize_parser.add_argument("--window-id", required=True)
     normalize_parser.set_defaults(handler=normalize)
+    validation_parser=commands.add_parser('validate-window')
+    validation_parser.add_argument('--input',required=True)
+    validation_parser.add_argument('--window-id',required=True)
+    validation_parser.set_defaults(handler=validate_window)
     commands.add_parser("merge").set_defaults(handler=merge)
     commands.add_parser("prepare-choices").set_defaults(handler=prepare_choices)
     dna_parser = commands.add_parser("finalize-dna")

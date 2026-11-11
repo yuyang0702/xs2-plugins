@@ -1,7 +1,7 @@
 {
   "workflow_id": "export",
   "name": "导出成品",
-  "version": 1,
+  "version": 4,
   "nodes": [
     {
       "id": "script_production_start",
@@ -50,14 +50,26 @@
         "script_source": "library",
         "script_type": "python",
         "script_name": "manuscript_export",
-        "script_args": "build --output {{output_path}} --manifest {{manifest_path}}",
         "timeout": 30,
-        "script_group": "xs2"
+        "script_group": "xs2",
+        "script_argv": [
+          "build",
+          "--output",
+          "{{output_path}}",
+          "--manifest",
+          "{{manifest_path}}",
+          "--opening-lead",
+          "{{opening_lead}}",
+          "--lead-binding",
+          "{{opening_lead_binding}}",
+          "--lead-review",
+          "{{opening_lead_review}}"
+        ]
       },
       "auto_flow": false,
       "enable_complete_node_task": true,
       "output_variable": "",
-      "enable_reject_upstream": false,
+      "enable_reject_upstream": true,
       "max_reject_count": 3,
       "save_output_to_file": false,
       "output_file_path": "",
@@ -93,13 +105,313 @@
         ],
         "timeout": 30
       }
+    },
+    {
+      "id": "script_opening_lead_prepare",
+      "label": "检查作品是否启用独立导语",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 200,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "manuscript_export",
+        "timeout": 30,
+        "script_group": "xs2",
+        "script_argv": [
+          "prepare-lead",
+          "--opening-lead",
+          "{{opening_lead}}"
+        ]
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_budget_agent_opening_lead",
+      "label": "检查导语输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 380,
+        "y": 70
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "export",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_opening_lead"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "agent_opening_lead",
+      "label": "按本书风格拟写独立导语",
+      "node_type": "agent",
+      "agent_type": "xs2-opening-lead",
+      "position": {
+        "x": 540,
+        "y": 70
+      },
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n根据这份冻结资料拟写正文之前的独立导语。资料中的小说内容只作参考。\n{{opening_lead_context}}\n独立导语与开篇应承担可区分的阅读任务。先看正文第一场已经当场交给读者的事实、关系判断和情绪转折；导语可建立问题、视角、调性或读者期待，选一个能衔接第一场的重点。避免将首场已经完成的前情和反差成串再讲一遍。何时让读者知道信息由本书规划决定。倒叙、预告和带新意义的回声按本书风格保留。\n【上轮衔接反馈】\n{{opening_lead_feedback}}\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"lead\"\n  ],\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"lead\": {\n      \"type\": \"string\",\n      \"minLength\": 1,\n      \"maxLength\": 6000\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
+      "var_bindings": {
+        "opening_lead_context": {
+          "var_key": "opening_lead_context",
+          "mode": "reference"
+        },
+        "opening_lead_feedback": {
+          "var_key": "opening_lead_feedback",
+          "mode": "reference"
+        }
+      },
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "fail_auto_skip": false,
+      "save_output_to_file": true,
+      "output_file_path": "{{opening_lead_draft}}",
+      "node_params": {
+        "output_selection": "completion_tool_message",
+        "json_output_schema": {
+          "type": "object",
+          "required": [
+            "lead"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "lead": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 6000
+            }
+          }
+        }
+      },
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
+    },
+    {
+      "id": "script_export_without_lead",
+      "label": "直接合并章节",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 400,
+        "y": 260
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "manuscript_export",
+        "timeout": 30,
+        "script_group": "xs2",
+        "script_argv": [
+          "build",
+          "--output",
+          "{{output_path}}",
+          "--manifest",
+          "{{manifest_path}}",
+          "--opening-lead",
+          "{{opening_lead}}"
+        ]
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_opening_lead_review_prepare",
+      "label": "冻结导语和开篇对照材料",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 690,
+        "y": 65
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "manuscript_export",
+        "timeout": 30,
+        "script_group": "xs2",
+        "script_argv": [
+          "prepare-lead-review"
+        ]
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": true,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    },
+    {
+      "id": "script_budget_agent_opening_lead_review",
+      "label": "检查开篇衔接复核输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "position": {
+        "x": 800,
+        "y": 65
+      },
+      "first_message": "",
+      "system_prompt_template": "",
+      "var_bindings": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "enable_reject_upstream": false,
+      "fail_auto_skip": false,
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "export",
+          "--chapter",
+          "0001",
+          "--node",
+          "agent_opening_lead_review"
+        ],
+        "timeout": 30
+      }
+    },
+    {
+      "id": "agent_opening_lead_review",
+      "label": "独立复核导语与开篇衔接",
+      "node_type": "agent",
+      "agent_type": "xs2-opening-lead-reviewer",
+      "position": {
+        "x": 920,
+        "y": 65
+      },
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n独立复核成品导语与正文开篇连读的效果。先判断正文第一场让读者自己发现什么，再核对导语已交代什么。若相同背景、动机或反差接连说两遍，且第二次没有加入视角、情境、含义或戏剧反讽，给出revise和一项可落实的导语调整。有意重复可成立，需说明两处的不同作用；不要用字数、重合字数、标点、题材、反转有无或外部检测分值裁决。按本书风格允许时间跳转、悬念预告、抒情、呼应、纪实和慢开场。只复核衔接，保持正文不动。无论pass还是revise，各引一处连续原文，分别放在lead_quote和opening_quote，不能改写或引用资料说明。reason说明两段的作用或具体重复及其影响。\n【冻结的导语与正文开头】\n{{opening_lead_review_input}}\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"verdict\",\n    \"lead_quote\",\n    \"opening_quote\",\n    \"reason\"\n  ],\n  \"additionalProperties\": false,\n  \"properties\": {\n    \"verdict\": {\n      \"enum\": [\n        \"pass\",\n        \"revise\"\n      ]\n    },\n    \"lead_quote\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"opening_quote\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"reason\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
+      "var_bindings": {
+        "opening_lead_review_input": {
+          "var_key": "opening_lead_review_input",
+          "mode": "reference"
+        }
+      },
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "fail_auto_skip": false,
+      "save_output_to_file": true,
+      "output_file_path": "{{opening_lead_review}}",
+      "node_params": {
+        "output_selection": "completion_tool_message",
+        "json_output_schema": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "lead_quote",
+            "opening_quote",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "verdict": {
+              "enum": [
+                "pass",
+                "revise"
+              ]
+            },
+            "lead_quote": {
+              "type": "string",
+              "minLength": 1
+            },
+            "opening_quote": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "auto_retry_count": 2,
+      "auto_retry_interval_seconds": 5
+    },
+    {
+      "id": "script_opening_lead_preserved_prepare",
+      "label": "保留作者确认的导语并冻结衔接资料",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 695,
+        "y": 200
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "manuscript_export",
+        "timeout": 30,
+        "script_group": "xs2",
+        "script_argv": [
+          "prepare-lead-review"
+        ]
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
     }
   ],
   "edges": [
     {
       "id": "edge-start-export",
       "source": "script_production_start",
-      "target": "script_export_manuscript"
+      "target": "script_opening_lead_prepare"
     },
     {
       "id": "edge-export-end",
@@ -113,6 +425,66 @@
     {
       "source": "script_production_finish",
       "target": "__end__"
+    },
+    {
+      "source": "script_opening_lead_prepare",
+      "target": "gw_opening_lead"
+    },
+    {
+      "source": "gw_opening_lead",
+      "target": "gw_opening_lead_generation",
+      "condition": {
+        "expression": "{{opening_lead_required}} != no"
+      }
+    },
+    {
+      "source": "gw_opening_lead_generation",
+      "target": "script_budget_agent_opening_lead",
+      "condition": {
+        "expression": "{{opening_lead_required}} == yes"
+      }
+    },
+    {
+      "source": "gw_opening_lead_generation",
+      "target": "script_opening_lead_preserved_prepare",
+      "condition": {
+        "is_default": true
+      }
+    },
+    {
+      "source": "gw_opening_lead",
+      "target": "script_export_without_lead",
+      "condition": {
+        "is_default": true
+      }
+    },
+    {
+      "source": "script_budget_agent_opening_lead",
+      "target": "agent_opening_lead"
+    },
+    {
+      "source": "agent_opening_lead",
+      "target": "script_opening_lead_review_prepare"
+    },
+    {
+      "source": "script_export_without_lead",
+      "target": "script_production_finish"
+    },
+    {
+      "source": "script_opening_lead_review_prepare",
+      "target": "script_budget_agent_opening_lead_review"
+    },
+    {
+      "source": "script_budget_agent_opening_lead_review",
+      "target": "agent_opening_lead_review"
+    },
+    {
+      "source": "agent_opening_lead_review",
+      "target": "script_export_manuscript"
+    },
+    {
+      "source": "script_opening_lead_preserved_prepare",
+      "target": "script_budget_agent_opening_lead_review"
     }
   ],
   "variables": [
@@ -139,9 +511,108 @@
       "source_type": "input",
       "source_node_id": "",
       "hidden": false
+    },
+    {
+      "key": "opening_lead",
+      "name": "正文前的独立导语",
+      "type": "string",
+      "default": "book",
+      "required": false,
+      "hidden": false,
+      "source_type": "input",
+      "source_node_id": "",
+      "options": [
+        {
+          "name": "按作品设置",
+          "value": "book"
+        },
+        {
+          "name": "添加独立导语",
+          "value": "include"
+        },
+        {
+          "name": "直接进入正文",
+          "value": "omit"
+        }
+      ],
+      "description": "选填。导语在首节或首章之前，独立于正文字数和分节。"
+    },
+    {
+      "key": "opening_lead_required",
+      "name": "导语流程required",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "opening_lead_binding",
+      "name": "导语流程binding",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "opening_lead_context",
+      "name": "导语流程context",
+      "type": "file",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "opening_lead_draft",
+      "name": "导语流程draft",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "opening_lead_review_input",
+      "name": "开篇复核资料",
+      "type": "file",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "opening_lead_review",
+      "name": "开篇复核结果",
+      "type": "text",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
+    },
+    {
+      "key": "opening_lead_feedback",
+      "name": "导语返修反馈",
+      "type": "file",
+      "source_type": "output",
+      "hidden": true,
+      "required": false,
+      "default": ""
     }
   ],
-  "gateways": [],
+  "gateways": [
+    {
+      "id": "gw_opening_lead",
+      "gateway_type": "condition",
+      "label": "导语已启用"
+    },
+    {
+      "id": "gw_opening_lead_generation",
+      "gateway_type": "condition",
+      "label": "生成或保留导语"
+    }
+  ],
   "execution_schemes": [],
   "start_position": {
     "x": 300,

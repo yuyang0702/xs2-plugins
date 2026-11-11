@@ -2951,7 +2951,7 @@
         },
         {
           "name": "advisor_output",
-          "content": "直接输出纯 JSON，不要 Markdown 围栏：{\"positioning\":{\"genre\":\"推荐题材\",\"target_readers\":\"目标读者\",\"promise\":\"读者持续获得的体验\"},\"recommended_methods\":[{\"name\":\"写法\",\"reason\":\"适用原因\",\"apply\":\"迁移方式\"}],\"avoid_methods\":[{\"name\":\"写法\",\"reason\":\"不适用原因\"}],\"hooks\":[{\"type\":\"opening|chapter_end|long_arc\",\"suggestion\":\"钩子建议\",\"reason\":\"读者效果\"}],\"pacing\":\"节奏建议\",\"pov\":\"视角建议\",\"word_count\":\"篇幅建议\",\"constraints\":[\"可验证的创作边界\"]}。所有内容使用 {{language}}。",
+          "content": "直接输出纯 JSON，不要 Markdown 围栏：{\"positioning\":{\"genre\":\"推荐题材\",\"target_readers\":\"目标读者\",\"promise\":\"读者持续获得的体验\"},\"recommended_methods\":[{\"name\":\"写法\",\"reason\":\"适用原因\",\"apply\":\"迁移方式\"}],\"avoid_methods\":[{\"name\":\"写法\",\"reason\":\"不适用原因\"}],\"hooks\":[{\"type\":\"opening|chapter_end|long_arc\",\"suggestion\":\"钩子建议\",\"reason\":\"读者效果\"}],\"pacing\":\"节奏建议\",\"pov\":\"视角建议\",\"word_count\":\"篇幅建议\",\"constraints\":[\"可验证的创作边界\"]}。所有内容使用 {{language}}。还须输出opening_lead对象，含recommendation（include或omit）、reason（取舍理由）和approach（保留悬念或与首节交接的做法）。",
           "token_estimate": 180,
           "cache_break": false,
           "cache_break_reason": "",
@@ -3287,6 +3287,38 @@
           "content": "独立核对每段实际作用、本书风格、世界与作者范围，以及预算可行性。不要因为要求了新动作就认为有新作用。输入是本书冻结资料。情节、情绪、关系、氛围、声线、议论或形式探索都可以承载篇幅，例子不是必选项。author_feedback保留作者意见；automatic_revision_advice仅是旧自动建议，其旧配额不能覆盖本轮policy、author_range或作者原要求。按本书已有风格、世界规则和作者范围说明每段阅读作用如何发展；有意回环可以成立，不能只复述同一判断或机械增加操作。不规定事件密度、情绪回响次数、叙述风格或每场字数比例。程序配额可协商，作者硬边界不能改。全书目标按实际验收正文累计，不能为了固定单章均值灌水；计划不是既成事实。\n【阅读目标规划复查】有reading_contract时，goal_checks须逐个goal_id返回supported、reason、style_basis，独立核对goal_plans的具体依据、分段、信息权限、当前范围和本书风格；不成立就revise，不能仅按模板勾选。无目标省略或空数组。\n【作者边界与分段建议】author_range非空时，方案顶层minimum/maximum必须原样等于author_range，不得用建议篇幅替换作者边界。segments的minimum合计及maximum合计只需落在该作者范围内，允许更窄的内容预算；不要为用尽上限增写，也不要把建议下限升级成作者要求。author_range为空且由规划者决定配额时，分段minimum/maximum合计必须分别等于方案顶层minimum/maximum。分段编号不可重复，各段须有实际阅读作用，最终正文仍独立核验原有篇幅、事实、风格及阅读目标。\n【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。"
         }
       ]
+    },
+    "xs2-opening-lead": {
+      "description": "根据首章成稿与本书风格拟写独立导语",
+      "sections": [
+        {
+          "name": "opening_lead",
+          "content": "你为已经写成的小说拟一段放在正文之前的独立导语。根据本书有效文风、人称与叙述权限，遵循已确认的导语用途。以首章事实为限，不新增正文没有支撑的事件，不补写剧情、复述首节或复制样本语句。预告、设问、氛围铺垫等按本书需要取舍，不强制悬疑、反转、口语或固定字数。保留首节应有的揭示与阅读张力。导语可分自然段，直接进入小说语气，不附标题、编号、写作说明、正文或代码围栏。独立导语与开篇应承担可区分的阅读任务。先看正文第一场已经当场交给读者的事实、关系判断和情绪转折；导语可建立问题、视角、调性或读者期待，选一个能衔接第一场的重点。避免将首场已经完成的前情和反差成串再讲一遍。何时让读者知道信息由本书规划决定。倒叙、预告和带新意义的回声按本书风格保留。",
+          "token_estimate": 200,
+          "cache_break": false,
+          "cache_break_reason": "",
+          "enabled": true,
+          "workflow_only": false,
+          "order": 0
+        }
+      ],
+      "preambles": {}
+    },
+    "xs2-opening-lead-reviewer": {
+      "description": "独立复核导语与正文开篇的衔接",
+      "sections": [
+        {
+          "name": "opening_lead_handoff",
+          "content": "独立复核成品导语与正文开篇连读的效果。先判断正文第一场让读者自己发现什么，再核对导语已交代什么。若相同背景、动机或反差接连说两遍，且第二次没有加入视角、情境、含义或戏剧反讽，给出revise和一项可落实的导语调整。有意重复可成立，需说明两处的不同作用；不要用字数、重合字数、标点、题材、反转有无或外部检测分值裁决。按本书风格允许时间跳转、悬念预告、抒情、呼应、纪实和慢开场。只复核衔接，保持正文不动。无论pass还是revise，各引一处连续原文，分别放在lead_quote和opening_quote，不能改写或引用资料说明。reason说明两段的作用或具体重复及其影响。",
+          "token_estimate": 200,
+          "cache_break": false,
+          "cache_break_reason": "",
+          "enabled": true,
+          "workflow_only": false,
+          "order": 0
+        }
+      ],
+      "preambles": {}
     }
   }
 }

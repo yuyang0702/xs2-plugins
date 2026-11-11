@@ -10,7 +10,8 @@ from pathlib import Path
 def project_constraints(root,book):
     path=book.safe(root,'.novel-project.json');state=book.read(path) if path.is_file() else {};values=state.get('values',{})
     return {'mode':state.get('mode',''),'target_word_count':str(values.get('target_word_count') or ''),
-            'conflict_plan_mode':str(values.get('conflict_plan_mode') or '')}
+            'conflict_plan_mode':str(values.get('conflict_plan_mode') or ''),
+            'opening_lead':str(values.get('opening_lead') or '')}
 
 
 def constraint_prompt(request):
@@ -24,6 +25,7 @@ def main():
     parser.add_argument('action',choices=['prepare','commit'])
     for key in ('premise','genre','narrative-pov','narrator-scope','style-intent'):parser.add_argument('--'+key,default='')
     parser.add_argument('--target',default=None);parser.add_argument('--scope',default='')
+    parser.add_argument('--opening-lead',choices=('', 'include', 'omit', 'book'),default='')
     args=parser.parse_args();root=Path.cwd()
     spec=importlib.util.spec_from_file_location('advisor_book_contract',Path(__file__).resolve().parents[1]/'prose_policy/book_contract.py')
     book=importlib.util.module_from_spec(spec);spec.loader.exec_module(book)
@@ -37,6 +39,8 @@ def main():
         binding['request_constraints']={**binding['base_constraints'],
             'target_word_count':args.target.strip() if args.target and args.target.strip() else binding['base_constraints']['target_word_count'],
             'conflict_plan_mode':args.scope or binding['base_constraints']['conflict_plan_mode']}
+        if args.opening_lead not in ('', 'book'):
+            binding['request_constraints']['opening_lead']=args.opening_lead
         path=book.safe(root,f'cache/book-contract/{task_id}/advisor-binding.json')
         if path.exists() and book.read(path)!=binding:raise ValueError('本书顾问输入已有变化，请新建任务')
         path.write_text(json.dumps(binding,ensure_ascii=False),encoding='utf8')
@@ -59,6 +63,15 @@ def main():
         report=book.read(book.safe(root,f'cache/book-contract/{task_id}/advisor-report.json'))
         if not isinstance(report,dict) or not report or json.loads(sys.stdin.read())!=report:
             raise ValueError('顾问草稿与本任务实际模型输出不一致')
+        if 'opening_lead' in report:
+            lead=report['opening_lead']
+            if (not isinstance(lead,dict) or lead.get('recommendation') not in ('include','omit')
+                    or not isinstance(lead.get('reason'),str) or not lead['reason'].strip()
+                    or not isinstance(lead.get('approach'),str)):
+                raise ValueError('顾问导语建议需要有效取舍、理由和写法')
+            choice=binding['request_constraints'].get('opening_lead')
+            if choice in ('include','omit') and lead['recommendation']!=choice:
+                raise ValueError('顾问导语建议与作者已选设置冲突')
         spec=importlib.util.spec_from_file_location('advisor_atomic',Path(__file__).resolve().parents[1]/'console_service/length_quality.py')
         quality=importlib.util.module_from_spec(spec);spec.loader.exec_module(quality)
         quality.atomic_text(book.safe(root,'learning/advisor_report.json'),json.dumps(report,ensure_ascii=False,indent=2)+'\n')

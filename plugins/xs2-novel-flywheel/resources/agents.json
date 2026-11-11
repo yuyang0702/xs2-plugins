@@ -1090,6 +1090,38 @@
           "type": "json_object"
         }
       }
+    },
+    "xs2-opening-lead": {
+      "description": "成品独立导语",
+      "prompt_template": "xs2-opening-lead",
+      "tools": [],
+      "max_turns": 2,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-opening-lead-reviewer": {
+      "description": "导语与开篇衔接复核",
+      "prompt_template": "xs2-opening-lead-reviewer",
+      "tools": [],
+      "max_turns": 2,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "response_format": {
+          "type": "json_object"
+        }
+      }
     }
   }
 }
