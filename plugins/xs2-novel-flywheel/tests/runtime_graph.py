@@ -9,7 +9,7 @@ import copy
 
 def literary_graph(definition):
     result=copy.deepcopy(definition)
-    guards={n['id'] for n in result['nodes'] if n['id'].startswith('script_budget_') or n['id'] in ('script_production_start','script_production_finish')}
+    guards={n['id'] for n in result['nodes'] if n['id'].startswith('script_budget_') or n['id'] in ('script_production_start','script_production_finish') or n.get('node_type')=='novel_rehearsal'}
     for key in guards:
         incoming=[e for e in result['edges'] if e['target']==key]
         outgoing=[e for e in result['edges'] if e['source']==key]

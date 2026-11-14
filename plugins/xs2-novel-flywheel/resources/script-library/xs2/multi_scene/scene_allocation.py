@@ -32,6 +32,12 @@ def validate_plan(data):
                    or any(not isinstance(row.get(k), str) or not row[k].strip() for k in fields)
                    for i, row in enumerate(rows, 1))):
         raise ValueError('[scene_plan] 提供1—6个连续编号的场景及入场、变化、交棒和知识边界')
+    for row in rows:
+        names = row.get('rehearsal_cast', [])
+        if (not isinstance(names, list) or len(names) not in (0, 2, 3)
+                or any(not isinstance(name, str) or not name.strip() for name in names)
+                or len(set(names)) != len(names)):
+            raise ValueError('[scene_plan] 试演名单为空或含两到三位不重复的出场人物')
     current = 'plan_reason' in data or any('weight' in r or 'budget_reason' in r for r in rows)
     if not current:
         if len(rows) != MAX_SLOTS:

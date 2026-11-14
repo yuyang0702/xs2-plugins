@@ -9,6 +9,7 @@ from .cards import inventory, link_relations, workspace
 from .edits import apply, authentic_preview, history, legacy_mutation, preview
 from .states import add_state
 from .assistant_hooks import accept_trial, finish, freeze, is_current, planned_preferences, trial_preferences
+from .production_rehearsal import prepare as prepare_rehearsal, roster as rehearsal_roster
 
 
 def read(root, chapter='', q=''):

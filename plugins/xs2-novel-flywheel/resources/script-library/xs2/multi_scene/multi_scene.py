@@ -159,6 +159,17 @@ def save_json(path, data):
     length.atomic_text(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
 
+def rehearsal_roster(root):
+    path = Path(__file__).resolve().parents[1] / 'character_center/character_center.py'
+    spec = importlib.util.spec_from_file_location(
+        'multi_scene_rehearsal_cards', path, submodule_search_locations=[str(path.parent)])
+    module = importlib.util.module_from_spec(spec)
+    import sys
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.rehearsal_roster(root)
+
+
 def planning_sources(root, chapter, policy_runtime='', task_id=None):
     """Freeze book facts from current effective sources, never another scene's guesses."""
     policy = None
@@ -358,8 +369,14 @@ def main():
         length.atomic_text(quote_file,quote_view)
         save_json(directory / 'planning-budget.json', {'chapter_minimum': bounds[0], 'chapter_maximum': bounds[1],
             'max_scenes': len(WRITERS), 'allocation': '先按已有事件确定1—6场，再给相对权重和篇幅理由；不预分六份预算。'})
+        roster_path = directory / 'rehearsal-roster.json'
+        roster = rehearsal_roster(root)
+        if roster_path.is_file() and read_json(roster_path) != roster:
+            raise ValueError('可用于试演的人物名单已变化，请新建任务')
+        save_json(roster_path, roster)
         outputs = {'multi_dir': relative, 'multi_budgets': f'{relative}/planning-budget.json'}
         outputs['multi_sources']=f'{relative}/planning-sources-model.md'
+        outputs['multi_rehearsal_roster'] = f'{relative}/rehearsal-roster.json'
         outputs.update({f'multi_active_{i}': 'no' for i in range(1, 6)})
         for key, value in outputs.items():
             print(f'<WF_VAR>{key}:{value}</WF_VAR>')
@@ -374,6 +391,11 @@ def main():
             raw_plan = read_json(plan_file)
             plan = raw_plan
             validate_plan(plan)
+            roster_file = directory / 'rehearsal-roster.json'
+            if roster_file.is_file():
+                roster = set(read_json(roster_file))
+                if any(set(scene.get('rehearsal_cast', [])) - roster for scene in plan['scenes']):
+                    raise ValueError('分角色试演只能选择名单中可唯一匹配的原名。')
             if 'continuity' in plan:
                 if quote_file.is_file():
                     plan={**plan,'continuity':continuity_policy.bind_planning_quotes(plan['continuity'],sources)}

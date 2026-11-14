@@ -171,8 +171,9 @@ def test_one_scene_small_target_is_not_rejected_by_unused_six_slot_budget(tmp_pa
     m.main();assert m.read_json(directory/'allocation.json')['scenes'][0]['draft_target']==4
 
 
-@pytest.mark.parametrize('count,assembly_retry',[(1,False),(3,False),(6,False),(3,True)])
-def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp_path,monkeypatch,caplog,count,assembly_retry):
+@pytest.mark.parametrize('count,assembly_retry,writer_type',[(1,False,'muti'),(3,False,'muti'),
+    (6,False,'muti'),(3,True,'muti'),(1,False,'single')])
+def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp_path,monkeypatch,caplog,count,assembly_retry,writer_type):
     import asyncio
     import os
     import shlex
@@ -184,23 +185,76 @@ def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp
     from src.workflow.nodes import BaseNodePlugin,NodeResult,registry
     from src.workflow.nodes.script import _parse_wf_vars,_parse_reject_upstream
     from src.workflow.variable_resolution import resolve_placeholders
+    from src.agent import definition as agents
+    from src.core import llm_client
+    from src.web import novel_plugin
+    from langchain_core.messages import AIMessage
     caplog.set_level('ERROR',logger='src.workflow.variable_resolution')
     m=module();plugin=Path(__file__).resolve().parents[1]
     raw=json.loads((plugin/'resources/workflows/mvp/definition.json').read_text(encoding='utf-8'))
     wf=WorkflowDef.from_dict(raw);assert not wf.validate()
     calls=[]
+    rehearsal_calls=[]
+    (tmp_path/'meta').mkdir()
+    (tmp_path/'meta/character_profiles.md').write_text(
+        '## 阿杏\n- 当前欲望：救下柜台\n## 掌柜\n- 当前欲望：让人能出门\n',encoding='utf-8')
+    (tmp_path/'adopted.md').write_text('先给动作，再让人接话',encoding='utf-8')
+    service_path=plugin/'resources/script-library/xs2/character_center/character_center.py'
+    import importlib.util
+    spec=importlib.util.spec_from_file_location('native_rehearsal_test',service_path,
+                                                  submodule_search_locations=[str(service_path.parent)])
+    service=importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules,spec.name,service)
+    spec.loader.exec_module(service)
+    monkeypatch.setattr(novel_plugin,'script_service',lambda _name:service)
+    monkeypatch.setattr(agents,'get_agent_definition',lambda _name:SimpleNamespace(model='test:writer',model_params={}))
+
+    class Model:
+        metadata={'determinflow_model_id':'test:writer'}
+
+        async def ainvoke(self,messages):
+            packet=json.loads(messages[1].content)
+            if 'turns' in packet:
+                assert packet['turns'][1]['action']=='把门撑住'
+                reply={'accepted':True,'reason':'留意各自眼前的事'}
+            elif 'role' in packet:
+                if packet['role']['name']=='阿杏':
+                    assert '救下柜台' in str(packet) and '让人能出门' not in str(packet)
+                    reply={'speech':'这头我来。','action':'扶住柜台'}
+                else:
+                    assert packet['observable_turns'][0]['speech']=='这头我来。'
+                    reply={'speech':'','action':'把门撑住'}
+            else:
+                assert '先给动作，再让人接话' in str(packet)
+                reply={'public_start':'门口下着雨','roles':[
+                    {'name':'阿杏','knowledge':'柜台淋雨','goal':'把柜台搬开','voice':'开口短'},
+                    {'name':'掌柜','knowledge':'门打开了','goal':'守着门口','voice':'话少'}]}
+            rehearsal_calls.append(packet)
+            return AIMessage(content=json.dumps(reply,ensure_ascii=False),
+                usage_metadata={'input_tokens':10,'output_tokens':5,'total_tokens':15})
+
+    monkeypatch.setattr(llm_client,'create_llm',lambda **_kwargs:Model())
+
     class Agent(BaseNodePlugin):
         node_type='agent'
         async def execute(self,ctx):
             calls.append(ctx.node_def.id)
             directory=tmp_path/ctx.parameter_values['multi_dir']
             if ctx.node_def.id=='agent_nw':
-                m.save_json(directory/'plan.json',plan(count))
+                sequence=plan(count)
+                sequence['scenes'][-1]['rehearsal_cast']=['阿杏','掌柜']
+                m.save_json(directory/'plan.json',sequence)
             elif ctx.node_def.id in m.WRITERS:
                 slot=m.WRITERS.index(ctx.node_def.id)+1
                 brief=m.read_json(directory/f'brief-{slot}.json')
                 size=20 if assembly_retry and slot==2 and calls.count('agent_dw')==1 else brief['draft_target']
                 (directory/f'scene-{slot}.txt').write_text('春夏秋冬梅竹'[slot-1]*size,encoding='utf-8')
+            if ctx.node_def.id in {'agent_si','agent_sw'}:
+                prompt=await resolve_placeholders(ctx.node_def.first_message,ctx.parameter_values,ctx.definition.variables,str(tmp_path))
+                assert '把门撑住' in prompt and '先给动作，再让人接话' in prompt
+                assert 'assigned_roles' not in prompt
+                if ctx.node_def.id=='agent_sw':
+                    m.save_json(tmp_path/'cache/si/chapter.json',{'body':'试演后单写手交稿'})
             return NodeResult(status='completed')
     class Script(BaseNodePlugin):
         node_type='script'
@@ -223,7 +277,8 @@ def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp
     async def no_save(*_):pass
     monkeypatch.setattr(engine,'_save_task_state',no_save);monkeypatch.setattr(engine,'_push_wf_task_update',lambda *_:None)
     values={v['key']:v.get('default','') for v in raw['variables']}
-    values.update(writer_type='muti',preparation_mode='compact',conflict_plan_mode='short_full',chapter_number='0001',target_word_count='500-550')
+    values.update(writer_type=writer_type,preparation_mode='compact',conflict_plan_mode='short_full',chapter_number='0001',
+                  target_word_count='500-550',learning_context='adopted.md')
     task=WorkflowTask(task_id='task-scheduler-p1',workflow_id=wf.workflow_id,status='running',parameter_values=values)
     async def run():
         return await engine._execute_plan_segment(definition=wf,task=task,execution_plan=wf.get_execution_plan(),disabled_ids=set(),
@@ -238,6 +293,13 @@ def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp
         outcome=asyncio.run(run())
         assert calls.count('agent_dw')==2 and calls.count('agent_aw')==calls.count('agent_si')==1
     assert outcome=='completed',json.dumps({'calls':calls,'states':{k:vars(s) for k,s in task.node_states.items() if s.status not in {'completed','skipped'}},'control':task.control_flow_state},ensure_ascii=False,default=str)
+    assert len(rehearsal_calls)==4
+    owner='agent_sw' if writer_type=='single' else 'agent_si'
+    assert task.node_states[f'rehearse_{owner}'].token_usage['test:writer']['total_tokens']==60
+    if writer_type=='single':
+        assert calls[-1]=='agent_sw' and not set(calls)&set(m.WRITERS)
+        assert m.read_json(tmp_path/'cache/si/chapter.json')['body']=='试演后单写手交稿'
+        return
     expected=[m.WRITERS[i-1] for i in list(range(1,count))+[6]]
     assert set(calls)&set(m.WRITERS)==set(expected)
     if not assembly_retry:assert calls[-1]=='agent_si'
