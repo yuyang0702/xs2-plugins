@@ -319,8 +319,10 @@ def dialogue_goals(source, checks):
             if start is None:raise ValueError('对白引文须按正文顺序，且不可重叠')
             offsets.append(start+len(quote));quotes.append(quote);scope.append(index)
         identity=(focus,tuple(offsets)) if version>=3 else tuple(offsets)
-        if not expression._distinct_quotes(quotes) or identity in seen:
-            raise ValueError('对白验收须使用不同原句，同一组只提交一次')
+        # Identical language in different turns is evidence of a shared
+        # template. The ordered offsets above still reject reusing one span.
+        if identity in seen or (version<4 and not expression._distinct_quotes(quotes)):
+            raise ValueError('对白验收须引用不同的原文位置，同一组只提交一次')
         seen.add(identity)
         if status=='revise':
             target={'id':f'dialogue-{number}','goal':goal,'excerpts':quotes,

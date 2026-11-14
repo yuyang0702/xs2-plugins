@@ -530,3 +530,19 @@ def test_dialogue_v4_turns_voice_flattening_into_a_grounded_repair():
                    'turns':[{'paragraph_id':'p0001','quote':'你先说门怎么坏的。'},
                             {'paragraph_id':'p0002','quote':'门的确坏了，没约修理时间。'}]})
     assert m.dialogue_goals(source,checks)[0]['preserve']==['锁坏了，且无人约时间']
+
+
+def test_dialogue_v4_accepts_identical_words_at_distinct_source_turns():
+    m=module()
+    body='“我已经说过了。”\n\n“我已经说过了。你再想想。”'
+    source={'source_body':body,'paragraphs':m.patches.paragraphs(body),'dialogue_check_version':4}
+    checks=[{'focus':focus,'status':'not_applicable','reason':'无该类情境。','goal':'','turns':[]}
+            for focus in ('literal_echo','situational_speech','checklist_exchange','scripted_delivery')]
+    review={'focus':'voice_contrast','status':'revise','reason':'各自用同一句发言开头。','goal':'按各自所求接话。',
+            'preserve':['两人先前已说过此事'],'target_turn':1,'turns':[
+                {'paragraph_id':'p0001','quote':'我已经说过了。'},
+                {'paragraph_id':'p0002','quote':'我已经说过了。你再想想。'}]}
+    assert m.dialogue_goals(source,[*checks,review])[0]['target']==review['turns'][1]
+    review['turns'][1]=review['turns'][0].copy()
+    with pytest.raises(ValueError,match='不可重叠'):
+        m.dialogue_goals(source,[*checks,review])
