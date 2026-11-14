@@ -79,7 +79,7 @@ def _name(value):
     return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', str(value or ''))).strip().casefold()
 
 
-def _source_digest(library):
+def _library_revision(library):
     return _digest({key: library.get(key, {}) for key in ('candidates', 'profile', 'manifest')})
 
 
@@ -169,9 +169,10 @@ def _catalog_items(catalog):
         ):
             for item in data.get(key, []):
                 if isinstance(item, dict) and isinstance(item.get(id_key), str):
+                    source = item.get('source') or data.get('source') or {}
                     yield {'library_id': library['library_id'], id_key: item[id_key], 'kind': kind,
                            'name': str(item.get(label, '')), 'candidate': copy.deepcopy(item),
-                           'library': library, 'source_sha256': _source_digest(library)}
+                           'library': library, 'source_sha256': source.get('text_sha256')}
 
 
 def _resolve(entry, catalog):
@@ -473,7 +474,7 @@ class ReferenceAdoptionJobs:
                     return job
                 binding = {'book_files': _bound_files(root), 'advisor_sha256': _digest(entry),
                            'project_sha256': _digest(project),
-                           'sources': {item['library_id']: item['source_sha256'] for item in selected}}
+                           'sources': {item['library_id']: _library_revision(item['library']) for item in selected}}
                 job['source_binding'] = binding
                 self._save(root, job)
                 task = asyncio.create_task(self._run(root, job, entry, project, selected, payload, binding))
@@ -491,7 +492,7 @@ class ReferenceAdoptionJobs:
                 or _bound_files(root) != binding['book_files']):
             raise ReviewRequired('本书或顾问建议在检查期间已变化，请重新检查后采用。')
         catalog = {item['library_id']: item for item in self.catalog_loader()}
-        if any(identifier not in catalog or _source_digest(catalog[identifier]) != expected
+        if any(identifier not in catalog or _library_revision(catalog[identifier]) != expected
                for identifier, expected in binding['sources'].items()):
             raise ReviewRequired('写法来源在检查期间已变化或被删除，请重新分析后采用。')
 

@@ -97,6 +97,10 @@ def macro_guard(root):
 
 
 def effective(root,chapter,task=''):
+    fixed=fixed_edit(root,chapter,task)
+    if fixed:
+        target='-'.join(map(str,fixed['edit']['bounds']))
+        return {'target_word_count':target,'words_per_chapter':target}
     quota=current(root,chapter)
     if task and support.safe(root,folder(task)+'/reuse.json').is_file():
         receipt=support.serial()._signed_output(root,folder(task)+'/reuse.json')
@@ -128,7 +132,96 @@ def sources(root,chapter):
     return {p:support.digest(root,p) for p in sorted(paths)}
 
 
-def prepare(root,chapter,task,target,ownership='inherit'):
+def review_refresh_candidate(root,chapter,workflow,task):
+    """Recover only a changed plan stranded before its required independent review."""
+    guard=load('composition_refresh_guard',HERE/'production_guard/production_guard.py')
+    native=guard.terminal_native_task(root,workflow,task)
+    nodes=native.get('node_states',{}) if native else {}
+    error=str(nodes.get('script_composition_commit',{}).get('error') or '')
+    if (not native or native['status']!='failed'
+            or str(native.get('parameter_values',{}).get('chapter_number'))!=chapter
+            or {key for key,node in nodes.items() if node.get('status')=='failed'}!={'script_composition_commit'}
+            or 'RETRY_STOP: content：方案变化，已重建输入，请复查当前方案。' not in error):
+        return None
+    base=folder(task)
+    request=support.load(root,base+'/request.json')
+    if (request['chapter']!=chapter or request['task_id']!=task or request['intent']!=intent(root)
+            or identity({k:v for k,v in request.items() if k!='request_digest'})!=request['request_digest']
+            or book.resolve(root)!=request['book_contract']):
+        raise ValueError('旧篇幅规划来源或作者要求已有变化')
+    support.verify(root,{p:h for p,h in request['source_hashes'].items() if p!='.novel-project.json'})
+    raw_plan=support.load(root,base+'/plan.json');raw_review=support.load(root,base+'/review.json')
+    for node,key,raw in [('agent_composition_plan','composition_plan_result',raw_plan),
+                         ('agent_composition_review','composition_review_result',raw_review)]:
+        outcome=nodes.get(node,{})
+        if outcome.get('status')!='completed' or json.loads(outcome.get('outputs',{}).get(key,'null'))!=raw:
+            raise ValueError('旧方案或复核不是对应任务的模型结果')
+    packet=support.load(root,base+'/review-input.json')
+    model=support.load(root,base+'/review-model.json')
+    model_packet.verify_composition(model,packet)
+    plan=model_packet.bind_composition_response(raw_plan,request)
+    validate_plan(request,plan)
+    if (packet!={'request':request,'plan':plan,'request_digest':request['request_digest'],'plan_digest':identity(plan)}
+            or raw_review.get('plan_digest') in (model['plan_digest'],packet['plan_digest'])):
+        raise ValueError('旧方案和待复核版本无法确认')
+    return {'task_id':task,'plan':{k:v for k,v in plan.items() if k!='request_digest'},
+        'previous_review_reason':raw_review.get('reason',''),
+        'note':'旧任务的最新版方案还未获得独立复核。可用作规划起点，必须绑定本轮输入并重新复核。'}
+
+
+def fixed_edit(root,chapter,task,accepted_sha=None):
+    if not task:return None
+    path=folder(task)+'/fixed-edit.json'
+    if not support.safe(root,path).is_file():return None
+    receipt=support.serial()._signed_output(root,path)
+    if receipt['chapter']!=chapter or receipt['task_id']!=task:
+        raise ValueError('局部删句的篇幅凭据不属于当前任务')
+    hashes=dict(receipt['source_hashes'])
+    body_path=f'story/{chapter}/chapter.md'
+    if accepted_sha and accepted_sha==receipt['edit']['candidate_sha256'] and support.digest(root,body_path)==accepted_sha:
+        hashes[body_path]=accepted_sha
+    support.verify(root,hashes)
+    return receipt
+
+
+def fixed_deletion(root,request,quality):
+    """Measure a single, explicitly quoted deletion within the author's scope."""
+    config=request['policy'];bounds=request['author_range']
+    if (config['ownership']!='author' or not bounds or request['automatic_revision_advice']
+            or request['conflict'] or request.get('prior_unreviewed_plan')):
+        return None
+    if bounds[0]<config.get('minimum',1) or bounds[1]>config.get('maximum',200000):return None
+    chapter=request['chapter'];body_path=f'story/{chapter}/chapter.md'
+    report=request['reader_report'] or {}
+    if (not request['body'] or report.get('assessment_scope')!='whole_chapter' or report.get('verdict')!='pass'
+            or report.get('body_sha256')!=request['source_hashes'][body_path] or report.get('issues')!=[]
+            or any((report.get(key) or {}).get('verdict')!='pass' for key in ('fact_review','expression_review'))):
+        return None
+    instruction=re.fullmatch(
+        r'(?:(?:本轮|本次)?只改[^。，！？；\r\n]*(?:这一个问题|这个问题|这一处)。\s*)?(?:删掉|删除|去掉)\s*'
+        r'(?:“([^”\r\n]+)”|「([^」\r\n]+)」|"([^"\r\n]+)")\s*(?:这一句|这句话|这句)?'
+        r'(?:，(?:因为|它|这句|该句)[^。，！？；;,\r\n]+)?[。！]?\s*'
+        r'(?:保持[^。，！？；;,\r\n]+，)?(?:保留其他正文[。！]?)?',request['author_feedback'].strip())
+    if not instruction:return None
+    quote=next(text for text in instruction.groups() if text is not None)
+    if not re.fullmatch(r'[^。！？!?\r\n]+[。！？!?]',quote):return None
+    body=support.safe(root,body_path).read_bytes();text=body.decode('utf-8')
+    if text.count(quote)!=1:return None
+    patches=load('fixed_deletion_patch',HERE/'draft_guard/revision_patch.py')
+    rows=[row for row in patches.paragraphs(text) if quote in row['text']]
+    if len(rows)!=1 or quality.measurement(body,chapter,bounds)['status']!='pass':return None
+    patch={'source_sha256':request['source_hashes'][body_path],'edits':[
+        {'paragraph_id':rows[0]['id'],'old':quote,'occurrence':1,'replacement':''}]}
+    try:
+        candidate=patches.apply_patches(text,patch,protected_phrases=request['book_contract']['protected_phrases']).encode()
+    except ValueError:
+        return None
+    measured=quality.measurement(candidate,chapter,bounds)
+    if measured['status']!='pass':return None
+    return {'bounds':bounds,'patch':patch,'candidate_sha256':measured['body_sha256'],'candidate_count':measured['actual']}
+
+
+def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedback_file=None):
     quality=load('composition_quality',HERE/'console_service/length_quality.py')
     ownership={'沿用本书':'inherit','作者硬性范围':'author','按内容规划':'planner'}.get(ownership,ownership)
     if ownership not in ('inherit','author','planner'):raise ValueError('未知篇幅归属选项')
@@ -155,6 +248,7 @@ def prepare(root,chapter,task,target,ownership='inherit'):
     progress=support.load(root,'observability/report.json',{}).get('progress',{})
     project=support.load(root,'.novel-project.json',{})
     total=support.load(root,'meta/longrun_contract.json',{}).get('target_new_characters')
+    body=support.read(root,f'story/{chapter}/chapter.md')
     request={'schema':1,'enabled':True,'chapter':chapter,'task_id':task,'policy':config,
         'macro_guard':macro_guard(root),
         'reuse_profile':{'code':code_profile(),'runtime':runtime_profile(root),'models':{k:v for k,v in project.items() if 'model' in k.lower()},
@@ -164,13 +258,46 @@ def prepare(root,chapter,task,target,ownership='inherit'):
         'nominal_target':target,'author_range':list(quality.target_range(target)) if target and
             (config['ownership']=='author' or target!=values.get('target_word_count','')) else None,
         'book_contract':frozen['contract'],'source_hashes':hashes,
-        'body':support.read(root,f'story/{chapter}/chapter.md'),'reader_report':support.load(root,f'story/{chapter}/reader_report.json'),
+        'body':body,'reader_report':support.load(root,f'story/{chapter}/reader_report.json'),
         'chapter_plan':support.load(root,f'planning/chapters/{chapter}.json'),
         'author_feedback':author,'automatic_revision_advice':advice,'authored_selection':selected,
         'book_target':total,'macro_budget':{'target_new_prose':total,'accepted_new_prose':progress.get('accepted_new_characters'),
             'remaining_chapter_slots':remaining_slots(project),
             'note':'基线不计入新增目标；当前章尚未验收，未写部分继续承担余量，不按固定单章均值填充。'},
         'conflict':support.load(root,f'planning/composition-conflicts/{chapter}.json')}
+    if body:
+        request['current_prose_count']=quality.count_prose(body)
+        request['revision_budget_guidance']='局部返修以当前实测字数及实际增减为基线，未要求修改的内容按现稿计入；不要为满足建议分段预算扩写其他段落。'
+    key=f"{chapter}/{project.get('stageId')}/{project.get('readerRepairCount') or 0}"
+    refresh=(project.get('compositionReviewRefreshRecoveries') or {}).get(key)
+    if refresh and project.get('autoArmed') and not refresh.get('completed'):
+        candidate=review_refresh_candidate(root,chapter,refresh['workflow_id'],refresh['task_id'])
+        if candidate:
+            request['prior_unreviewed_plan']=candidate
+    base=folder(task)
+    selected_feedback=feedback if feedback_file is None else feedback_file
+    existing_fixed=fixed_edit(root,chapter,task)
+    if existing_fixed:
+        if existing_fixed['feedback_path']!=selected_feedback or existing_fixed['edit']['bounds']!=request['author_range']:
+            raise ValueError('同任务的删句意见或目标篇幅已有变化')
+        return {'enabled':False,'fixed_edit':True}
+    feedback_hashes={}
+    if selected_feedback and selected_feedback!=feedback:
+        for path in (selected_feedback,(Path(selected_feedback).parent/'automatic-origin.json').as_posix()):
+            feedback_hashes[path]=support.digest(root,path)
+    equivalent_feedback=(selected_feedback==feedback or (bool(feedback) and bool(selected_feedback)
+        and feedback_hashes[selected_feedback]==hashes[feedback]
+        and feedback_hashes[(Path(selected_feedback).parent/'automatic-origin.json').as_posix()]
+            ==hashes[(Path(feedback).parent/'automatic-origin.json').as_posix()]))
+    if (polish_pass=='content' and equivalent_feedback
+            and not any(support.safe(root,base+'/'+name).is_file() for name in ('request.json','reuse.json'))):
+        edit=fixed_deletion(root,request,quality)
+        if edit:
+            hashes={**hashes,**feedback_hashes}
+            receipt={'chapter':chapter,'task_id':task,'source_hashes':hashes,'edit':edit,'feedback_path':selected_feedback}
+            support.archive_store().publish_views(root,lambda write:write(root,base+'/fixed-edit.json',receipt),
+                lambda:(support.verify(root,hashes) or hashes))
+            return {'enabled':False,'fixed_edit':True}
     request['model_transport']='composition-view-v1'
     request['request_digest']=identity(request)
     path=folder(task)+'/request.json';old=support.load(root,path)
@@ -319,9 +446,12 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=['prepare','candidate','commit','emit','bypass'])
     parser.add_argument('--chapter',default='0001');parser.add_argument('--target',default='');parser.add_argument('--dir',default='')
     parser.add_argument('--ownership',default='inherit')
+    parser.add_argument('--polish-pass',default='')
+    parser.add_argument('--feedback-file',default=None)
     args=parser.parse_args();root=Path.cwd();task=os.environ.get('TASK_ID','');out={}
     if args.action=='prepare':
-        request=prepare(root,args.chapter,task,args.target,args.ownership);enabled=request['enabled']
+        request=prepare(root,args.chapter,task,args.target,args.ownership,
+                        polish_pass=args.polish_pass,feedback_file=args.feedback_file);enabled=request['enabled']
         out={'composition_enabled':'yes' if enabled else 'no','composition_reused':'yes' if request.get('reused') else 'no'}
         if enabled:
             base=folder(task);out.update(composition_dir=base,composition_request_file=base+'/request.json',
@@ -335,7 +465,9 @@ def main():
         if request.get('model_transport'):model_packet.verify_composition(support.load(root,args.dir+'/request-model.json'),request)
         if json.loads(sys.stdin.read())!=plan:raise ValueError('规划文件不是本次实际模型输出')
         support.verify(root,request['source_hashes'])
-        try:validate_plan(request,plan)
+        try:
+            if request.get('model_transport'):plan=model_packet.bind_composition_response(plan,request)
+            validate_plan(request,plan)
         except ValueError as exc:
             if plan.get('status')=='needs_scope':raise
             support.write(root,args.dir+'/feedback.md',str(exc))
@@ -348,6 +480,11 @@ def main():
         request=support.load(root,args.dir+'/request.json');support.verify(root,request['source_hashes'])
         packet=support.load(root,args.dir+'/review-input.json')
         if request.get('model_transport'):model_packet.verify_composition(support.load(root,args.dir+'/review-model.json'),packet)
+        try:
+            if request.get('model_transport'):plan=model_packet.bind_composition_response(plan,request)
+        except ValueError as exc:
+            support.write(root,args.dir+'/feedback.md',str(exc))
+            _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_composition_plan">规划编号与冻结输入不一致，请复制当前顶层编号。</WF_REJECT_UPSTREAM>');return
         if packet['plan_digest']!=identity(plan):
             try:validate_plan(request,plan)
             except ValueError as exc:
@@ -356,9 +493,11 @@ def main():
                 _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_composition_plan">变更后的规划字段不一致，请按冻结目标与实际分段修正，不改来源。</WF_REJECT_UPSTREAM>');return
             support.write(root,args.dir+'/review-input.json',{'request':request,'plan':plan,'request_digest':request['request_digest'],'plan_digest':identity(plan)})
             support.write(root,args.dir+'/review-model.json',model_packet.composition(support.load(root,args.dir+'/review-input.json')))
-            _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_composition_review">方案变化，已重建输入，请复查当前方案。</WF_REJECT_UPSTREAM>');return
+            _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_composition_review">COMPOSITION_REVIEW_REFRESH: 方案变化，已重建输入，请复查当前方案。</WF_REJECT_UPSTREAM>');return
         if review.get('verdict')=='needs_scope':raise ValueError('内容和作者范围冲突，未放宽要求。')
-        try:accept(root,task,plan,review)
+        try:
+            if request.get('model_transport'):review=model_packet.bind_composition_response(review,packet)
+            accept(root,task,plan,review)
         except ValueError as exc:
             support.verify(root,request['source_hashes'])
             if book.resolve(root)!=request['book_contract']:raise

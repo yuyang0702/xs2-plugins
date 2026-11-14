@@ -351,25 +351,44 @@ def main():
         if source_file.exists() and source_file.read_text(encoding='utf-8')!=source_text:
             raise ValueError('规划依据已有变化，请创建新任务')
         length.atomic_text(source_file,source_text)
+        quote_file=directory/'planning-sources-model.md'
+        quote_view=continuity_policy.planning_quote_view(source_text)
+        if quote_file.exists() and quote_file.read_text(encoding='utf-8-sig')!=quote_view:
+            raise ValueError('分场引用编号已有变化，请创建新任务')
+        length.atomic_text(quote_file,quote_view)
         save_json(directory / 'planning-budget.json', {'chapter_minimum': bounds[0], 'chapter_maximum': bounds[1],
             'max_scenes': len(WRITERS), 'allocation': '先按已有事件确定1—6场，再给相对权重和篇幅理由；不预分六份预算。'})
         outputs = {'multi_dir': relative, 'multi_budgets': f'{relative}/planning-budget.json'}
-        outputs['multi_sources']=f'{relative}/planning-sources.md'
+        outputs['multi_sources']=f'{relative}/planning-sources-model.md'
         outputs.update({f'multi_active_{i}': 'no' for i in range(1, 6)})
         for key, value in outputs.items():
             print(f'<WF_VAR>{key}:{value}</WF_VAR>')
     elif args.action == 'plan':
+        plan_file=directory/'plan.json'
+        source_file=directory/'planning-sources.md'
+        quote_file=directory/'planning-sources-model.md'
+        sources=source_file.read_text(encoding='utf-8-sig') if source_file.is_file() else ''
+        if quote_file.is_file() and quote_file.read_text(encoding='utf-8-sig')!=continuity_policy.planning_quote_view(sources):
+            raise ValueError('分场引用编号和冻结资料不一致，请创建新任务')
         try:
-            plan = read_json(directory / 'plan.json')
+            raw_plan = read_json(plan_file)
+            plan = raw_plan
             validate_plan(plan)
             if 'continuity' in plan:
-                continuity_policy.validate_contract(plan['continuity'],(directory/'planning-sources.md').read_text(encoding='utf-8-sig'),len(plan['scenes']))
+                if quote_file.is_file():
+                    plan={**plan,'continuity':continuity_policy.bind_planning_quotes(plan['continuity'],sources)}
+                continuity_policy.validate_contract(plan['continuity'],sources,len(plan['scenes']))
         except ValueError as exc:
-            retry('agent_nw', '[scene_plan] 返回有效场景卡及有资料原文支持、金额与余款可复算的continuity契约。'+str(exc))
+            from html import escape
+            retry('agent_nw', '[scene_plan] 返回有效场景卡及有资料原文支持、金额与余款可复算的continuity契约。'+escape(str(exc),quote=False))
             return
-        accepted = allocation_policy.allocate_plan(plan, bounds, allocation_policy.digest(directory / 'plan.json'),
-            allocation_policy.digest(directory/'planning-sources.md') if 'continuity' in plan else '')
         allocation_file = directory / 'allocation.json'
+        if plan != raw_plan:
+            if allocation_file.is_file():
+                raise ValueError('已有分场绑定，不能重新换算引用编号')
+            save_json(plan_file,plan)
+        accepted = allocation_policy.allocate_plan(plan, bounds, allocation_policy.digest(plan_file),
+            allocation_policy.digest(source_file) if 'continuity' in plan else '')
         if allocation_file.is_file() and read_json(allocation_file) != accepted:
             raise ValueError('已确认分场或篇幅分配已有变化，请创建新任务，不能复用旧场景')
         # Check every existing brief before publishing anything. A rejected legacy

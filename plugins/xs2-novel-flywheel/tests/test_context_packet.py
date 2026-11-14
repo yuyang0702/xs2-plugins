@@ -63,6 +63,72 @@ def test_projection_removes_duplicates_but_keeps_full_contract_and_sources():
     assert data['source_body']==text and 'evidence_catalog' in data
 
 
+def test_writer_gets_one_manuscript_and_only_current_goals_linked_to_exact_paragraphs():
+    p=module();body='雨停了。\r\n\r\n她把门推开。\r\n\r\n雨停了。'; book={'narrator_scope':'limited'}
+    data={'writer_view_version':2,'source_body':body,'source_sha256':'bound', 'book_contract':book,
+          'author_feedback':'只合并重复交代。','writer_references':{'meta/character_voice_adaptations.md':'保留短句。'},
+          'confirmed_context':body,'reader_report':{'summary':'旧报告全文'},'critique':{'issues':[]},
+          'prior_revision':{'candidate':body},'composition_plan':{'review':{'reason':'旧规划复查'}},
+          'goals':[{'id':'g','goal':'合并重复。','excerpts':['雨停了。','雨停了。\n\n她把门推开。','过期稿引文。']}]}
+    view=p.local(data,'writer')
+    assert p.restore(view['source_body'])==body and view['book_contract']==book
+    assert view['author_feedback']==data['author_feedback'] and view['writer_references']==data['writer_references']
+    assert view['goals']==[{'id':'g','goal':'合并重复。','paragraph_ids':['p0001','p0002','p0003']}]
+    assert not {'confirmed_context','reader_report','critique','prior_revision','composition_plan'}&view.keys()
+    assert '过期稿引文。' not in json.dumps(view,ensure_ascii=False)
+    p.verify(view,data,'writer')
+
+
+def test_reviewer_shares_unchanged_paragraphs_and_context_with_full_reports():
+    p=module()
+    opening='【只传一次的开场】'*60
+    world='【世界规则】'*60
+    source=f'\ufeff{opening}\r\n\r\n删掉这段。\r\n\r\n尾声。\r\n\r\n重复。\r\n\r\n重复。\r\n'
+    candidate=f'\ufeff{opening}\r\n\r\n尾声。\r\n\r\n重复。\r\n\r\n重复。\r\n'
+    context='正文存档\n'+source.replace('\r\n','\n')+'\n故事规则\n'+world+'\n独有事实。'
+    data={'writer_view_version':2,'reviewer_view_version':1,'source_body':source,'candidate':candidate,
+          'confirmed_context':context,'book_contract':{'world_sources':[{'text':world}]},
+          'reader_report':{'blind_review':{'summary':'完整报告','evidence':['保留所有报告字段。']}},
+          'critique':{'issues':[{'description':'自审全文。'}]}}
+    view=p.local(data,'reviewer')
+    assert view['candidate']==p.prose(candidate)
+    assert p.restore(view['source_body'],view['candidate'])==source
+    assert p.restore_review_context(view)==context
+    assert view['reader_report']==data['reader_report'] and view['critique']==data['critique']
+    serialized=json.dumps(view,ensure_ascii=False)
+    assert serialized.count(opening)==serialized.count(world)==1
+    p.verify(view,data,'reviewer')
+
+
+def test_critic_shares_exact_context_text_without_losing_the_reader_report():
+    p=module();source=('一段原文。'*40)+'\r\n\r\n最后一句。'
+    context='冻结上下文\n'+source.replace('\r\n','\n')+'\n剩余上下文'
+    data={'critic_view_version':1,'source_body':source,'confirmed_context':context,'reader_report':{'summary':'完整报告'}}
+    view=p.local(data,'critic')
+    assert p.restore(view['source_body'])==source
+    assert p.restore_review_context(view)==context and view['reader_report']==data['reader_report']
+    assert json.dumps(view,ensure_ascii=False).count('一段原文。'*40)==1
+    p.verify(view,data,'critic')
+
+
+def test_reviewer_compacts_paragraph_labels_and_whitespace_without_changing_evidence_ids():
+    p=module()
+    source='\ufeff开场。\r\n\r\n下一段。\n\n \r\n原句。'+('\r\n\r\n保留。'*10)+'\r\n'
+    candidate=source.replace('原句。','新句。')
+    data={'reviewer_view_version':2,'source_body':source,'candidate':candidate,
+          'confirmed_context':'正文：'+source,'reader_report':{'summary':'完整原报告'}}
+    view=p.local(data,'reviewer')
+    assert view['candidate']['paragraphs']['p0003']=='新句。'
+    assert view['candidate']['before_overrides']['p0003']=='\n\n \r\n'
+    assert p.restore(view['candidate'])==candidate
+    assert p.restore(view['source_body'],view['candidate'])==source
+    assert p.restore_review_context(view)==data['confirmed_context']
+    assert view['reader_report']==data['reader_report']
+    assert len(json.dumps(view['candidate'],ensure_ascii=False,separators=(',',':')))<len(
+        json.dumps(p.prose(candidate),ensure_ascii=False,separators=(',',':')))
+    p.verify(view,data,'reviewer')
+
+
 def test_blind_projection_preserves_allowlist_and_cannot_inject_hidden_author_data():
     p=module();data={'manuscript':'雪\n\n停了。','style_contract':{'narrator_scope':'unreliable'},'genre':'幻想',
         'evidence_catalog':[{'id':'p0001','text':'雪'}]}
@@ -80,7 +146,8 @@ def test_actual_local_pipeline_binds_model_view_to_full_inputs_and_rejects_tampe
     data=json.loads(view_path.read_text(encoding='utf-8'))
     target='candidate' if role=='review' else 'source_body'
     assert module().restore(data[target])
-    data[target]['paragraphs'][0]['text']='模型不可见的替换。'
+    if role=='review':data[target]['paragraphs']['p0001']='模型不可见的替换。'
+    else:data[target]['paragraphs'][0]['text']='模型不可见的替换。'
     view_path.write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8')
     with pytest.raises(ValueError):
         if role=='review':m.commit(tmp_path,out['revision_dir'],approved(m,out,tmp_path))

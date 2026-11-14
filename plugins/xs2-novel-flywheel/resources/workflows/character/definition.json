@@ -1290,7 +1290,7 @@
       "required": false,
       "description": "agent_skeleton 产出的角色骨架 JSON 文件",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1302,7 +1302,7 @@
       "required": false,
       "description": "agent_belief 产出的信念系统 JSON 文件",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1314,7 +1314,7 @@
       "required": false,
       "description": "extract_names 脚本产出的角色名数组，供循环网关遍历",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1326,7 +1326,7 @@
       "required": false,
       "description": "逐角色循环当前项，由 Loop Gateway 在每轮设置",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1338,7 +1338,7 @@
       "required": false,
       "description": "agent_deep 每轮产出的角色深层维度 JSON 文件",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1350,7 +1350,7 @@
       "required": false,
       "description": "script_merge 生成的最终角色档案，供声线提取读取",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1474,7 +1474,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1486,7 +1486,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1498,7 +1498,7 @@
       "default": ".",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1510,7 +1510,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1522,7 +1522,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1534,7 +1534,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1546,7 +1546,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1558,7 +1558,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1570,7 +1570,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1582,7 +1582,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1594,7 +1594,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1606,7 +1606,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1618,7 +1618,7 @@
       "default": "",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"
@@ -1630,7 +1630,7 @@
       "default": "{{card_review_input_file}}",
       "required": false,
       "hidden": true,
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "options": [],
       "description": "人物卡语义审核的任务内路径/来源；不用于覆写既有档案。"

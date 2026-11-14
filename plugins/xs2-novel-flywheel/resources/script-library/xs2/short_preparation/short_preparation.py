@@ -257,7 +257,7 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
         if relative in REQUIRED and not value.strip():
             raise ValueError(f'缺少有效资料 {relative}')
         if len(value) > 24000:
-            raise ValueError(f'{relative} 超出轻量完整上下文范围，请选择完整准备；未截断')
+            raise ValueError(f'SHORT_CONTEXT_OVERFLOW: {relative} 超出轻量完整上下文范围，请选择完整准备；未截断')
         sources[relative] = value
         alias = policy.runtime_alias(root, policy_runtime, relative, task_id=task_id) if policy else relative
         aliases[relative] = alias
@@ -270,7 +270,7 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
         context += '\n\n## 作者确认要求\n' + '\n'.join(
             str(values.get(key) or '') for key in ('premise', 'source_idea', 'advisor_guidance', 'human_intent', 'world_intent'))
     if len(context) > 80000:
-        raise ValueError('资料总量超过轻量完整上下文范围，请使用完整准备；未截断任何证据')
+        raise ValueError('SHORT_CONTEXT_OVERFLOW: 资料总量超过轻量完整上下文范围，请使用完整准备；未截断任何证据')
     guide = sources['outline/near_term_outline.md']
     world_state = sources.get('meta/current_world.md') or sources['meta/world_foundation.md']
     character_state = sources.get('meta/current_characters.md') or sources['meta/character_profiles.md']

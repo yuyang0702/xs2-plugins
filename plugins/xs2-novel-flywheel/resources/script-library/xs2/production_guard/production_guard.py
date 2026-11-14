@@ -74,9 +74,10 @@ def profile(here=None,names=()):
     return {**files,**resource_hashes(here,names)}
 
 
-def check_definition(definition,parameters,model_metadata=None):
+def check_definition(definition,parameters,model_metadata=None,*,stage=None):
     variables={v['key'] for v in definition.get('variables',[])}
     errors=[];compatibility={};model_metadata=model_metadata or {}
+    stage=stage or str(definition.get('workflow_id','')).removeprefix('xs2-novel-flywheel-')
     for node in definition.get('nodes',[]):
         serialized=json.dumps({k:node.get(k) for k in ('first_message','system_prompt_template','node_params','output_file_path','agent_type','model_override','var_bindings')},ensure_ascii=False)
         missing={key if key in variables else key.split('.')[0] for key in PLACEHOLDER.findall(serialized)}-variables-BUILTINS
@@ -91,7 +92,6 @@ def check_definition(definition,parameters,model_metadata=None):
                 if params.get('script_source','inline')=='library':
                     identity=f'script-library/{group}/{name}/{name}.{extension}'
                 else:
-                    stage=str(definition.get('workflow_id','')).removeprefix('xs2-novel-flywheel-')
                     identity=f'workflows/{stage}/script/{name}.{extension}'
                 try:resource(HERE,identity)
                 except (FileNotFoundError,ValueError):errors.append(node['id']+': missing script '+identity)
@@ -159,12 +159,14 @@ def release(root,lease):
 
 def classify(reason):
     text=str(reason).lower()
+    if text.startswith('composition_review_refresh:'):return 'dependency_refresh'
+    if text.startswith('dialogue_review_format:'):return 'format'
     if any(s in text for s in ('resource:','preflight:','dependency','漂移','filenotfound')):return 'installation'
     if any(s in text for s in ('lease:','来源哈希不匹配','来源已有变化','哈希不匹配','冻结资料已有变化','冻结原文已有变化')):return 'source'
     if any(s in text for s in ('context_budget:','上下文容量')):return 'budget'
     if any(s in text for s in ('timeout','connection','tls','ssl','streaming chunk')):return 'transport'
     if any(s in text for s in ('证据','引用','逐字','不在当前','目标id','编号')):return 'evidence'
-    if any(s in text for s in ('json','协议','schema','格式','字段','须为')):return 'format'
+    if any(s in text for s in ('precision_review_format:','json','协议','schema','格式','字段','须为')):return 'format'
     if 'content_length_conflict' in text:return 'scope'
     return 'content'
 
@@ -255,7 +257,10 @@ def _reconcile_native_failures(root,native,context):
 
 def retry(root,scope,target,reason,total=4):
     category=classify(reason);fingerprint=digest([category,str(reason)])
-    original_scope=scope;scope,context=_retry_scope(root,scope,target)
+    refresh=target=='agent_composition_review' and category=='dependency_refresh'
+    if refresh:
+        scope='composition-refresh/'+scope.rsplit('/',1)[-1]
+    original_scope=scope;scope,context=_retry_scope(root,scope,None if refresh else target)
     native=None;source_key=None
     task=os.environ.get('TASK_ID');workflow=os.environ.get('WORKFLOW_ID');host=host_root()
     if context and task and workflow and context['owner']==workflow+'/'+task and host:
@@ -269,7 +274,7 @@ def retry(root,scope,target,reason,total=4):
         before=list(db.execute('SELECT * FROM logical_retries WHERE scope=?',(scope,)))
         sequence,charged=_charge_retry(db,scope,target,reason,source_key)
         rows=list(db.execute('SELECT * FROM logical_retries WHERE scope=?',(scope,)))
-        stop=(_retry_stop(rows,total) if context else
+        stop=(len(rows)>2 if refresh else _retry_stop(rows,total) if context else
               (category in {'installation','source','budget'} or len(before)>=total
                or category in {'format','evidence'} and any(r['fingerprint']==fingerprint for r in before)))
         db.execute('INSERT OR REPLACE INTO logical_retry_scope_aliases VALUES(?,?)',(original_scope,scope))
@@ -431,7 +436,7 @@ def _input_parameters(root,snapshot,parameters):
 def _manifest(root,stage,chapter,task,workflow,native):
     snapshot=_definition(native);parameters=native.get('parameter_values',{})
     capabilities=_capabilities(root)
-    manifest=check_definition(snapshot,_input_parameters(root,snapshot,parameters),capabilities)
+    manifest=check_definition(snapshot,_input_parameters(root,snapshot,parameters),capabilities,stage=stage)
     manifest.update(stage=stage,chapter=chapter,task_id=task,workflow_id=workflow,task_created_at=native['created_at'],
                     resources=profile(names=('prompts.json','agents.json','skills.json',f'workflows/{stage}/definition.json')),
                     capability_sha256=digest(capabilities),report_protocol='local-review-v2',
@@ -565,18 +570,25 @@ def _active(root,scope):
         return dict(row) if row else None
 
 
-def _terminal_owner(root,lease):
-    """Only an authoritative native owner in this workspace permits release."""
-    parts=lease['owner'].split('/',1);host=host_root()
-    if len(parts)!=2 or host is None:return False
-    path=task_path(host,*parts)
-    if not path.is_file():return False
+def terminal_native_task(root,workflow,task):
+    """Read a terminal task only when its native record belongs to this workspace."""
+    host=host_root()
+    if host is None:return None
+    path=task_path(host,workflow,task)
+    if not path.is_file():return None
     prior=_read(path)
     if (prior.get('status') not in TERMINAL or not prior.get('workspace_override')
             or Path(prior['workspace_override']).resolve()!=Path(root).resolve()
-            or prior.get('workflow_id',parts[0])!=parts[0] or prior.get('task_id',parts[1])!=parts[1]):return False
-    saved=Path(root)/'cache/production-runs'/parts[1]/'manifest.json'
-    if saved.is_file() and _read(saved)['manifest']['task_created_at']!=prior.get('created_at'):return False
+            or prior.get('workflow_id',workflow)!=workflow or prior.get('task_id',task)!=task):return None
+    saved=Path(root)/'cache/production-runs'/task/'manifest.json'
+    if saved.is_file() and _read(saved)['manifest']['task_created_at']!=prior.get('created_at'):return None
+    return prior
+
+
+def _terminal_owner(root,lease):
+    """Only an authoritative native owner in this workspace permits release."""
+    parts=lease['owner'].split('/',1)
+    if len(parts)!=2 or terminal_native_task(root,*parts) is None:return False
     return release(root,lease)
 
 
@@ -673,8 +685,8 @@ def release_launch(root,state,stage):
     if not ref and intent.get('stage')==stage:
         ref={k:intent.get(k) for k in ('workflow_id','task_id')}
     if not lease or not ref.get('workflow_id') or not ref.get('task_id'):return False
-    native=_native(root,ref['workflow_id'],ref['task_id'])
-    if native.get('status') not in TERMINAL or not _intent_ref(state,stage,ref['workflow_id'],ref['task_id'],native):return False
+    native=terminal_native_task(root,ref['workflow_id'],ref['task_id'])
+    if not native or not _intent_ref(state,stage,ref['workflow_id'],ref['task_id'],native):return False
     current=_active(root,lease['scope'])
     if current==lease:return release(root,lease)
     if current and current['owner']==ref['workflow_id']+'/'+ref['task_id']:return _terminal_owner(root,current)

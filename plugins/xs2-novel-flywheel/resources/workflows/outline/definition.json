@@ -1248,7 +1248,7 @@
       "key": "story_support_context",
       "name": "共同故事上下文",
       "type": "file",
-      "source_type": "input",
+      "source_type": "output",
       "default": "cache/story-support/context.md",
       "required": false,
       "hidden": true
@@ -1261,7 +1261,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1273,7 +1273,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1285,7 +1285,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1297,7 +1297,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1309,7 +1309,7 @@
       "required": false,
       "description": "用户确认后的抽象创作机制；没有选择时为空",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },
@@ -1320,7 +1320,7 @@
       "default": " ",
       "required": false,
       "hidden": true,
-      "source_type": "input"
+      "source_type": "output"
     },
     {
       "key": "prose_policy_runtime",
@@ -1329,7 +1329,7 @@
       "default": " ",
       "required": false,
       "hidden": true,
-      "source_type": "input"
+      "source_type": "output"
     },
     {
       "key": "pp_latest_character_state",
@@ -1339,7 +1339,7 @@
       "required": false,
       "description": "",
       "options": [],
-      "source_type": "input",
+      "source_type": "output",
       "source_node_id": "",
       "hidden": true
     },

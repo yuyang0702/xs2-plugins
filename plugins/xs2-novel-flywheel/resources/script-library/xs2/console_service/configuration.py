@@ -24,7 +24,8 @@ OPENING_LEAD_ADVICE = (
 def advisor_catalog(catalog):
     """A source index for planning; detailed evidence is reserved for review."""
     fields = {'candidate_id', 'choice_id', 'mechanism', 'title', 'kind', 'layer', 'scopes',
-              'application_scope', 'target_pov', 'source_pov', 'pov_compatibility', 'risk_flags','reading_objectives'}
+              'application_scope', 'target_pov', 'source_pov', 'pov_compatibility', 'risk_flags',
+              'limits', 'reading_objectives'}
     result = []
     for library in catalog:
         source = library.get('candidates', {})
@@ -124,7 +125,9 @@ CONFIGURATION_PROMPT = (
 )
 
 
-ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了“分析并完善设置”。', '本次用户正在与小说顾问讨论方向。') + (
+ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace(
+    '本次用户选择了“分析并完善设置”。', '本次用户正在与小说顾问讨论方向。'
+).replace('章号、写法选择或修改作品类型', '章号或修改作品类型') + (
     OPENING_LEAD_ADVICE +
     '在writing分区说明独立导语的取舍，在suggestions里用opening_lead给出include（添加）或omit（省略）以及理由；已有明确选择时保持该选择。'
     '本次是正式创作前的小说顾问交流，优先判断这本书写什么、主要看点是什么、适合怎么写。'
@@ -137,13 +140,16 @@ ADVISOR_PROMPT = CONFIGURATION_PROMPT.replace('本次用户选择了“分析并
     'hook（核心看点和读者期待，人物的独立欲望与选择），'
     'writing（字数、视角、节奏、因果递进冲突与伏笔，解释为什么适合），'
     'risks（创意薄弱处、规则矛盾、风格适配风险与处理建议）。'
-    '此外，如果写法库中有相关内容，还应包含三个推荐清单（JSON结构，可选）：'
+    '以下推荐对象与direction等字段同级，全部放在advisor_sections内，返回JSON对象，不能写成Markdown段落。'
+    '推荐库中的写法机制时，若目录有风格条目，同一回复必须检查并推荐适合本书的风格条目。'
+    '综合本书视角、语言、人物和场景挑选；有合适项就填adopted_styles，均不合适或作者要求原创文风时，'
+    '返回adopted_styles:[]及具体的no_match_reason。风格建议由作者与机制一起确认采用。'
     'mechanism_recommendations（推荐的写法机制，JSON结构：'
     '{"adopted_from_library":[{"library_id":"来源ID","candidate_id":"机制ID","mechanism":"机制名","usage_in_story":"本书具体用法","priority":"HIGH","chapter_placement":"第几章"}],'
     '"new_mechanisms":[{"mechanism":"原创机制名","reason":"推荐理由","synergy_with":["关联机制"],"priority":"MEDIUM"}],'
     '"avoid_combinations":[{"a":"机制A","b":"机制B","reason":"不适合组合的原因"}]}），'
     'style_recommendations（推荐的文风选择，JSON结构：'
-    '{"adopted_styles":[{"library_id":"来源ID","choice_id":"风格ID","style":"风格名称","reason":"适配理由","usage_in_story":"具体场景","priority":"HIGH"}],'
+    '{"adopted_styles":[{"library_id":"来源ID","choice_id":"风格ID","style":"风格名称","reason":"为什么适合本书","usage_in_story":"联系本书人物、场景和视角，写清怎么用词、描写或组织叙述","priority":"HIGH"}],'
     '"avoid_styles":[{"style":"风格名称","reason":"不适合的原因"}]}），'
     'conflict_recommendations（推荐的冲突模式，JSON结构：'
     '{"adopted_conflicts":[{"library_id":"来源ID","choice_id":"冲突ID","conflict":"冲突名称","reason":"适配理由","usage_in_story":"本书展开方式","priority":"HIGH"}],'
@@ -178,38 +184,15 @@ def parse_advisor(text: str, mode: str, catalog=None) -> tuple[str, list[dict], 
         raise ValueError('missing adviser sections')
     result = {key: sections[key].strip() for key in keys}
 
-    # 提取 mechanism_recommendations (可选字段)
-    mechanism_recs = sections.get('mechanism_recommendations')
-    if isinstance(mechanism_recs, (dict, str)):
-        if isinstance(mechanism_recs, str):
+    for key in ('mechanism_recommendations', 'style_recommendations', 'conflict_recommendations'):
+        group = sections.get(key)
+        if isinstance(group, str):
             try:
-                mechanism_recs = json.loads(mechanism_recs)
-            except (json.JSONDecodeError, TypeError):
-                mechanism_recs = None
-        if isinstance(mechanism_recs, dict):
-            result['mechanism_recommendations'] = mechanism_recs
-
-    # 提取 style_recommendations (可选字段)
-    style_recs = sections.get('style_recommendations')
-    if isinstance(style_recs, (dict, str)):
-        if isinstance(style_recs, str):
-            try:
-                style_recs = json.loads(style_recs)
-            except (json.JSONDecodeError, TypeError):
-                style_recs = None
-        if isinstance(style_recs, dict):
-            result['style_recommendations'] = style_recs
-
-    # 提取 conflict_recommendations (可选字段)
-    conflict_recs = sections.get('conflict_recommendations')
-    if isinstance(conflict_recs, (dict, str)):
-        if isinstance(conflict_recs, str):
-            try:
-                conflict_recs = json.loads(conflict_recs)
-            except (json.JSONDecodeError, TypeError):
-                conflict_recs = None
-        if isinstance(conflict_recs, dict):
-            result['conflict_recommendations'] = conflict_recs
+                group = json.loads(group)
+            except json.JSONDecodeError:
+                group = None
+        if isinstance(group, dict):
+            result[key] = group
 
     if catalog is not None:
         _validate_source_recommendations(result, catalog)
@@ -244,3 +227,12 @@ def _validate_source_recommendations(sections, catalog):
                 raise ValueError('unknown or duplicate reference source')
             seen.add(key)
             item[label] = available[key].get(title, item.get(label, ''))
+            if label == 'style' and any(
+                not isinstance(item.get(field), str) or not item[field].strip()
+                for field in ('reason', 'usage_in_story')
+            ):
+                raise ValueError('风格条目须说明适配理由和在本书的具体用法。')
+        if label == 'style' and available and sections.get('mechanism_recommendations', {}).get('adopted_from_library'):
+            reason = group.get('no_match_reason')
+            if not selected and not (isinstance(reason, str) and reason.strip()):
+                raise ValueError('推荐写法机制时须同时给出适合本书的风格条目，或说明没有合适风格的原因。')

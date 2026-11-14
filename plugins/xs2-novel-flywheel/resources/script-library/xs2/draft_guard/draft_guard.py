@@ -37,9 +37,10 @@ def draft_conflict(root,directory,binding,payload,reason,quotes,measured=None):
     source=read(directory/'expression-input.json');body=source['source_body']
     if payload.get('status')=='needs_replan' and (set(payload)!={'status','source_sha256','edits','reason','evidence'} or payload['edits']!=[]):
         raise ValueError('初稿冲突不能夹带正文补丁')
-    if (payload.get('source_sha256',body_digest(body))!=body_digest(body) or not reason or not isinstance(quotes,list)
-            or not quotes or any(not isinstance(q,str) or not q or q not in body for q in quotes)):
+    if payload.get('source_sha256',body_digest(body))!=body_digest(body) or not reason:
         raise ValueError('初稿重规划缺少冻结事实稿依据')
+    try:quotes=revision.exact_evidence(body,quotes)
+    except ValueError as exc:raise ValueError('初稿重规划缺少冻结事实稿依据') from exc
     return {'schema':1,'kind':'content_length_conflict','origin':'mvp','task_id':binding['task_id'],
         'source_sha256':body_digest(body),'binding_digest':body_digest(json.dumps(binding,ensure_ascii=False,sort_keys=True)),
         'patch_digest':body_digest(json.dumps(payload,ensure_ascii=False,sort_keys=True)),
@@ -84,6 +85,9 @@ def audit_value(directory,phase,body,contract,binding):
         'candidate_body':body,'continuity_contract':contract,'source_body':source['source_body'],
         'source_constraints':source['source_constraints'],'book_contract':source['book_contract'],
         'narrative_pov':binding['pov'],'target_word_count':binding['target'],'actual_word_count':length.count_prose(body),
+        'evidence_guidance':('核对先发生的动作与后来告知的区别。正文明确写“告诉我……已经做完”时，分别引告知动作和已完成的分句。'
+            '非货币物品先在同一交付场面明确数量、随后由人物接过时，取从数量到交付的连续原文。'
+            '数量引文须包含明确数字及单位，并位于对应事件引文内；两个引文可使用同一段足够短的连续原文。'),
         'evidence_catalog':[{k:r[k] for k in ('id','kind','text')} for r in policy.audit_evidence.catalog(body,policy.audit_evidence.unit_names(contract))]}
 
 
@@ -96,6 +100,42 @@ def audit_context(directory,phase,body,contract,binding):
 
 def patch_length_budget(source,target):
     return revision.length_edit_budget(length.count_prose(source),length.target_range(target))
+
+
+def audit_candidate(directory, report, body, contract, phase, *, arithmetic=None):
+    facts = read(directory/'facts-audit.json') if phase == 'expression' else None
+    issues = policy.audit_issues(report, body, contract, phase, arithmetic=arithmetic, facts_audit=facts)
+    if phase == 'expression':
+        resolved = policy.audit_evidence.resolve_report(report, body, policy.evidence_unit_names(contract))
+        goals = read(directory/'facts-input.json')['book_contract'].get('reading_contract', {})
+        reading_issues = book_policy.reading().validate_checks(resolved, body, goals)
+        issues.extend({'category': 'reading_goal', 'reason': i['impact'], 'goal': i['goal']}
+                      for i in reading_issues if i['priority'] in ('medium', 'high'))
+    return issues
+
+
+def restore_expression_commit(root, project, chapter, seed, source_path, directory, contract, binding):
+    recovery=load('expression_commit_checkpoint',BASE/'console_service/draft_review_checkpoint.py')
+    native=load('expression_commit_runtime',BASE/'production_guard/production_guard.py')
+    source_id=seed['resume_expression_commit']
+    if source_id==binding['task_id']:
+        raise ValueError('表达审核不能从当前任务自身恢复')
+    source=native._native(root,os.environ['WORKFLOW_ID'],source_id)
+    checkpoint=recovery.prepare(root,project,source,chapter)
+    if (checkpoint['selected_node_ids']!=recovery.EXPRESSION_COMMIT
+            or length.safe_path(root,checkpoint['source_file'])!=source_path):
+        raise ValueError('无法核对原任务表达审核与恢复种子')
+    recovery.validate(root,project,checkpoint)
+    previous=length.safe_path(root,f'cache/draft-guard/{source_id}')
+    for name in recovery.EXPRESSION_FILES:
+        original=(previous/name).read_bytes()
+        target=directory/name
+        if target.exists() and target.read_bytes()!=original:
+            raise ValueError('表达审核恢复文件已有变化：'+name)
+        if not target.exists():
+            length.atomic_text(target,original.decode('utf-8'))
+    save(directory/'expression-model.json',packet.local(read(directory/'expression-input.json'),'draft-writer'))
+    audit_context(directory,'expression',seed['body'],contract,binding)
 
 
 def arithmetic_for(root, binding, phase, approved=None):
@@ -165,7 +205,8 @@ def main():
     if args.action=='prepare':
         if (multi/'allocation.json').exists():allocation.read_allocation(multi,length.target_range(args.target))
         contract=policy.validate_contract(plan.get('continuity'),(multi/'planning-sources.md').read_text(encoding='utf-8-sig'),len(plan['scenes']))
-        assembled=read(length.safe_path(root,args.source_file))
+        source_path=length.safe_path(root,args.source_file)
+        assembled=read(source_path)
         if not isinstance(assembled,dict) or not isinstance(assembled.get('body'),str) or not assembled['body'].strip():raise ValueError('缺少待核验完整初稿')
         source_body=assembled['body'].strip()
         binding={'schema':1,'task_id':task,'plan_sha256':plan_sha,'sources_sha256':source_sha,
@@ -183,6 +224,8 @@ def main():
              'source_constraints':(multi/'planning-sources.md').read_text(encoding='utf-8-sig'),
              'narrative_pov':args.pov,'target_word_count':args.target})
         save(directory/'facts-model.json',packet.local(read(directory/'facts-input.json'),'draft-writer'))
+        if assembled.get('resume_expression_commit'):
+            restore_expression_commit(root,project,number,assembled,source_path,directory,contract,binding)
         for phase in ('facts','expression'):
             feedback=directory/f'{phase}-feedback.md'
             if not feedback.exists():length.atomic_text(feedback,'')
@@ -266,11 +309,7 @@ def main():
             raise ValueError('核验报告与本书世界/文风契约不匹配')
         arithmetic, journal, arithmetic_scope = arithmetic_for(
             root, binding, phase, approved if phase == 'expression' else None)
-        issues=policy.audit_issues(report,body,contract,phase,arithmetic=arithmetic)
-        if phase=='expression':
-            resolved=policy.audit_evidence.resolve_report(report,body)
-            reading_issues=book_policy.reading().validate_checks(resolved,body,facts_source['book_contract'].get('reading_contract',{}))
-            issues += [{'category':'reading_goal','reason':i['impact'],'goal':i['goal']} for i in reading_issues if i['priority'] in ('medium','high')]
+        issues=audit_candidate(directory,report,body,contract,phase,arithmetic=arithmetic)
     except (ValueError,FileNotFoundError,TypeError,KeyError) as exc:
         reject(auditor,'核验凭据无效，请按最新正文重做完整核验：'+str(exc));return
     hard=[i for i in issues if i['category'] in policy.HARD]

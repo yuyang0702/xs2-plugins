@@ -34,3 +34,10 @@ def test_empty_writer_params_are_backward_compatible(params):
 @pytest.mark.parametrize('params',[[],False,'high',1])
 def test_invalid_writer_params_are_rejected(params):
     with pytest.raises(ValueError):policy().model_params_overrides({'writerModel':MODEL,'writerModelParams':params},definition(),'mvp')
+
+
+def test_writer_params_skip_non_agent_nodes_with_null_agent_type():
+    doc = definition()
+    doc['nodes'].append({'id': 'script', 'node_type': 'script', 'agent_type': None})
+    state = {'writerModel': MODEL, 'writerModelParams': {'reasoning_effort': 'medium'}}
+    assert policy().model_params_overrides(state, doc, 'mvp') == {'agent_sw': {'reasoning_effort': 'medium'}}

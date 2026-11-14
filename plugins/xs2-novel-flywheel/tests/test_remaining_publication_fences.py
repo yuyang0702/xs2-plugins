@@ -18,6 +18,30 @@ def load(relative):
     return module
 
 
+def test_style_profile_renders_adopted_reference_provenance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    archive = load('nvl/local_archive/local_archive.py')
+    digest = archive._execution_guard().digest
+    raw_path = 'cache/story_plan/style_profile.json'
+    final_path = 'meta/style_profile.md'
+    raw = {'tone': '早市轻喜剧', 'narrative_persona': '陈满第一人称',
+           'references': [{'work': '模型猜测的参考作品'}]}
+    blueprint = {'selected_style_ids': ['style-confirmed'], 'selected_candidate_ids': ['mechanism-confirmed'],
+                 'styles': [{'choice_id': 'style-confirmed', 'title': '口语叙述', 'guidance': '找零时话会被打断'}],
+                 'mechanisms': [{'candidate_id': 'mechanism-confirmed', 'mechanism': '现实任务介入争执'}]}
+    blueprint_path = 'learning/blueprints/v0001.json'
+    for relative, value in [(raw_path, raw), (blueprint_path, blueprint), ('learning/active.json', {
+            'blueprint_path': blueprint_path, 'blueprint_sha256': digest(blueprint)})]:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
+    archive._render_files(raw_path, final_path)
+    final = (tmp_path / final_path).read_text(encoding='utf-8')
+    assert '模型猜测的参考作品' not in final
+    assert all(text in final for text in ['陈满第一人称', 'style-confirmed', '找零时话会被打断', 'mechanism-confirmed'])
+    assert json.loads((tmp_path / raw_path).read_text(encoding='utf-8')) == raw
+
+
 def writer_case(native,monkeypatch,kind):
     guard,root,*_=native;monkeypatch.chdir(root)
     body=root/'story/0001/chapter.md';body.parent.mkdir(parents=True);body.write_bytes('旧正文保留。'.encode())

@@ -9,6 +9,65 @@ from test_length_quality import policy
 from test_composition_plan import prepared
 
 
+def test_native_composition_keeps_full_binding_after_short_model_refs(tmp_path,monkeypatch,capsys):
+    m,request,plan,review=prepared(tmp_path)
+    base='cache/composition/plan-test'
+    view=m.model_packet.composition(request)
+    put(tmp_path,base+'/request-model.json',view)
+    raw_plan={**plan,'request_digest':view['request_digest']}
+    put(tmp_path,base+'/plan.json',raw_plan)
+    monkeypatch.chdir(tmp_path);monkeypatch.setenv('TASK_ID','plan-test')
+    monkeypatch.setattr(sys,'argv',['composition_plan.py','candidate','--dir',base])
+    monkeypatch.setattr(sys,'stdin',io.StringIO(json.dumps(raw_plan,ensure_ascii=False)))
+    m.main();assert 'WF_REJECT' not in capsys.readouterr().out
+    model=m.support.load(tmp_path,base+'/review-model.json')
+    raw_review={**review,'request_digest':model['request_digest'],'plan_digest':model['plan_digest']}
+    put(tmp_path,base+'/review.json',raw_review)
+    monkeypatch.setattr(sys,'argv',['composition_plan.py','commit','--dir',base])
+    monkeypatch.setattr(sys,'stdin',io.StringIO(json.dumps(raw_review,ensure_ascii=False)))
+    m.main();assert 'WF_REJECT' not in capsys.readouterr().out
+    approved=m.current(tmp_path,'0002')
+    assert approved['plan']==plan and approved['review']==review
+    assert m.support.load(tmp_path,base+'/plan.json')==raw_plan
+    assert m.support.load(tmp_path,base+'/review.json')==raw_review
+
+
+@pytest.mark.parametrize('source_changed',[False,True])
+def test_legacy_refresh_stop_can_seed_one_fresh_independent_review(tmp_path,monkeypatch,source_changed):
+    root=tmp_path/'book';m,request,plan,review=prepared(root)
+    host=tmp_path/'host';(host/'src').mkdir(parents=True)
+    monkeypatch.setenv('DETERMINFLOW_PROJECT_DIR',str(host))
+    old_review={**review,'verdict':'revise'}
+    plan['reason']='把预算压回现稿，只修改原对话。'
+    base='cache/composition/plan-test'
+    packet={'request':request,'plan':plan,'request_digest':request['request_digest'],'plan_digest':m.identity(plan)}
+    put(root,base+'/plan.json',plan);put(root,base+'/review.json',old_review)
+    put(root,base+'/review-input.json',packet);put(root,base+'/review-model.json',m.model_packet.composition(packet))
+    ref={'task_id':'plan-test','workflow_id':'native-polish'}
+    task={**ref,'status':'failed','workspace_override':str(root),'parameter_values':{'chapter_number':'0002'},'node_states':{
+        'agent_composition_plan':{'status':'completed','outputs':{'composition_plan_result':json.dumps(plan)}},
+        'agent_composition_review':{'status':'completed','outputs':{'composition_review_result':json.dumps(old_review)}},
+        'script_composition_commit':{'status':'failed','error':'RETRY_STOP: content：方案变化，已重建输入，请复查当前方案。'}}}
+    put(host,'data/workflows/native-polish/tasks/plan-test.json',task)
+    state=m.support.load(root,'.novel-project.json');state.update(stageId='polish',autoArmed=True,readerRepairCount=1,refs={'polish':ref})
+    put(root,'.novel-project.json',state)
+    p=policy()
+    if source_changed:
+        put(root,'story/0002/chapter.md','作者已更新。')
+        with pytest.raises(ValueError,match='已有变化'):p.recovery_action(state,'polish',task,root=root)
+        return
+    action=p.recovery_action(state,'polish',task,root=root)
+    assert action['stage']=='polish' and action['action']=='advance'
+    state.update(action['updates']);put(root,'.novel-project.json',state)
+    new=m.prepare(root,'0002','fresh-task','3500-4000')
+    assert new['current_prose_count']==9
+    assert new['prior_unreviewed_plan']['plan']['reason']==plan['reason']
+    assert 'request_digest' not in new['prior_unreviewed_plan']['plan']
+    assert new['request_digest']!=request['request_digest']
+    assert p.recovery_action(state,'polish',task,root=root) is None
+    assert not (root/'planning/length/0002.json').exists()
+
+
 @pytest.mark.parametrize('source_changed',[False,True])
 def test_changed_plan_with_invalid_goal_links_returns_to_planner_without_approval(tmp_path,monkeypatch,capsys,source_changed):
     m,request,plan,review=prepared(tmp_path)

@@ -62,6 +62,52 @@ def test_book_defined_units_and_ledger_close_without_float_rounding():
     body,report=evidence();assert m.audit_issues(report,body,c,'facts')==[]
 
 
+def test_scene_quote_labels_bind_frozen_evidence_without_relaxing_arithmetic():
+    m = module()
+    source = '铺名青石铺，店主白榆。\n买方同意后验收，再点付六两。\n' + SOURCES
+    c = contract()
+    c['facts'][0]['source_quote'] = '@Q0001'
+    c['events'][0]['source_quote'] = '@Q0002'
+    c['transfers'][0]['source_quote'] = '@Q0002'
+    bound = m.bind_planning_quotes(c, source)
+    assert '[@Q0002] 买方同意后验收，再点付六两。' in m.planning_quote_view(source)
+    assert bound['facts'][0]['source_quote'] == '铺名青石铺，店主白榆。'
+    assert bound['transfers'][0]['source_quote'] == '买方同意后验收，再点付六两。'
+    assert c['facts'][0]['source_quote'] == '@Q0001'
+    assert m.validate_contract(bound, source, 2) == bound
+    bound['transfers'][0]['parts'] = '再点付'
+    with pytest.raises(ValueError, match='没有可复算金额或数量'):
+        m.validate_contract(bound, source, 2)
+    c['facts'][0]['source_quote'] = '@Q9999'
+    c['events'][0]['source_quote'] = '买方答应了再验货'
+    with pytest.raises(ValueError, match=r'facts\[shop\].*events\[agree\]'):
+        m.bind_planning_quotes(c, source)
+
+
+@pytest.mark.parametrize('wide_report_quote', [True, False])
+def test_completed_event_report_keeps_actual_order_when_text_citations_overlap(wide_report_quote):
+    m = module()
+    earlier = '六十份已经另找店补齐，交付也解决了'
+    telling = '告诉我' + earlier if wide_report_quote else '告诉我'
+    body = '中午收摊前，周叙回来过一趟。他站在门口，告诉我' + earlier + '。'
+    c = {'schema': 1, 'focus': '陈满', 'facts': [], 'units': {}, 'unit_equations': [], 'accounts': [],
+         'transfers': [], 'events': [
+             {'id': 'remedy', 'scene': 1, 'after': [], 'description': '另店补齐', 'source_quote': earlier},
+             {'id': 'telling', 'scene': 1, 'after': ['remedy'], 'description': '事后告知', 'source_quote': telling}]}
+    report = {'schema': 1, 'candidate_sha256': hashlib.sha256(body.encode()).hexdigest(),
+              'contract_sha256': m.contract_digest(c), 'checks': {k: True for k in ('money','facts','pov','handoff')},
+              'event_observations': [{'id': 'remedy', 'quote': span(earlier)}, {'id': 'telling', 'quote': span(telling)}],
+              'fact_observations': [], 'money_observations': [], 'balance_observations': [], 'issues': []}
+    assert m.audit_issues(report, body, c, 'facts') == []
+    for replacement in ['六十份已经打算另找店补齐', '六十份已经等店家确认之后再交付']:
+        changed = body.replace(earlier, replacement)
+        rejected = {**report, 'candidate_sha256': hashlib.sha256(changed.encode()).hexdigest(),
+                    'event_observations': [{'id': 'remedy', 'quote': span(replacement)},
+                                           {'id': 'telling', 'quote': span(telling.replace(earlier, replacement))}]}
+        with pytest.raises(ValueError, match='事件凭据'):
+            m.audit_issues(rejected, changed, c, 'facts')
+
+
 def test_reuse_exact_arithmetic_still_checks_new_body_event_order():
     m=module();c=contract();body,report=evidence()
     first=m.Arithmetic(m.amount)

@@ -220,6 +220,97 @@ def test_trial_binds_context_and_persists_preference_only_on_fresh_result(servic
     asyncio.run(scenario())
 
 
+def test_role_rehearsal_keeps_shared_writer_context_and_separates_character_and_blind_inputs(service, book):
+    async def scenario():
+        view = service.read(book)
+        cast = [row['id'] for row in view['characters'] if row['name'] in ('阿杏', '掌柜')]
+        (book / 'meta/style_profile.md').write_text('旧物与闲话入文', encoding='utf-8')
+        (book / 'learning').mkdir()
+        (book / 'learning/active_context.md').write_text('已采纳范文写法：让闲话露出担心', encoding='utf-8')
+        calls = []
+
+        class Model:
+            async def ainvoke(self, messages):
+                system, user = messages[0][1], json.loads(messages[1][1])
+                calls.append((system, user))
+                if '"roles"' in system:
+                    value = {'public_start': '铺子里有一把湿伞', 'roles': [
+                        dict(name='阿杏', knowledge='杏私事', goal='收伞', voice='短句'),
+                        dict(name='掌柜', knowledge='柜私事', goal='谈价', voice='慢说')]}
+                elif 'observable_turns' in user:
+                    assert '秘密结局' not in messages[1][1]
+                    own = user['role']
+                    assert ('柜私事' if own['name'] == '阿杏' else '杏私事') not in messages[1][1]
+                    value = {'speech': '让一让', 'action': '捏住伞柄'}
+                elif 'texts' in user:
+                    assert set(user) == {'texts'}
+                    assert set(user['texts'].values()) == {'阿杏收伞。', '她把湿伞合了。'}
+                    value = dict(preferred='tie', reason='两版读感相当', endings='都收了伞',
+                                 readings={label: dict(voice='说话口气', exchange='接话和动作',
+                                                      strengths=[dict(quote=body, comment='顺')], stiffness=[])
+                                           for label, body in user['texts'].items()})
+                else:
+                    assert '交涉写手角色' in system
+                    assert user['ending'] == '秘密结局：收伞'
+                    assert '已采纳范文写法' in messages[1][1] and '旧物与闲话入文' in messages[1][1]
+                    value = {'text': '她把湿伞合了。' if 'rehearsal' in user else '阿杏收伞。'}
+                return SimpleNamespace(content=json.dumps(value, ensure_ascii=False))
+
+        def factory(**options):
+            assert options['model_override'] == 'chosen:writer'
+            assert options['model_params'] == {'reasoning_effort': 'medium'}
+            return Model()
+
+        jobs = _console().create_assistant(factory, lambda **_: None, character_loader=lambda: service)
+        options = dict(purpose='dialogue_trial', chapter='0001', question='白描', scene='收伞', character_ids=cast,
+                       trial_mode='role_rehearsal', scene_card='铺子漏雨，阿杏要收伞', ending='秘密结局：收伞',
+                       expected_revision=view['revision'], _model_override='chosen:writer',
+                       _model_params={'reasoning_effort': 'medium'}, _trial_writer={'label': '交涉写手', 'system': '交涉写手角色'})
+        jobs.start(book, 'rehearsal', options)
+        await jobs.tasks['rehearsal']
+        entry = jobs.history(book)[0]
+        assert entry['status'] == 'completed', entry
+        trial = entry['trial']
+        assert (trial['baseline'], trial['candidate']) == ('阿杏收伞。', '她把湿伞合了。')
+        record = trial['rehearsal']
+        assert [row['name'] for row in record['turns']] == ['阿杏', '掌柜', '阿杏', '掌柜']
+        assert record['blind']['preferred'] == 'tie'
+        assert len(calls) == 8
+        writers = [user for system, user in calls if '交涉写手角色' in system]
+        assert writers[0] == {key: value for key, value in writers[1].items() if key != 'rehearsal'}
+        assert not (book / 'story/0001/chapter.md').exists()
+        assert service.accept_trial(book, entry, 'baseline', '理由', '表达')['preferred'] == 'baseline'
+    asyncio.run(scenario())
+
+
+def test_rehearsal_precision_gate_requires_every_location_and_rechecks_candidate():
+    from importlib import import_module
+    console = _console()
+    module = import_module(console.__name__ + '.role_rehearsal')
+    original = '“六点能走？”\n\n“六点还在对账。”\n\n药得五毫克。'
+    revised = '“收摊就走？”\n\n“还得对账。”\n\n药得五毫克。'
+    async def check():
+        calls = []
+        async def call(system, user, parse):
+            calls.append(user)
+            if 'edits' in system:
+                return parse(json.dumps({'edits': [
+                    {'paragraph_id': 'p0001', 'old': '六点能走', 'occurrence': 1, 'replacement': '收摊就走'},
+                    {'paragraph_id': 'p0002', 'old': '六点还在对账', 'occurrence': 1, 'replacement': '还得对账'},
+                ]}, ensure_ascii=False))
+            checks = []
+            for row in user['candidates']:
+                checks.append(dict(paragraph_id=row['paragraph_id'], remove=[d for d in row['details'] if d=='六点'],
+                                   reason='对账完成才影响去留，剂量必须准确。'))
+            with pytest.raises(ValueError):
+                parse(json.dumps({'checks': []}))
+            return parse(json.dumps({'checks': checks}, ensure_ascii=False))
+        final = await module.accept_precision(original, {'book_style': {}}, '', call)
+        assert final == revised
+        assert len(calls) == 3
+    asyncio.run(check())
+
+
 def test_duplicate_model_json_keys_are_rejected(service, book):
     view = service.read(book)
     task = service.freeze(book, select(view) | dict(purpose='character_edit', chapter='0001',

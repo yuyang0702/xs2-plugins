@@ -25,10 +25,10 @@ def run(m,root,monkeypatch,capsys,action,phase='facts',expression_format='body')
     m.main();return capsys.readouterr().out
 
 
-def prepared(root,monkeypatch,capsys,expression_format='body'):
+def prepared(root,monkeypatch,capsys,expression_format='body',source_body='未经修订的原始试稿'):
     m=module();multi=root/'cache/multi/task-guard';save(multi/'plan.json',{'scenes':[{'id':1},{'id':2}],'continuity':contract()})
     (multi/'planning-sources.md').write_text(SOURCES,encoding='utf-8')
-    save(root/'cache/si/chapter.json',{'body':'未经修订的原始试稿'})
+    save(root/'cache/si/chapter.json',{'body':source_body})
     run(m,root,monkeypatch,capsys,'prepare',expression_format=expression_format);return m,root/'cache/draft-guard/task-guard'
 
 
@@ -49,6 +49,31 @@ def test_only_expression_approval_can_replace_the_assembled_draft(tmp_path,monke
     save(d/'expression-audit.json',report)
     assert 'WF_REJECT' not in run(m,tmp_path,monkeypatch,capsys,'commit','expression')
     assert json.loads((tmp_path/'cache/si/chapter.json').read_text(encoding='utf-8'))['body']==body
+
+
+def test_stilted_dialogue_with_current_evidence_returns_initial_draft_to_writer(tmp_path,monkeypatch,capsys):
+    m,d,body=accepted_facts(tmp_path,monkeypatch,capsys)
+    body+='\n\n“你别刚进门就——”\n\n“我没进门。”'
+    _,report=evidence(body);report['checks']['repetition']=True
+    issue={'category':'convenient_dialogue','reason':'硬接进门两个字，避开了对方正在抱怨的事。',
+           'goal':'接住对方的抱怨，或用动作结束争执。','excerpts':['你别刚进门就——','我没进门。']}
+    save(d/'expression-draft.json',{'body':body});run(m,tmp_path,monkeypatch,capsys,'candidate','expression')
+    report['issues']=[{**issue,'excerpts':['我没进门。','我没进门。']}]
+    save(d/'expression-audit.json',report)
+    assert 'target="agent_guard_expression_audit"' in run(m,tmp_path,monkeypatch,capsys,'commit','expression')
+    report['issues']=[issue];save(d/'expression-audit.json',report)
+    result=run(m,tmp_path,monkeypatch,capsys,'commit','expression')
+    assert 'target="agent_guard_expression_repair"' in result
+    feedback=(d/'expression-feedback.md').read_text(encoding='utf8')
+    assert '我没进门。' in feedback and issue['goal'] in feedback
+    assert not (d/'final-receipt.json').exists()
+
+    revised=body.replace('我没进门。','你把手里的灯放下再说。')
+    _,report=evidence(revised);report['checks']['repetition']=True
+    save(d/'expression-draft.json',{'body':revised});run(m,tmp_path,monkeypatch,capsys,'candidate','expression')
+    save(d/'expression-audit.json',report)
+    assert 'WF_REJECT' not in run(m,tmp_path,monkeypatch,capsys,'commit','expression')
+    assert m.read(d/'final-receipt.json')['body']==revised
 
 
 def test_candidate_retry_refreshes_completed_auditor_instead_of_reusing_old_proof(tmp_path,monkeypatch,capsys):
@@ -73,6 +98,90 @@ def test_expression_cannot_regress_payment_even_when_model_lists_no_issues(tmp_p
     output=run(m,tmp_path,monkeypatch,capsys,'commit','expression')
     assert 'target="agent_guard_expression_repair"' in output and '1020' in output
     assert not (d/'final-receipt.json').exists()
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_expression_overlap_uses_verified_subquotes_only_for_unchanged_body(tmp_path, monkeypatch, capsys, changed):
+    m, directory, body = accepted_facts(tmp_path, monkeypatch, capsys)
+    if changed:
+        body += '她离开。'
+    _, report = evidence()
+    report['candidate_sha256'] = m.body_digest(body)
+    report['checks']['repetition'] = True
+    report['event_observations'][3]['quote'] = {'text': '她点收六两。她交清灯', 'occurrence': 1}
+    save(directory/'expression-draft.json', {'body': body})
+    run(m, tmp_path, monkeypatch, capsys, 'candidate', 'expression')
+    save(directory/'expression-audit.json', report)
+
+    output = run(m, tmp_path, monkeypatch, capsys, 'commit', 'expression')
+    if changed:
+        assert '前后事件凭据重叠' in output
+        assert not (directory/'final-receipt.json').exists()
+    else:
+        assert 'WF_REJECT' not in output
+        assert m.read(directory/'final-receipt.json')['body'] == body
+        assert m.read(directory/'expression-audit.json') == report
+
+
+def test_failed_expression_commit_resumes_with_same_audited_draft(tmp_path, monkeypatch, capsys):
+    project = {'values': {'chapter_number': '0001', 'target_word_count': '1-500', 'narrative_pov': 'third_person'}}
+    save(tmp_path/'.novel-project.json', project)
+    body, facts = evidence()
+    m, directory = prepared(tmp_path, monkeypatch, capsys, 'patches', source_body=body)
+    save(tmp_path/'cache/se/se_output.json', {})
+    save(directory/'facts-draft.json', {'body': body})
+    facts['book_contract_sha256'] = m.read(directory/'binding.json')['book_contract_sha256']
+    run(m, tmp_path, monkeypatch, capsys, 'candidate', expression_format='patches')
+    save(directory/'facts-audit.json', facts)
+    assert 'WF_REJECT' not in run(m, tmp_path, monkeypatch, capsys, 'commit', expression_format='patches')
+    patch = {'source_sha256': m.body_digest(body), 'edits': []}
+    save(directory/'expression-draft.json', patch)
+    report = json.loads(json.dumps(facts))
+    report['checks']['repetition'] = True
+    report['event_observations'][3]['quote'] = {'text': '她点收六两。她交清灯', 'occurrence': 1}
+    save(directory/'expression-audit.json', report)
+    task = {'workflow_id': 'mvp', 'task_id': 'task-guard', 'status': 'failed', 'workspace_override': str(tmp_path),
+            'parameter_values': {'chapter_number': '0001', 'multi_dir': 'cache/multi/task-guard',
+                                 'guard_expression_patch_result': json.dumps(patch)},
+            'node_states': {name: {'status': 'completed'} for name in
+                            ('script_multi_plan', 'script_guard_prepare', 'script_guard_facts_commit',
+                             'script_guard_expression_candidate', 'agent_guard_expression_audit')}}
+    task['node_states']['agent_guard_expression_audit']['outputs'] = {
+        '_json_output_file': str(directory/'expression-audit.json')}
+    task['node_states']['script_guard_expression_commit'] = {'status': 'failed', 'error': '前后事件凭据重叠'}
+    checkpoint_module = m.load('test_commit_resume', m.BASE/'console_service/draft_review_checkpoint.py')
+    checkpoint = checkpoint_module.prepare(tmp_path, project, task, '0001')
+    assert 'script_guard_expression_commit' in checkpoint['selected_node_ids']
+    assert not any(node.startswith('agent_') for node in checkpoint['selected_node_ids'])
+    definition = m.read(PLUGIN/'resources/workflows/mvp/definition.json')
+    definition['workflow_id'] = 'xs2-novel-flywheel-mvp'
+    for node in definition['nodes']:
+        params = node.get('node_params', {})
+        if params.get('script_group') in ('xs2', 'nvl'):
+            params['script_group'] = 'xs2-novel-flywheel-' + params['script_group']
+    state = {**project, 'automaticCheckpoint': checkpoint}
+    options = checkpoint_module.options(tmp_path, state, definition, task)
+    assert options['selected_node_ids'] == checkpoint['selected_node_ids']
+    commit = next(node for node in definition['nodes'] if node['id']=='script_guard_expression_commit')
+    commit['node_params']['script_group'] = 'some-other-xs2'
+    with pytest.raises(ValueError, match='审稿恢复必须使用'):
+        checkpoint_module.options(tmp_path, state, definition, task)
+
+    host = tmp_path/'host'
+    (host/'src').mkdir(parents=True)
+    save(host/'data/workflows/mvp/tasks/task-guard.json', task)
+    monkeypatch.setenv('DETERMINFLOW_PROJECT_DIR', str(host))
+    monkeypatch.setenv('WORKFLOW_ID', 'mvp')
+    monkeypatch.setenv('TASK_ID', 'task-resume')
+    for action in ('prepare', 'commit', 'finish'):
+        monkeypatch.setattr('sys.argv', ['guard', action, '--phase', 'expression',
+            '--source-file', checkpoint['source_file'], '--multi-dir', checkpoint['multi_dir'],
+            '--target', '1-500', '--pov', 'third_person', '--expression-format', 'patches'])
+        m.main()
+    assert 'WF_REJECT' not in capsys.readouterr().out
+    receipt = m.read(tmp_path/'cache/draft-guard/task-resume/final-receipt.json')
+    assert receipt['body'] == body
+    assert m.read(directory/'expression-audit.json') == report
 
 
 def test_contract_drift_cannot_reuse_repair_or_audit_files(tmp_path,monkeypatch,capsys):

@@ -27,7 +27,7 @@ def _read(root, relative):
     return target.read_bytes() if target.is_file() else None
 
 
-def _context(root, chapter, ids):
+def _context(root, chapter, ids, *, rehearsal=False):
     view, _, documents = inventory(root)
     world_before = add_state(root, view, chapter)
     link_relations(view['characters'])
@@ -53,9 +53,13 @@ def _context(root, chapter, ids):
         return {'characters': characters, 'world_facts': view['world_facts'] if include_current else world_before}
 
     past_facts = confirmed_facts(True)
+    binding_sources = {name: digest(raw) if raw is not None else None for name, raw in data.items()}
+    if rehearsal:
+        for name in ('.novel-project.json', 'meta/narrative_contract.json', 'learning/active.json'):
+            raw = _read(root, name)
+            binding_sources[name] = digest(raw) if raw is not None else None
     binding = digest(encode([str(root), chapter, sorted(ids), view['revision'], preference['revision'],
-                             {name: digest(raw) if raw is not None else None for name, raw in data.items()},
-                             past_facts]))
+                             binding_sources, past_facts]))
     context_files = {}
     outline = 'outline/near_term_outline.md'
     scoped_outline = ''
@@ -85,6 +89,7 @@ def _context(root, chapter, ids):
 def freeze(root, payload):
     root = workspace(root)
     purpose = payload['purpose']
+    rehearsal = purpose == 'dialogue_trial' and payload.get('trial_mode') == 'role_rehearsal'
     chapter = chapter_id(payload.get('chapter') or '0001')
     question = _bounded(payload.get('question'), 12000, '说明')
     if purpose == 'character_edit':
@@ -95,7 +100,9 @@ def freeze(root, payload):
         if (not isinstance(ids, list) or not 1 <= len(ids) <= 6
                 or any(not isinstance(item, str) for item in ids) or len(set(ids)) != len(ids)):
             raise ValueError('请选择 1–6 位不重复的人物。')
-    view, people, binding, guidance_binding, context = _context(root, chapter, ids)
+    if rehearsal and len(ids) != 2:
+        raise ValueError('分角色试演需要两位出场人物。')
+    view, people, binding, guidance_binding, context = _context(root, chapter, ids, rehearsal=rehearsal)
     if view['revision'] != payload.get('expected_revision'):
         raise ValueError('人物档案已更新，请刷新后重新分析。')
     target = dict(chapter=chapter, character_ids=ids, revision=view['revision'], binding=binding)
@@ -111,10 +118,16 @@ def freeze(root, payload):
         system = contract + '只建议 selected_field 的单行新写法（最多 12000 字），格式为 {"replacement":"…"}。'
     else:
         target.update(scene=_bounded(payload.get('scene'), 4000, '场景'),
-                      baseline=_bounded(payload.get('baseline'), 12000, '对照原文'),
                       guidance_binding=guidance_binding, entry_id=payload.get('_request_id', ''))
         guidance = trial_preferences(root, chapter, ids, target['scene'], exclude=target['entry_id'])
         target['preference_digest'] = digest(encode(guidance))
+        if rehearsal:
+            target.update(trial_mode='role_rehearsal', scene_card=_bounded(payload.get('scene_card'), 6000, '场景卡'),
+                          ending=_bounded(payload.get('ending'), 2000, '结局'))
+            # The role branch freezes one common writer packet for both drafts.
+            return {'target': target, 'rehearsal': dict(question=question, scene=target['scene'],
+                    scene_card=target['scene_card'], ending=target['ending'], scoped_preferences=guidance, **context)}
+        target['baseline'] = _bounded(payload.get('baseline'), 12000, '对照原文')
         context.update(scene=target['scene'], baseline=target['baseline'], scoped_preferences=guidance)
         system = (contract + '试写同一场景的另一种表达，保留 baseline 的事实、结果、视角和大致篇幅。'
                   '格式为 {"candidate":"…","checks":["待作者核对之处"]}，最多八条核对点。')
@@ -124,7 +137,8 @@ def freeze(root, payload):
 def is_current(root, target):
     try:
         root = workspace(root)
-        _, _, binding, _, _ = _context(root, target['chapter'], target['character_ids'])
+        _, _, binding, _, _ = _context(root, target['chapter'], target['character_ids'],
+                                      rehearsal=target.get('trial_mode') == 'role_rehearsal')
         if binding != target['binding']:
             return False
         if 'scene' in target:

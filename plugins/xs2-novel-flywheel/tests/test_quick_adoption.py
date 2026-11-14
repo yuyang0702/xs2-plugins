@@ -585,3 +585,76 @@ def test_review_transient_retry_uses_fresh_model(tmp_path, failure, retries):
     receipt = jobs.get(tmp_path, identifier)
     assert receipt['status'] == ('applied' if retries else 'failed')
     assert 'secret' not in str(receipt.get('provider_diagnostics'))
+
+
+def test_adviser_retries_mechanism_only_answer_and_adopts_both_types(tmp_path):
+    saved = setup_book(tmp_path)
+    library = catalog()
+    source = library['candidates']
+    source['style_observations'] = [{
+        'rule': '通过手边物件表现说话时的迟疑', 'layer': 'imagery',
+        'transfer_guidance': '将动作放在具体选择之前', 'evidence': [{'excerpt': '原作证据'}],
+    }]
+    library['candidates'] = with_reference_choices(source)
+    style = library['candidates']['style_choices'][0]
+    first = {'reply': '推荐以代价推进调查。', 'suggestions': [],
+             'advisor_sections': {'direction': '调查矿难', 'hook': '公开证据的代价', 'writing': '第三人称短篇',
+                                  'risks': '避免巧合', 'mechanism_recommendations': {'adopted_from_library': [decision()]}}}
+    corrected = copy.deepcopy(first)
+    corrected['advisor_sections']['style_recommendations'] = {'adopted_styles': [{
+        'library_id': 'correct', 'choice_id': style['choice_id'], 'style': style['title'],
+        'reason': '许青克制而紧张', 'usage_in_story': '许青开口质问矿长前先把工作证翻回正面',
+        'priority': 'HIGH',
+    }]}
+
+    class RevisingModel(Model):
+        calls = 0
+
+        async def ainvoke(self, messages):
+            self.calls += 1
+            self.response = first if self.calls == 1 else corrected
+            return await super().ainvoke(messages)
+
+    module = service()
+    advisor = RevisingModel(first)
+    jobs = module.create_assistant(lambda **kwargs: advisor, lambda **kwargs: None, catalog_loader=lambda: [library])
+    compatibility = Model({'decisions': [decision(), {
+        'library_id': 'correct', 'choice_id': style['choice_id'], 'decision': 'adapt',
+        'reason': '适合许青克制的表达',
+        'adaptation': '许青要公开证据时，写她把工作证翻回正面，再开口质问矿长。',
+    }], 'voice_adaptations': []})
+    adoption = module.ReferenceAdoptionJobs(lambda **kwargs: compatibility, lambda: [library], merge, runner, threading.RLock())
+
+    async def run():
+        job = jobs.start(tmp_path, 'combined-adviser', {'purpose': 'advisor', 'question': '本书适合哪些写法？', 'project': saved})
+        await asyncio.gather(*list(jobs.tasks.values()))
+        entry = next(item for item in jobs.history(tmp_path) if item['id'] == job['id'])
+        assert advisor.calls == 2
+        assert entry['status'] == 'completed'
+        assert entry['advisor_sections']['style_recommendations']['adopted_styles'][0]['choice_id'] == style['choice_id']
+        assert not (tmp_path / 'learning/active.json').exists()
+        confirm = adoption.start(tmp_path, str(uuid.uuid4()), {'entry_id': entry['id']})
+        await asyncio.gather(*list(adoption.tasks.values()))
+        return adoption.get(tmp_path, confirm['id'])
+
+    assert asyncio.run(run())['status'] == 'applied'
+    review_input = json.loads(compatibility.messages[1][1])
+    assert {item['source_sha256'] for item in review_input['requested_items']} == {source['source']['text_sha256']}
+    blueprint = json.loads((tmp_path / 'learning/blueprints/v0001.json').read_text(encoding='utf-8'))
+    assert blueprint['selected_candidate_ids'] == ['mechanism-correct']
+    assert blueprint['selected_style_ids'] == [style['choice_id']]
+    context = (tmp_path / 'learning/active_context.md').read_text(encoding='utf-8')
+    assert '把工作证翻回正面' in context
+    assert '原作证据' not in context
+
+
+def test_adviser_requires_concrete_adaptation_for_recommended_style():
+    module = service()
+    library = catalog()
+    library['candidates']['style_choices'] = [{'choice_id': 'style-1', 'title': '叙述口气'}]
+    sections = {'direction': '方向', 'hook': '看点', 'writing': '写法', 'risks': '风险',
+                'style_recommendations': {'adopted_styles': [
+                    {'library_id': 'correct', 'choice_id': 'style-1', 'style': '叙述口气',
+                     'reason': '适合人物', 'usage_in_story': ' '}]}}
+    with pytest.raises(ValueError, match='风格'):
+        module.configuration.parse_advisor(json.dumps({'reply': '建议', 'suggestions': [], 'advisor_sections': sections}), 'short', catalog=[library])

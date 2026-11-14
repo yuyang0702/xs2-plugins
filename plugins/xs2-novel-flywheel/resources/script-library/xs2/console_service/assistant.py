@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 from .configuration import ADVISOR_PROMPT, CONFIGURATION_PROMPT, advisor_catalog, parse_advisor, parse_configuration
 from .production import length_quality
+from . import role_rehearsal, topic_selection
 
 logger = logging.getLogger(__name__)
 ANALYSIS_TIMEOUT_SECONDS = 180
@@ -27,6 +28,10 @@ ADVISOR_COMPLETION_TIMEOUT_SECONDS = 600
 TRANSIENT_RETRY_DELAYS_SECONDS = (2,)
 HISTORY_LIMIT = 80
 HISTORY_PATH = "learning/assistant-history.json"
+
+
+class StructuredReplyError(ValueError):
+    pass
 
 
 def _now() -> str:
@@ -236,26 +241,42 @@ class NovelAssistantJobs:
         root = root.resolve()
         entries = self.history(root)
         purpose = payload.get('purpose', 'general')
+        advisor_task = payload.get('advisor_task', 'discussion')
+        if advisor_task == 'topic_selection' and (purpose != 'advisor' or payload.get('project', {}).get('mode', 'short') != 'short'):
+            raise ValueError('选题盲读用于短篇小说顾问。')
         existing = next((item for item in entries if item["id"] == request_id), None)
         if existing:
-            if existing.get('purpose', 'general') != purpose:
+            if (existing.get('purpose', 'general') != purpose or existing.get('advisor_task', 'discussion') != advisor_task
+                    or existing.get('character_source', {}).get('trial_mode', 'rewrite') != payload.get('trial_mode', 'rewrite')):
                 raise ValueError('该请求编号已用于其他分析，请重新发起请求。')
             return existing
         active = next((item for item in entries if item.get("status") == "running"), None)
         if active:
-            if purpose in CHARACTER_PURPOSES or active.get('purpose', 'general') != purpose:
+            if (purpose in CHARACTER_PURPOSES or active.get('purpose', 'general') != purpose
+                    or active.get('advisor_task', 'discussion') != advisor_task):
                 raise ValueError('本书已有正在运行的助手分析。')
             return active
         entry = {"id": request_id, "question": payload["question"], "stage": payload.get("stage", ""),
                  "status": "running", "source": "llm", "reply": "", "created_at": _now(),
                  "attempt": 1, "message": "正在连接模型服务…"}
         entry.update(purpose=payload.get('purpose', 'general'), chapter=payload.get('chapter', ''))
+        if advisor_task == 'topic_selection':
+            entry['advisor_task'] = advisor_task
         entry['scope'] = payload.get('scope', 'chapter')
         entry['volume'] = str(payload.get('project', {}).get('values', {}).get('volume_number', '1'))
         if entry['purpose'] in CHARACTER_PURPOSES:
             if not self.character_loader or not payload.get('_model_override'):
                 raise ValueError('当前人物功能没有可用的写手模型。')
             frozen = self.character_loader().freeze(root, payload | {'_request_id': request_id})
+            if 'rehearsal' in frozen:
+                if not payload.get('_trial_writer'):
+                    raise ValueError('分角色试演需要当前作品的分场写手提示。')
+                book = length_quality().book_rules
+                contract = book.resolve(root)
+                style = book.public_style(contract)
+                style.pop('style_sources', None)  # Already in the common book files.
+                frozen['rehearsal']['book_style'] = style
+                entry['model'] = payload['_model_override']
             entry['character_source'] = frozen['target']
             entry['chapter'] = frozen['target']['chapter']
             payload = payload | {'_character_task': frozen}
@@ -296,7 +317,9 @@ class NovelAssistantJobs:
         context['本书规则契约']=copy.deepcopy(payload.get('_book_contract') or book.resolve(root,project=payload.get('project',{})))
         reference_catalog = self.catalog_loader() if self.catalog_loader and payload.get('purpose') == 'advisor' else None
         if reference_catalog is not None:
-            context['写法来源目录'] = advisor_catalog(reference_catalog)
+            catalog = advisor_catalog(reference_catalog)
+            context['写法来源目录'] = (topic_selection.reference_guidance(catalog)
+                                   if payload.get('advisor_task') == 'topic_selection' else catalog)
             context['蒸馏候选'] = []
         context["之前的讨论"] = [{"问题": item["question"], "回答": item["reply"][:6000],
                                  "顾问方案": item.get('advisor_sections', {})}
@@ -370,7 +393,11 @@ class NovelAssistantJobs:
                 '已备资料': {label: relative for label, relative in material.items()
                              if (root / relative).is_file() and (root / relative).read_bytes().strip()},
             }
-            system += ADVISOR_PROMPT
+            if payload.get('advisor_task') == 'topic_selection':
+                context['短篇正文目标字数'] = topic_selection.target_words(project)
+                system += topic_selection.CANDIDATE_PROMPT
+            else:
+                system += ADVISOR_PROMPT
         elif payload.get('purpose') == 'configure':
             system += CONFIGURATION_PROMPT
         elif support:
@@ -378,7 +405,82 @@ class NovelAssistantJobs:
         user = "用户问题：\n" + payload["question"].strip() + "\n\n参考上下文：\n" + json.dumps(context, ensure_ascii=False)
         return system, user, support, shared, reference_catalog
 
+    def _update(self, root, request_id, **changes):
+        entries = self.history(root)
+        for entry in entries:
+            if entry['id'] == request_id:
+                entry.update(changes)
+        self._write(root, entries)
+
+    def _book_changed(self, root, payload):
+        if not payload.get('_book_contract'):
+            return False
+        book = length_quality().book_rules
+        current = book.digest(book.resolve(root, project=payload.get('project', {})))
+        base = book.digest(book.resolve(root))
+        return (current != book.digest(payload['_book_contract'])
+                or (base != payload['_book_base_sha'] and base != current))
+
+    async def _structured_call(self, payload, deadline, system, user, parse, *, attempt_timeout=None):
+        loop = asyncio.get_running_loop()
+        for attempt in range(2):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError('Assistant deadline exhausted')
+            timeout = min(remaining, attempt_timeout) if attempt_timeout else remaining
+            params = payload.get('_model_params')
+            options = {'model_params': params} if params else {}
+            model = self.model_factory(model_override=payload.get('_model_override'), streaming=True,
+                                       timeout=timeout, provider_retries_enabled=False, **options)
+            try:
+                response = await asyncio.wait_for(_receive_model_reply(
+                    model, [('system', system), ('human', user)], lambda: None), timeout=timeout)
+                return parse(_content_text(getattr(response, 'content', None)))
+            except (ValueError, TypeError) as error:
+                if attempt:
+                    raise StructuredReplyError(str(error)) from error
+                # Keep the original user payload intact, especially for the blind reader.
+                system += '\n上次输出未通过校验，请重新交完整JSON。' + str(error)
+            except Exception as error:
+                if attempt or not _is_transient_provider_error(error):
+                    raise
+                logger.info('小说助手模型连接暂时失败，将重试: error=%s', type(error).__name__)
+                await asyncio.sleep(min(TRANSIENT_RETRY_DELAYS_SECONDS[0], max(0, deadline - loop.time())))
+            finally:
+                await _close_model(model)
+
+    async def _select_topics(self, root, request_id, payload, system, user, deadline):
+        self._update(root, request_id, message='顾问正在构思三个题材并写开头…')
+        candidates = await self._structured_call(payload, deadline, system, user, topic_selection.parse_candidates)
+        self._update(root, request_id, message='独立读者正在盲读开头，短篇编辑正在核对篇幅…')
+        lookup, reader_input = topic_selection.blind_input(candidates)
+        target = topic_selection.target_words(payload.get('project', {}))
+        results = await asyncio.gather(
+            self._structured_call(payload, deadline, topic_selection.BLIND_PROMPT,
+                             json.dumps(reader_input, ensure_ascii=False),
+                             lambda reply: topic_selection.parse_ranking(reply, lookup)),
+            self._structured_call(payload, deadline, topic_selection.LENGTH_PROMPT,
+                             json.dumps({'target_words': target, 'candidates': candidates}, ensure_ascii=False),
+                             lambda reply: topic_selection.parse_assessments(reply, candidates)),
+            return_exceptions=True,
+        )
+        for item in results:
+            if isinstance(item, BaseException):
+                raise item
+        if self._book_changed(root, payload):
+            return {'status': 'failed', 'error_code': 'book_contract_changed',
+                    'message': '本书世界、文风或叙述权限在分析中已有变化，请按新规则重新分析。'}
+        return {'status': 'completed', 'message': '选题盲读与篇幅评估已完成。',
+                'model': payload.get('_model_override', ''),
+                **topic_selection.assemble(candidates, *results, target)}
+
     async def _run(self, root: Path, request_id: str, payload: dict) -> None:
+        if payload.get('advisor_task') == 'topic_selection':
+            await self._run_topic_selection(root, request_id, payload)
+            return
+        if 'rehearsal' in payload.get('_character_task', {}):
+            await self._run_role_rehearsal(root, request_id, payload)
+            return
         llm = None
         started = perf_counter()
         result: dict[str, Any]
@@ -386,6 +488,8 @@ class NovelAssistantJobs:
             character = payload.get('_character_task')
             if character:
                 system, user = character['system'], character['user']
+                if payload['purpose']=='dialogue_trial':
+                    system += '\n' + role_rehearsal.precision_guidance()
                 support = shared = reference_catalog = None
             else:
                 system, user, support, shared, reference_catalog = self._general_messages(root, request_id, payload)
@@ -444,11 +548,35 @@ class NovelAssistantJobs:
             if response is None or llm is None:
                 raise RuntimeError("模型没有返回响应")
             reply = _content_text(getattr(response, "content", None))
-            book=length_quality().book_rules
-            current=book.digest(book.resolve(root,project=payload.get('project',{}))) if payload.get('_book_contract') else ''
-            base=book.digest(book.resolve(root)) if payload.get('_book_contract') else ''
-            if payload.get('_book_contract') and (current!=book.digest(payload['_book_contract'])
-                    or (base!=payload['_book_base_sha'] and base!=current)):
+            advisor_answer = None
+            if reply and payload.get('purpose') == 'advisor':
+                mode = payload.get('project', {}).get('mode', 'short')
+                try:
+                    advisor_answer = parse_advisor(reply, mode, catalog=reference_catalog)
+                except (ValueError, TypeError) as error:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining > 0:
+                        entries = self.history(root)
+                        for entry in entries:
+                            if entry['id'] == request_id:
+                                entry['message'] = '正在补齐推荐清单及本书适配说明…'
+                        self._write(root, entries)
+                        correction = (
+                            '\n\n上一轮建议未通过格式校验，请按原始资料重新输出完整JSON。'
+                            '保留四个顾问分区；推荐库中的机制时同时核对风格目录。'
+                            '逐项给出真实ID、适配理由和本书用法；无合适风格时给出no_match_reason。'
+                            f'校验提示：{error}'
+                        )
+                        response = await asyncio.wait_for(_receive_model_reply(
+                            llm, [('system', system), ('human', user + correction)], lambda: None
+                        ), timeout=remaining)
+                        try:
+                            advisor_answer = parse_advisor(
+                                _content_text(getattr(response, 'content', None)), mode, catalog=reference_catalog
+                            )
+                        except (ValueError, TypeError):
+                            logger.info('小说顾问补齐推荐后仍未通过校验: request=%s', request_id)
+            if self._book_changed(root, payload):
                 result={'status':'failed','error_code':'book_contract_changed','message':'本书世界、文风或叙述权限在分析中已有变化，请按新规则重新分析；旧建议未采用。'}
             elif not reply:
                 result = {"status": "failed", "error_code": "empty_output", "message": "模型没有返回可用回答，请重试。"}
@@ -457,6 +585,16 @@ class NovelAssistantJobs:
                 if character:
                     result['reply'] = ''
                     result.update(self.character_loader().finish(root, character['target'], payload['purpose'], reply))
+                    if 'trial' in result:
+                        async def check_precision(system, user, parse):
+                            return await self._structured_call(payload, deadline, system, json.dumps(user, ensure_ascii=False),
+                                                               parse, attempt_timeout=70)
+                        trial = result['trial']
+                        style = length_quality().book_rules.public_style(length_quality().book_rules.resolve(root))
+                        trial['candidate'] = await role_rehearsal.accept_precision(
+                            trial['candidate'], {'book_style': style, 'question': payload['question']}, '', check_precision)
+                        if not self.character_loader().is_current(root, character['target']):
+                            result = {'status': 'failed', 'error_code': 'character_stale', 'message': '试读依据已变化，请刷新后重试。'}
                 if support and shared and payload.get('purpose', 'general') in {'general', 'plot'}:
                     try:
                         answer, options = support.parse_proposal(reply, shared, payload['question'], payload.get('project', {}).get('mode', 'serial'))
@@ -468,7 +606,9 @@ class NovelAssistantJobs:
                     try:
                         mode = payload.get('project', {}).get('mode', 'short')
                         if payload.get('purpose') == 'advisor':
-                            answer, suggestions, sections = parse_advisor(reply, mode, catalog=reference_catalog)
+                            if advisor_answer is None:
+                                raise ValueError('invalid advisor response')
+                            answer, suggestions, sections = advisor_answer
                             result['advisor_sections'] = sections
                         else:
                             answer, suggestions = parse_configuration(reply, mode)
@@ -487,8 +627,48 @@ class NovelAssistantJobs:
             result['model'] = actual
         await _close_model(llm)
         result.update(finished_at=_now(), elapsed_seconds=round(perf_counter() - started, 1))
-        entries = self.history(root)
-        for entry in entries:
-            if entry["id"] == request_id:
-                entry.update(result)
-        self._write(root, entries)
+        self._update(root, request_id, **result)
+
+    async def _run_topic_selection(self, root, request_id, payload):
+        started = perf_counter()
+        deadline = asyncio.get_running_loop().time() + ADVISOR_COMPLETION_TIMEOUT_SECONDS
+        try:
+            system, user, *_ = self._general_messages(root, request_id, payload)
+            result = await self._select_topics(root, request_id, payload, system, user, deadline)
+        except asyncio.CancelledError:
+            result = {'status': 'failed', 'error_code': 'interrupted', 'message': '选题盲读因服务关闭中断，请重试。'}
+        except StructuredReplyError as error:
+            result = {'status': 'failed', 'error_code': 'topic_selection_format',
+                      'message': f'选题盲读未能取得完整结果，请重试。{error}'}
+        except Exception as error:
+            code, message = _error_details(error)
+            logger.warning('选题盲读失败: request=%s code=%s error=%s', request_id, code, type(error).__name__)
+            result = {'status': 'failed', 'error_code': code, 'message': message}
+        self._update(root, request_id, **result, finished_at=_now(), elapsed_seconds=round(perf_counter() - started, 1))
+
+    async def _run_role_rehearsal(self, root, request_id, payload):
+        started = perf_counter()
+        deadline = asyncio.get_running_loop().time() + ADVISOR_COMPLETION_TIMEOUT_SECONDS
+        task = payload['_character_task']
+
+        async def call(system, user, parse):
+            return await self._structured_call(payload, deadline, system, user, parse, attempt_timeout=120)
+
+        def progress(message):
+            self._update(root, request_id, message=message)
+
+        try:
+            trial = await role_rehearsal.compare(task, payload['_trial_writer'], call, progress)
+            if not self.character_loader().is_current(root, task['target']):
+                result = {'status': 'failed', 'error_code': 'character_stale', 'message': '试读依据已变化，请刷新后重试。'}
+            else:
+                result = {'status': 'completed', 'trial': trial, 'message': '两版试写与独立盲读已完成。'}
+        except asyncio.CancelledError:
+            result = {'status': 'failed', 'error_code': 'interrupted', 'message': '场景试读因服务关闭中断，请重试。'}
+        except StructuredReplyError as error:
+            result = {'status': 'failed', 'error_code': 'character_format', 'message': f'试演结果格式未通过校验。{error}'}
+        except Exception as error:
+            code, message = _error_details(error)
+            logger.warning('分角色试演失败: request=%s code=%s error=%s', request_id, code, type(error).__name__)
+            result = {'status': 'failed', 'error_code': code, 'message': message}
+        self._update(root, request_id, **result, finished_at=_now(), elapsed_seconds=round(perf_counter() - started, 1))

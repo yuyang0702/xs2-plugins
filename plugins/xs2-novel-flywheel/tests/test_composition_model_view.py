@@ -45,3 +45,19 @@ def test_review_view_reuses_same_verified_model_request_and_keeps_full_plan():
     view=p.composition(data)
     assert view['plan']==data['plan'] and view['request']['body']==data['request']['body']
     p.verify_composition(view,data)
+
+
+def test_composition_review_can_echo_short_refs_without_losing_full_local_binding():
+    p = module()
+    request = {**sample(), 'request_digest': hashlib.sha256(b'request').hexdigest()}
+    plan = {'request_digest': request['request_digest'], 'segments': [{'purpose': '关系推进'}]}
+    packet = {'request': request, 'plan': plan, 'request_digest': request['request_digest'], 'plan_digest': p.digest(plan)}
+    view = p.composition(packet)
+    p.verify_composition(view, packet)
+    assert len(view['request_digest']) < 20 and len(view['plan_digest']) < 20
+    assert view['request']['request_digest'] == view['plan']['request_digest'] == view['request_digest']
+    response = {'request_digest': view['request_digest'], 'plan_digest': view['plan_digest'], 'verdict': 'approve'}
+    normalized = p.bind_composition_response(response, packet)
+    assert normalized == {'request_digest': packet['request_digest'], 'plan_digest': packet['plan_digest'], 'verdict': 'approve'}
+    with pytest.raises(ValueError, match='plan_digest'):
+        p.bind_composition_response({**response, 'plan_digest': view['plan_digest'] + '0'}, packet)

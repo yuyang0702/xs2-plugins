@@ -222,6 +222,27 @@ def test_repeated_short_content_repair_keeps_length_gate_without_invented_scope_
     assert (tmp_path/'story/0001/chapter.md').read_text(encoding='utf-8')=='甲'*200
 
 
+def test_complete_reader_report_stays_bound_to_independent_review(tmp_path):
+    m,_=setup(tmp_path)
+    report={'body_sha256':m.sha(BODY.encode()),'verdict':'pass','issues':[],
+            'blind_review':{'summary':'整篇报告原文'},'expression_checks':[{'detail':'复核检查明细'}]}
+    put(tmp_path,'story/0001/reader_report.json',report)
+    out=m.prepare(tmp_path,'0001','focused-review','1-5000')
+    m.writer_input(tmp_path,out['revision_dir'],'cache/sc/critique.json')
+    patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
+    writer=json.loads((tmp_path/out['revision_editor_model']).read_text(encoding='utf-8'))
+    review=json.loads((tmp_path/out['revision_review_model']).read_text(encoding='utf-8'))
+    assert 'reader_report' not in writer and review['reader_report']==report
+    assert 'critique' not in writer and review['critique']=={'feels_human':True,'issues':[]}
+    assert m.packet.restore(review['source_body'],review['candidate'])==BODY
+    assert 'same_as_candidate' in review['source_body']['paragraphs'][0]
+    review['reader_report']['blind_review']['summary']='篡改的报告'
+    put(tmp_path,out['revision_review_model'],review)
+    with pytest.raises(ValueError,match='模型所见输入'):
+        m.commit(tmp_path,out['revision_dir'],approved(m,out,tmp_path))
+    assert (tmp_path/'story/0001/chapter.md').read_bytes()==BODY.encode()
+
+
 def test_automatic_advice_is_not_promoted_above_original_author_requirements(tmp_path):
     m=module();put(tmp_path,'story/0001/chapter.md','原正文。')
     put(tmp_path,'author.md','保留心理和抒情，不增加无关动作。')
@@ -235,6 +256,29 @@ def test_automatic_advice_is_not_promoted_above_original_author_requirements(tmp
     assert '旧自动建议' in data['automatic_revision_advice']
     put(tmp_path,'author.md','作者后来修改了要求。')
     with pytest.raises(ValueError):m.bound(tmp_path,out['revision_dir'])
+
+
+def test_exhausted_polish_reuses_verified_review_as_automatic_feedback(tmp_path):
+    from test_length_quality import policy
+    m,out=setup(tmp_path)
+    payload=patch(m,out,tmp_path,'第二段新的说明。');m.candidate(tmp_path,out['revision_dir'])
+    report=json.loads(approved(m,out,tmp_path));report['change_reviews'][0]['effect']='regressed'
+    put(tmp_path,out['revision_review_path'],report);raw=json.dumps(report,ensure_ascii=False)
+    with pytest.raises(m.Retry):m.commit(tmp_path,out['revision_dir'],raw)
+    task={'task_id':'local-test','status':'failed','workspace_override':str(tmp_path),
+          'parameter_values':{**out,'revision_patch_result':json.dumps(payload,ensure_ascii=False),'revision_review_result':raw},
+          'node_states':{'agent_pl':{'status':'completed'},'agent_local_review':{'status':'completed'},
+                         'script_local_commit':{'status':'failed','error':'RETRY_STOP: content：局部改动仍需处理'}}}
+    state={'values':{'chapter_number':'0001','target_word_count':'1-5000'}}
+    p=policy();action=p.recovery_action(state,'polish',task,root=tmp_path)
+    assert action['stage']=='polish' and 'mvp' not in action['reset']
+    updates=action['updates'];feedback=updates['values']['author_feedback_file']
+    authored, automatic, _=m.feedback_layers(tmp_path,feedback)
+    assert authored=='保留全知和回环，仅合并无作用说明。'
+    assert report['change_reviews'][0]['reason'] in automatic
+    assert (tmp_path/'story/0001/chapter.md').read_bytes()==BODY.encode()
+    assert not (tmp_path/out['revision_dir']/'composition-conflict.json').exists()
+    assert p.recovery_action({**state,**updates},'polish',task,root=tmp_path) is None
 
 
 def test_repeated_content_rejection_alone_does_not_prove_scope_conflict(tmp_path):
@@ -294,3 +338,153 @@ def test_two_bad_length_candidates_do_not_invent_reading_scope_conflict(tmp_path
     assert not (tmp_path/out['revision_dir']/'composition-conflict.json').exists()
     assert len(json.loads((tmp_path/out['revision_dir']/'length-candidates.json').read_text(encoding='utf8')))==2
     assert body.read_bytes()==BODY.encode()
+@pytest.mark.parametrize('body,details,replacement',[
+    ('“我接了六十份，七点前送到。”',['六十份','七点'],'“这单得在上工前送过去。”'),
+    ('“城门要收三十枚，八点前到。”',['三十枚','八点'],'“天黑前赶到，守门的还肯放人。”'),
+])
+def test_precision_target_rejects_unmodified_candidate_and_allows_exact_details_with_purpose(tmp_path,body,details,replacement):
+    m=module();put(tmp_path,'story/0001/chapter.md',body)
+    out=m.prepare(tmp_path,'0001','precision-target','1-100')
+    source=json.loads((tmp_path/out['revision_source_input']).read_text(encoding='utf-8'))
+    checks=[{'paragraph_id':'p0001','action':'revise','remove':details,'reason':'数量和时间都可用现场条件交代。'}]
+    critique={'issues':[],'precision_checks':checks}
+    put(tmp_path,'critique.json',critique)
+    m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    editor=json.loads((tmp_path/out['revision_editor_model']).read_text(encoding='utf-8'))
+    assert editor['goals'][0]['paragraph_ids']==['p0001']
+    payload={'source_sha256':source['source_sha256'],'edits':[]}
+    put(tmp_path,out['revision_patch_path'],payload)
+    with pytest.raises(m.Retry,match='确数仍在') as err:m.candidate(tmp_path,out['revision_dir'])
+    assert err.value.target=='agent_pl'
+    if details[0]=='六十份':
+        payload['edits']=[{'paragraph_id':'p0001','old':body,'occurrence':1,'replacement':'“接了60份，07:00要送到。”'}]
+        put(tmp_path,out['revision_patch_path'],payload)
+        with pytest.raises(m.Retry,match='确数仍在'):m.candidate(tmp_path,out['revision_dir'])
+    payload['edits']=[{'paragraph_id':'p0001','old':body,'occurrence':1,'replacement':replacement}]
+    put(tmp_path,out['revision_patch_path'],payload)
+    m.candidate(tmp_path,out['revision_dir'])
+    checks[0].update(action='keep',remove=[],reason='确数用于定量和交付凭证。')
+    assert m.precision_goals(source,checks)==[]
+    with pytest.raises(ValueError,match='逐项'):m.precision_goals(source,[])
+
+
+def test_precision_scope_preserves_useful_dose_and_same_number_in_another_paragraph(tmp_path):
+    m=module()
+    first='“城门要收三十枚，八点前到。”'
+    useful='“这药只能吃五毫克，八点前服完才能取血。”'
+    put(tmp_path,'story/0001/chapter.md',first+'\n\n'+useful)
+    out=m.prepare(tmp_path,'0001','mixed-precision','1-100')
+    source=json.loads((tmp_path/out['revision_source_input']).read_text(encoding='utf-8'))
+    put(tmp_path,'critique.json',{'issues':[],'precision_checks':[
+        {'paragraph_id':'p0001','action':'revise','remove':['三十枚','八点'],'reason':'收费数和具体钟点不改变此处的去留。'},
+        {'paragraph_id':'p0002','action':'keep','remove':[],'reason':'剂量和时限决定能否完成后续检查。'},
+    ]})
+    m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    put(tmp_path,out['revision_patch_path'],{'source_sha256':source['source_sha256'],'edits':[
+        {'paragraph_id':'p0001','old':first,'occurrence':1,'replacement':'“关门前还来得及，过门得交钱。”'},
+    ]})
+    m.candidate(tmp_path,out['revision_dir'])
+    context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf-8'))
+    assert context['candidate'].endswith(useful)
+    assert [row['id'] for row in context['goals']]==['precision-p0001']
+
+
+def test_precision_repeated_turns_are_checked_and_rejected_when_moved(tmp_path):
+    m = module()
+    body = '“六点？”\n\n“六点还得对账。”\n\n她手里的账本还没合上。'
+    put(tmp_path, 'story/0001/chapter.md', body)
+    out = m.prepare(tmp_path, '0001', 'repeated-precision', '1-100')
+    source = json.loads((tmp_path / out['revision_source_input']).read_text(encoding='utf-8'))
+    assert [row['paragraph_id'] for row in source['precision_candidates']] == ['p0001', 'p0002']
+    checks = [dict(paragraph_id=key, action='revise', remove=['六点'], reason='只需知道对账以后才能走。')
+              for key in ('p0001', 'p0002')]
+    m.precision_goals(source, checks)
+    with pytest.raises(ValueError, match='范围'):
+        m.precision_goals(source, [dict(row, action='outside_scope', remove=[]) for row in checks])
+    put(tmp_path, 'critique.json', {'issues': [], 'precision_checks': checks})
+    m.writer_input(tmp_path, out['revision_dir'], 'critique.json')
+    payload = {'source_sha256': source['source_sha256'], 'edits': [
+        dict(paragraph_id='p0001', old='六点？', replacement='收摊就走？', occurrence=1),
+        dict(paragraph_id='p0002', old='六点还得对账。', replacement='我还得对账。', occurrence=1),
+        dict(paragraph_id='p0003', old='她手里的账本', replacement='06:00她手里的账本', occurrence=1),
+    ]}
+    put(tmp_path, out['revision_patch_path'], payload)
+    with pytest.raises(m.Retry, match='确数仍在'):
+        m.candidate(tmp_path, out['revision_dir'])
+    payload['edits'].pop()
+    put(tmp_path, out['revision_patch_path'], payload)
+    m.candidate(tmp_path, out['revision_dir'])
+
+
+def test_dialogue_exchange_is_anchored_and_returns_unfixed_turns_to_writer(tmp_path):
+    m=module()
+    body='“你替我答应了？”\n\n他手里还提着她的饭盒。\n\n“我已经替你答应了这件事。”\n\n门响了。'
+    put(tmp_path,'story/0001/chapter.md',body)
+    out=m.prepare(tmp_path,'0001','dialogue-example','1-100',dialogue_check=True)
+    source=json.loads((tmp_path/out['revision_source_input']).read_text(encoding='utf8'))
+    assert source['dialogue_check'] is True
+    put(tmp_path,'critique.json',{'issues':[]})
+    with pytest.raises(m.Retry) as exc:
+        m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    assert exc.value.target=='agent_sc'
+
+    turns=[{'paragraph_id':'p0001','quote':'你替我答应了？'},
+           {'paragraph_id':'p0003','quote':'我已经替你答应了这件事。'}]
+    row={'status':'revise','turns':turns,'reason':'后一轮只重复双方已知的承诺。',
+         'goal':'让回应交代他怎么处理承诺。'}
+    put(tmp_path,'critique.json',{'issues':[],'dialogue_checks':[row]})
+    m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    writer=json.loads((tmp_path/out['revision_editor_model']).read_text(encoding='utf8'))
+    assert writer['goals'][0]['paragraph_ids']==['p0001','p0002','p0003']
+
+    payload={'source_sha256':source['source_sha256'],'edits':[]}
+    put(tmp_path,out['revision_patch_path'],payload)
+    with pytest.raises(m.Retry,match='对白返修目标') as exc:
+        m.candidate(tmp_path,out['revision_dir'])
+    assert exc.value.target=='agent_pl'
+    payload['edits']=[{'paragraph_id':'p0003','old':turns[1]['quote'],'occurrence':1,'replacement':'我去跟人家说。'}]
+    put(tmp_path,out['revision_patch_path'],payload)
+    m.candidate(tmp_path,out['revision_dir'])
+    context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf8'))
+    assert [row['id'] for row in context['goals']]==['dialogue-1']
+    report=json.loads(approved(m,out,tmp_path))
+    for check in report['expression_checks']:check['excerpts']=['门响了。']
+    report['issue_outcomes']=[{'id':'dialogue-1','status':'remaining','reason':'答话仍回避了对方的追问。',
+                               'excerpts':['你替我答应了？','我去跟人家说。']}]
+    assert any('仍未解决' in reason for reason in m.review_decision(report,context))
+
+
+def test_dialogue_exchange_rejects_unrelated_or_unordered_quotes():
+    m=module();body='“你走吧。”\n\n桌上有碗。\n\n“票在这儿。”'
+    source={'source_body':body,'paragraphs':m.patches.paragraphs(body)}
+    row={'status':'revise','reason':'接话生硬','goal':'修改接话','turns':[
+        {'paragraph_id':'p0003','quote':'票在这儿。'},{'paragraph_id':'p0001','quote':'你走吧。'}]}
+    with pytest.raises(ValueError,match='顺序'):
+        m.dialogue_goals(source,[row])
+    row['turns']=[{'paragraph_id':'p0001','quote':'你走吧。'},{'paragraph_id':'p0002','quote':'桌上有碗。'}]
+    with pytest.raises(ValueError,match='对白'):
+        m.dialogue_goals(source,[row])
+
+
+def test_dialogue_review_v2_requires_both_checks_and_changes_the_targeted_line(tmp_path):
+    m=module()
+    body='“别揪着这事不——”\n\n“我没揪。”\n\n她把收据递了过去。\n\n“东西能自己走回去？”'
+    source={'source_body':body,'paragraphs':m.patches.paragraphs(body),'dialogue_check_version':2}
+    echo={'focus':'literal_echo','status':'revise','reason':'顺着动词抢白，没接住对方想停下争执的意思。',
+          'goal':'让她接住对方想叫停的意思。','target_turn':1,'turns':[
+              {'paragraph_id':'p0001','quote':'别揪着这事不——'},
+              {'paragraph_id':'p0002','quote':'我没揪。'}]}
+    with pytest.raises(ValueError,match='逐项'):
+        m.dialogue_goals(source,[echo])
+    no_pressure={'focus':'situational_speech','status':'not_applicable','reason':'没有可对照的忙碌说明。','goal':'','turns':[]}
+    goals=m.dialogue_goals(source,[echo,no_pressure])
+    assert goals[0]['target']==echo['turns'][1]
+    unrelated_edit={'paragraph_id':'p0001','old':'别揪着这事不——','occurrence':1,'replacement':'你先等等——'}
+    with pytest.raises(ValueError,match='目标原话'):
+        m.check_dialogue_goals([unrelated_edit],goals,source)
+    target=echo['turns'][1]['quote']
+    edit={'paragraph_id':'p0002','old':target,'occurrence':1,'replacement':'你先把箱子抬下来。'}
+    m.check_dialogue_goals([edit],goals,source)
+    edit['replacement']='我没揪。你先把箱子抬下来。'
+    with pytest.raises(ValueError,match='目标原话'):
+        m.check_dialogue_goals([edit],goals,source)

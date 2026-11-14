@@ -12,6 +12,8 @@ HARD=('money','facts','pov','handoff','resources')
 _DIGITS=dict(zip('零〇一二两三四五六七八九', [0,0,1,2,2,3,4,5,6,7,8,9]))
 _spec=importlib.util.spec_from_file_location('continuity_audit_evidence',Path(__file__).with_name('audit_evidence.py'))
 audit_evidence=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(audit_evidence)
+_expression_spec=importlib.util.spec_from_file_location('continuity_expression_rules',Path(__file__).resolve().parents[1]/'prose_policy/expression_review.py')
+expression_rules=importlib.util.module_from_spec(_expression_spec);_expression_spec.loader.exec_module(expression_rules)
 
 
 def _require(ok, message):
@@ -176,6 +178,47 @@ def resource_contract(parent,row):
             **{k:row[k] for k in ('units','unit_equations','accounts','transfers')}}
 
 
+def _planning_quote_rows(sources):
+    return {f'@Q{index:04d}': line for index, line in enumerate(sources.splitlines(), 1) if line.strip()}
+
+
+def planning_quote_view(sources):
+    instructions = (
+        '【分场证据】source_quote 可直接填本页左侧的原文编号（如 @Q0001），程序会核对并换成对应原文。'
+        '也可复制实际连续原句。description 可概括；source_quote 不能拼接、概括或改标点。'
+        'opening_quote、parts 和 change 仍要填写可直接复算的原文。'
+        '只登记确需跟踪且有原文支持的数量变化；预约标签或道具出现本身不构成库存进出，'
+        '不能用已有容量反推一次无数量原文的交付。\n\n'
+    )
+    return instructions + '\n'.join(f'[{key}] {line}' for key, line in _planning_quote_rows(sources).items()) + '\n'
+
+
+def bind_planning_quotes(contract, sources):
+    """Resolve only citations from the exact task source; collect all bad rows."""
+    rows = _planning_quote_rows(sources)
+    problems = []
+
+    def bind(value, path):
+        if isinstance(value, list):
+            return [bind(item, f'{path}[{item.get("id", index) if isinstance(item, dict) else index}]')
+                    for index, item in enumerate(value)]
+        if not isinstance(value, dict):
+            return value
+        result = {key: bind(item, f'{path}.{key}') for key, item in value.items()}
+        if 'source_quote' in value:
+            quote = value['source_quote']
+            if isinstance(quote, str) and quote in rows:
+                result['source_quote'] = rows[quote]
+            elif not isinstance(quote, str) or not quote.strip() or quote not in sources:
+                problems.append(f'{path}.source_quote')
+        return result
+
+    bound = bind(contract, 'continuity')
+    if problems:
+        raise ValueError('以下逐字证据不在冻结资料中，请改用该项对应的原文编号或连续原句：' + '、'.join(problems))
+    return bound
+
+
 def validate_contract(data,sources,scene_count):
     _require(isinstance(data,dict) and data.get('schema')==1 and isinstance(data.get('focus'),str) and data['focus'].strip(),'连续性契约格式无效')
     def supported(row):
@@ -228,7 +271,10 @@ def validate_contract(data,sources,scene_count):
                  and type(row.get('amount')) is int and row['amount']>=0 and type(row.get('balance')) is int,'钱款账户、方向或整数金额无效')
         _require(isinstance(row.get('parts'),str) and row['parts'].strip() and row['parts'] in quote
                  and isinstance(row.get('change'),str) and (not row['change'] or row['change'] in quote),'钱款分项与找零须出自资料原文')
-        expected=amount(row['parts'],units)-(amount(row['change'],units) if row['change'] else 0)
+        try:
+            expected=amount(row['parts'],units)-(amount(row['change'],units) if row['change'] else 0)
+        except ValueError as error:
+            raise ValueError(f"记录 {row['id']} 的 parts 或 change 没有可复算金额或数量：{error}") from error
         _require(expected==row['amount'],'钱款分项、找零与净额不一致')
         balances[row['account']]+=row['amount']*(1 if row['direction']=='in' else -1)
         _require(balances[row['account']]>=0 and balances[row['account']]==row['balance'],'钱款余款不闭合或发生无来源支出')
@@ -248,13 +294,56 @@ def located(span,body):
     return start,start+len(span['text'])
 
 
-def audit_issues(report,body,contract,phase,*,arithmetic=None):
+def _overlapping(left, right):
+    return max(left[0], right[0]) < min(left[1], right[1])
+
+
+def _report_of_completed_event(body, previous, later):
+    """An explicit report of a completed action has two times in one sentence."""
+    if previous[0] <= later[0]:
+        return False
+    lead = body[later[0]:previous[0]]
+    report = re.search(r'(告诉我|跟我说|对我说|向我说明)[\t ：:，,“「]*$', lead)
+    if not report or later[0] + report.end(1) > later[1] or re.search(r'[。！？；\r\n]', lead):
+        return False
+    sentence_prefix = re.split(r'[。！？；\r\n]', body[:previous[0]])[-1]
+    if re.search(r'如果|要是|假如|假设|倘若|盼着|希望|没(?:有|能)?(?:告诉我|跟我说|对我说)', sentence_prefix):
+        return False
+    first_clause = re.split(r'[，,。！？；\r\n]', body[previous[0]:previous[1]], maxsplit=1)[0]
+    completed = re.search(r'(?:已经|早已)(?P<action>.+?)(?:了|完|成|齐|好|清|妥|掉|解决)$', first_clause)
+    return bool(completed and not re.search(r'打算|决定|准备|计划|预计|答应|尚未|没有|没能|要去|等.+再',
+                                          completed.group('action')))
+
+
+def _narrow_verified_events(event_obs, positions, edges, body, contract, facts_audit):
+    """Reuse only exact, previously verified subspans of the current citations."""
+    overlapping = [(before, after) for before, after in edges
+                   if _overlapping(positions[before], positions[after])]
+    if not overlapping or not facts_audit or facts_audit.get('candidate_sha256') != hashlib.sha256(body.encode()).hexdigest():
+        return
+    if audit_issues(facts_audit, body, contract, 'facts'):
+        return
+    prior = audit_evidence.resolve_report(facts_audit, body, evidence_unit_names(contract))
+    quotes = {row['id']: row['quote'] for row in prior['event_observations'] if row.get('quote') is not None}
+    verified = {key: located(quote, body) for key, quote in quotes.items()}
+    for before, after in overlapping:
+        if before not in verified or after not in verified or verified[before][1] > verified[after][0]:
+            continue
+        if all(positions[key][0] <= verified[key][0] and verified[key][1] <= positions[key][1]
+               for key in (before, after)):
+            for key in (before, after):
+                event_obs[key]['quote'] = quotes[key]
+                positions[key] = verified[key]
+
+
+def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None):
     _require(phase in ('facts','expression') and isinstance(report,dict) and report.get('schema')==1,'核验报告格式无效')
     _require(report.get('candidate_sha256')==hashlib.sha256(body.encode()).hexdigest()
              and report.get('contract_sha256')==contract_digest(contract),'核验报告与当前候选或事实契约不匹配')
     report=audit_evidence.resolve_report(report,body,evidence_unit_names(contract))
     categories=HARD+(('repetition',) if phase=='expression' else ())
     required=[k for k in categories if k!='resources' or contract.get('resource_ledgers')]
+    if phase=='expression':categories+=('convenient_dialogue',)
     _require(isinstance(report.get('checks'),dict) and all(report['checks'].get(k) is True for k in required),'核验报告未检查全部必需维度')
     semantic=report.get('issues');_require(isinstance(semantic,list),'语义问题须明确提供数组')
     for row in semantic:
@@ -262,6 +351,7 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None):
                  and all(isinstance(row.get(k),str) and row[k].strip() for k in ('reason','goal'))
                  and isinstance(row.get('excerpts'),list) and row['excerpts']
                  and all(isinstance(q,str) and q.strip() and q in body for q in row['excerpts']),'核验问题缺少当前正文原文与修订目标')
+        expression_rules.validate_narrative_issue(row)
     issues=[]
     calculate = amount if arithmetic is None else arithmetic
     units = None
@@ -281,19 +371,22 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None):
     for key,obs in event_obs.items():
         if obs.get('quote') is None:issue('handoff','缺少约定履行事件 '+key,[])
         else:positions[key]=located(obs['quote'],body)
-    for key,row in events.items():
-        for dep in row['after']:
-            if key in positions and dep in positions:
-                _require(max(positions[dep][0],positions[key][0])>=min(positions[dep][1],positions[key][1]),
-                         '前后事件凭据重叠，请分别引用独立动作的最小分句，不能据宽引文断言正文反序')
-            if key in positions and dep in positions and positions[dep][1]>positions[key][0]:
-                explicit=any(isinstance(item,dict) and item.get('category')=='handoff'
-                    and dep in str(item.get('reason','')) and key in str(item.get('reason',''))
-                    for item in semantic)
-                _require(explicit,'事件凭据位置反向：'+dep+' / '+key+
-                    '。先核对实际完成时点并重取最小引文，不能用后文复述、追认或回忆的位置冒充发生时点。'
-                    '若实际履行确实违背依赖，请在issues的handoff中点名两个事件id，提供当前原文及因果说明；'
-                    '倒叙与复述本身不是正文因果错误，不据此要求作者改写正确顺序。')
+    edges = [(dep, key) for key, row in events.items() for dep in row['after'] if key in positions and dep in positions]
+    if phase == 'expression':
+        _narrow_verified_events(event_obs, positions, edges, body, contract, facts_audit)
+    for dep, key in edges:
+        if _report_of_completed_event(body, positions[dep], positions[key]):
+            continue
+        _require(not _overlapping(positions[dep], positions[key]),
+                 '前后事件凭据重叠：'+dep+' / '+key+'。请分别引用独立动作的最小分句，不能据宽引文断言正文反序')
+        if positions[dep][1]>positions[key][0]:
+            explicit=any(isinstance(item,dict) and item.get('category')=='handoff'
+                and dep in str(item.get('reason','')) and key in str(item.get('reason',''))
+                for item in semantic)
+            _require(explicit,'事件凭据位置反向：'+dep+' / '+key+
+                '。先核对实际完成时点并重取最小引文，不能用后文复述、追认或回忆的位置冒充发生时点。'
+                '若实际履行确实违背依赖，请在issues的handoff中点名两个事件id，提供当前原文及因果说明；'
+                '倒叙与复述本身不是正文因果错误，不据此要求作者改写正确顺序。')
     transfers=_rows(contract['transfers'],'钱款');money=observations('money_observations',transfers)
     for key,expected in transfers.items():
         obs=money[key];paid=obs.get('paid');change=obs.get('change')
@@ -372,4 +465,4 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None):
             if found['category']=='money':
                 issues.append({**found,'category':'resources','reason':key+'：'+found['reason']})
     issues.extend(semantic)
-    return sorted(issues,key=lambda i:i['category']=='repetition')
+    return sorted(issues,key=lambda i:i['category'] not in HARD)

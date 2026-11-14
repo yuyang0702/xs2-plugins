@@ -22,7 +22,7 @@ def profile():
     return hashlib.sha256(json.dumps({name:hashlib.sha256(p.read_bytes()).hexdigest() for name,p in {**paths,**configs}.items()},sort_keys=True).encode()).hexdigest()
 
 
-def current(root,b,digest):
+def recorded(root,b,digest):
     s=support();store=s.archive_store();store.recover(root)
     relative=b['outputs']['revision_dir']+'/working.json';path=s.safe(root,relative)
     if not path.is_file() and not s.safe(root,'archive/longform.sqlite3').is_file():return None
@@ -33,7 +33,13 @@ def current(root,b,digest):
     if actual is None and expected is None:return None
     if actual!=expected:raise ValueError('待验收工作稿与可信运行凭据不符')
     value=json.loads(actual)
-    if value['binding_digest']!=digest(b) or value['profile']!=profile():raise ValueError('待验收工作稿的来源或版本变化，须重新核验')
+    if value['binding_digest']!=digest(b):raise ValueError('待验收工作稿的来源变化，须重新核验')
+    return value
+
+
+def current(root,b,digest):
+    value=recorded(root,b,digest)
+    if value and value['profile']!=profile():raise ValueError('待验收工作稿的版本变化，须重新核验')
     return value
 
 

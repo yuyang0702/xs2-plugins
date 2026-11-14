@@ -12,6 +12,14 @@ def expand(raw,context):
     if raw['protocol']!=PROTOCOL or set(raw)-{'reading_checks'}!=(SEMANTIC|{'protocol'}):
         raise ValueError('精简审稿缺少语义判断或夹带绑定字段，不能自动补判')
     result=copy.deepcopy(raw);result.pop('protocol')
+    expression=result['expression_review']
+    if isinstance(expression,dict) and 'issues' not in expression:
+        checks=result['expression_checks']
+        if (expression.get('verdict')!='pass' or not isinstance(checks,list) or not checks
+                or any(not isinstance(row,dict) or row.get('status') not in ('pass','not_applicable')
+                       or row.get('issue_ids')!=[] for row in checks)):
+            raise ValueError('表达问题列表缺失，只有明确通过且逐项没有问题时才可省略')
+        expression['issues']=[]
     result.update({k:context[k] for k in HASHES})
     if not isinstance(result['change_reviews'],list):raise ValueError('须逐项审查改动')
     for row in result['change_reviews']:
@@ -24,13 +32,21 @@ def expand(raw,context):
 
 def schema(legacy):
     if 'anyOf' in legacy:
-        return copy.deepcopy(next(arm for arm in legacy['anyOf'] if 'protocol' in arm.get('properties',{})))
-    if 'protocol' in legacy.get('properties',{}):return copy.deepcopy(legacy)
+        legacy=next(arm for arm in legacy['anyOf'] if 'protocol' in arm.get('properties',{}))
     compact=copy.deepcopy(legacy)
-    for key in HASHES:compact['properties'].pop(key)
-    compact['properties']['protocol']={'const':PROTOCOL}
-    compact['required']=[k for k in compact['required'] if k not in HASHES]+['protocol']
-    row=compact['properties']['change_reviews']['items']
-    for key in ('before_excerpt','after_excerpt'):row['properties'].pop(key)
-    row['required']=['edit_index','effect','reason']
+    if 'protocol' not in compact['properties']:
+        for key in HASHES:compact['properties'].pop(key)
+        compact['properties']['protocol']={'const':PROTOCOL}
+        compact['required']=[k for k in compact['required'] if k not in HASHES]+['protocol']
+        row=compact['properties']['change_reviews']['items']
+        for key in ('before_excerpt','after_excerpt'):row['properties'].pop(key)
+        row['required']=['edit_index','effect','reason']
+    expression=compact['properties']['expression_review']
+    expression['required']=[key for key in expression['required'] if key!='issues']
+    compact['if']={'properties':{'expression_review':{'not':{'required':['issues']}}}}
+    compact['then']={'properties':{
+        'expression_review':{'properties':{'verdict':{'const':'pass'}}},
+        'expression_checks':{'items':{'properties':{
+            'status':{'enum':['pass','not_applicable']},'issue_ids':{'maxItems':0}}}},
+    }}
     return compact

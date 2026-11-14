@@ -111,6 +111,22 @@ def test_successful_native_calls_are_not_charged_as_retries(native):
     assert context['sdk_http_retry_observation']=='unknown'
 
 
+def test_updated_composition_plan_gets_two_review_refreshes_inside_native_run(native):
+    guard,root,task,host,_,_=start(native)
+    planner='agent_composition_plan';reviewer='agent_composition_review'
+    for attempt in (1,2):
+        task['node_states']={role:{'status':'completed','attempt_count':attempt} for role in (planner,reviewer)}
+        put_task(host,task)
+        guard.retry(root,'composition/task-a',planner,'独立复核提出内容问题')
+        guard.retry(root,'composition/task-a',reviewer,'COMPOSITION_REVIEW_REFRESH: 复查新方案。')
+    assert len(guard.retry_history(root,'composition/task-a'))==2
+    assert len(guard.retry_history(root,'composition-refresh/task-a'))==2
+    task['node_states'][reviewer]['attempt_count']=3
+    put_task(host,task)
+    with pytest.raises(ValueError,match='RETRY_STOP: dependency_refresh'):
+        guard.retry(root,'composition/task-a',reviewer,'COMPOSITION_REVIEW_REFRESH: 复查新方案。')
+
+
 def test_actual_failed_transport_attempts_block_next_paid_boundary_once(native):
     guard,root,task,host,state,_=start(native);failed(host,task,4)
     with pytest.raises(ValueError,match='RETRY_STOP'):guard.request_budget(root,'writer')

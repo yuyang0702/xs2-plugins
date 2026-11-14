@@ -32,6 +32,33 @@ def test_compact_decodes_to_full_same_judgment_and_preserves_raw_response(tmp_pa
     assert json.loads((tmp_path/out['revision_review_expanded']).read_text(encoding='utf-8'))==legacy
 
 
+@pytest.mark.parametrize('defect',[None,'revise','issue_status','issue_id'])
+def test_omitted_expression_issues_requires_explicit_pass_and_no_flagged_check(tmp_path,defect):
+    from src.workflow.output_selection import select_agent_output
+
+    m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
+    legacy=json.loads(approved(m,out,tmp_path));report=compact(legacy)
+    del report['expression_review']['issues']
+    if defect=='revise':report['expression_review']['verdict']='revise'
+    if defect=='issue_status':report['expression_checks'][0]['status']='issue'
+    if defect=='issue_id':report['expression_checks'][0]['issue_ids']=['unresolved']
+    definition=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf-8'))
+    params=next(n['node_params'] for n in definition['nodes'] if n['id']=='agent_local_review')
+    selected,error=select_agent_output([{'type':'user','content':'审查候选'},
+        {'type':'assistant','content':json.dumps(report,ensure_ascii=False)}],params)
+    if defect:
+        assert error
+        context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf-8'))
+        with pytest.raises(ValueError):module().expand(report,context)
+    else:
+        assert not error and json.loads(selected)==report
+        (tmp_path/out['revision_review_path']).write_text(selected,encoding='utf-8')
+        receipt=m.commit(tmp_path,out['revision_dir'],selected)
+        assert receipt['accepted']
+        assert json.loads((tmp_path/out['revision_review_path']).read_text(encoding='utf-8'))==report
+        assert json.loads((tmp_path/out['revision_review_expanded']).read_text(encoding='utf-8'))==legacy
+
+
 @pytest.mark.parametrize('defect',['fact','expression','regressed','missing_edit','missing_check','invented_evidence','wrong_edit','missing_verdict'])
 def test_compact_cannot_remove_or_fill_a_semantic_quality_failure(tmp_path,defect):
     m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])

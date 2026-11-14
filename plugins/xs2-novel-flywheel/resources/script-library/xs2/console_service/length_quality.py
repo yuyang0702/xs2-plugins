@@ -79,7 +79,10 @@ def resolve_target(root, target):
         planner=importlib.util.module_from_spec(spec);spec.loader.exec_module(planner)
         project=safe_path(root,'.novel-project.json')
         values=json.loads(project.read_text(encoding='utf-8-sig')).get('values',{}) if project.is_file() else {}
-        quota=planner.current(root,chapter_number(str(values.get('chapter_number','0001')).zfill(4)))
+        chapter=chapter_number(str(values.get('chapter_number','0001')).zfill(4))
+        fixed=planner.fixed_edit(root,chapter,os.environ.get('TASK_ID',''))
+        if fixed:return tuple(fixed['edit']['bounds'])
+        quota=planner.current(root,chapter)
         if quota:
             effective=f"{quota['minimum']}-{quota['maximum']}"
             if not str(target or '').strip() or str(target).strip() in (str(values.get('target_word_count','')).strip(),effective):

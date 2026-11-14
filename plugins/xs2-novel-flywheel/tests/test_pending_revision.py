@@ -114,6 +114,25 @@ def test_real_retry_feedback_delivers_the_verified_working_draft(tmp_path):
     m,out=rejected_but_improved(tmp_path)
     text=m.retry_feedback(tmp_path,out['revision_dir'],m.Retry('agent_pl','只处理剩余问题'))
     assert '待验收工作稿' in text and '第二段简明。' in text and 'retained_edits' in text
+    assert '潮水会回来。' not in text
+    assert 'working_candidate_sha256' in text
+
+
+def test_stopped_writer_retry_retains_only_the_completed_independent_review(tmp_path):
+    m,out=rejected_but_improved(tmp_path)
+    task={'task_id':'local-test','status':'stopped','workspace_override':str(tmp_path),
+          'parameter_values':{**out,'revision_review_result':(tmp_path/out['revision_review_path']).read_text(encoding='utf-8')},
+          'node_states':{'agent_pl':{'status':'running','attempt_count':2,'attempt_history':[
+              {'attempt_number':1,'status':'failed','error':'输出校验失败（来自节点 script_local_commit）: 尚有问题'}]},
+              'agent_local_review':{'status':'completed'}}}
+    (tmp_path/out['revision_patch_path']).unlink()
+    path=m.recover_rejected_review(tmp_path,task,interrupted_writer=True)
+    author,advice,_=m.feedback_layers(tmp_path,path)
+    assert author=='保留全知和回环，仅合并无作用说明。' and '第一段还有无作用复述' in advice
+    assert (tmp_path/'story/0001/chapter.md').read_bytes()==BODY.encode()
+    task['node_states']['agent_pl']['attempt_history']=[]
+    with pytest.raises(ValueError,match='独立复核记录'):
+        m.recover_rejected_review(tmp_path,task,interrupted_writer=True)
 
 
 def test_length_gate_measures_cumulative_work_without_inferred_replanning(tmp_path):

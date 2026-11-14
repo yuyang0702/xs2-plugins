@@ -44,6 +44,28 @@ def test_review_checkpoint_keeps_verified_prose_and_replays_all_gates_not_writer
     assert values['guard_source_file']==seed
 
 
+def test_invalid_facts_audit_resumes_with_bound_candidate_and_excludes_scene_writers(tmp_path,monkeypatch,capsys):
+    state,task,definition,body=fixture(tmp_path,monkeypatch,capsys)
+    directory=tmp_path/'cache/draft-guard/task-guard'
+    (directory/'facts-approved.json').unlink()
+    task['node_states'].pop('agent_guard_expression_repair')
+    task['node_states'].update(
+        agent_guard_facts_repair={'status':'completed','outputs':{'_json_output_file':str(directory/'facts-draft.json')}},
+        script_guard_facts_candidate={'status':'completed'},
+        script_guard_facts_commit={'status':'failed','error':'RETRY_STOP: 核验凭据无效，前后事件凭据重叠'})
+    p=load('production');action=p.recovery_action(state,'mvp',task,root=tmp_path)
+    assert action['stage']=='mvp' and 'outline' not in action['reset']
+    state.update(action['updates'])
+    checkpoint=state['automaticCheckpoint'];options=p.checkpoint_options(tmp_path,state,'mvp',definition,task)
+    assert not any(node in options['selected_node_ids'] for node in ('agent_nw','agent_aw','agent_si','agent_sw'))
+    assert 'agent_guard_facts_audit' in options['selected_node_ids']
+    assert json.loads((tmp_path/checkpoint['source_file']).read_text(encoding='utf-8'))['body']==body
+    assert p.recovery_action(state,'mvp',task,root=tmp_path) is None
+    draft=directory/'facts-draft.json';save(draft,{'body':body+'改动过的候选'})
+    with pytest.raises(ValueError,match='变化'):
+        p.validate_checkpoint(tmp_path,state,'mvp')
+
+
 def test_unpublished_expression_conflict_can_replan_without_publishing_fact_seed(tmp_path,monkeypatch,capsys):
     state,task,definition,body=fixture(tmp_path,monkeypatch,capsys)
     from test_draft_guard import module as guard_module,run
@@ -178,7 +200,8 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
                 args=shlex.split(params.get('script_args',''))
             args=[await resolve_placeholders(a,ctx.parameter_values,ctx.definition.variables,str(tmp_path)) for a in args]
             file=PLUGIN/'resources/script-library'/params['script_group']/params['script_name']/(params['script_name']+'.py')
-            result=subprocess.run([sys.executable,str(file),*args],cwd=tmp_path,env={**os.environ,'TASK_ID':'review-graph'},capture_output=True,text=True,encoding='utf-8')
+            env={**os.environ,'TASK_ID':'review-graph','PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'}
+            result=subprocess.run([sys.executable,str(file),*args],cwd=tmp_path,env=env,capture_output=True,text=True,encoding='utf-8')
             assert result.returncode==0,result.stderr
             assert 'WF_REJECT' not in result.stdout,result.stdout
             return NodeResult(status='completed',outputs=_parse_wf_vars(result.stdout))

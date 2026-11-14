@@ -130,6 +130,12 @@ def verify_completion(root, state, stage, task):
     record_stage(root, state, stage, 'stage_complete', task)
     run_control().observe(root,state,stage,task)
     if stage=='export' and longrun().enabled(root):longrun().accept_chapter(root,chapter(state),task)
+    if state.get('productionLaunchLease'):
+        execution_guard().release_launch(root,state,stage)
+    refreshes=state.get('compositionReviewRefreshRecoveries') or {}
+    key=f"{chapter(state)}/{stage}/{state.get('readerRepairCount') or 0}"
+    if key in refreshes:
+        state['compositionReviewRefreshRecoveries']={**refreshes,key:{**refreshes[key],'completed':task['task_id']}}
 
 
 def _verify_completion(root, state, stage, task):
@@ -218,12 +224,25 @@ def _launch_feedback(root,selected,pending_parameter,guard):
 
 
 def parameters(state, definition):
+    context=state.get('productionLaunchContext') or {}
+    automatic_launch=(context and state.get('autoNext') is True and state.get('autoArmed') is True
+                      and state.get('autoController')=='server-v1')
+    workflow_id=str(definition.get('workflow_id',''))
+    workflow=workflow_id.removeprefix('xs2-novel-flywheel-')
+    if automatic_launch:
+        stage=context['stage'];expected=context.get('workflow_id')
+        if (workflow_id!=expected if expected else workflow!=stage) or context['chapter']!=chapter(state):
+            raise ValueError('待启动步骤或章节已变化，请重新检查后启动。')
+        workflow=stage
     spec=importlib.util.spec_from_file_location('production_launch_preflight',Path(__file__).resolve().parents[1]/'production_guard/production_guard.py')
     guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
-    guard.check_definition(definition,state.get('values',{}))
+    guard.check_definition(definition,state.get('values',{}),stage=workflow)
     values = dict(state.get("values", {}))
+    short_fallback = state.get('shortContextFallback') or {}
+    if workflow == 'mvp' and state.get('mode') == 'short' and short_fallback.get('chapter') == chapter(state):
+        values['preparation_mode'] = 'full'
     active=state.get('activeCompositionBudget') or {}
-    if (definition.get('workflow_id') in ('reader-sim','post-hoc','export') and active.get('chapter')==chapter(state)
+    if (workflow in ('reader-sim','post-hoc','export') and active.get('chapter')==chapter(state)
             and active.get('nominal_target')==values.get('target_word_count','')):
         values.update(target_word_count=active['target'],words_per_chapter=active['target'])
     checkpoint=state.get('automaticCheckpoint') or {}
@@ -258,13 +277,8 @@ def parameters(state, definition):
             raise ValueError(f"请先填写{variable.get('name') or key}。")
         if value is not None:
             result[key] = str(value)
-    context=state.get('productionLaunchContext') or {}
-    if (context and state.get('autoNext') is True and state.get('autoArmed') is True
-            and state.get('autoController')=='server-v1'):
+    if automatic_launch:
         root=Path(context['root']).resolve();stage=context['stage']
-        workflow=str(definition.get('workflow_id',stage)).removeprefix('xs2-novel-flywheel-')
-        if workflow!=stage or context['chapter']!=chapter(state):
-            raise ValueError('待启动步骤或章节已变化，请重新检查后启动。')
         pending=state.get('autoPending') or {}
         feedback=result.get('author_feedback_file')
         if feedback:
@@ -404,6 +418,79 @@ def validate_dispatch(root, state, stage, task):
         recovery_checkpoint().validate_selection(task, state['automaticCheckpoint'])
 
 
+def _character_provider_recovery(root, state, task):
+    model = state.get('analysisModel')
+    if root is None or not model or state.get('characterModelFallback'):
+        return None
+    states = task.get('node_states') or {}
+    failed = [name for name, node in states.items() if node.get('status') == 'failed']
+    if len(failed) != 1 or failed[0] not in {'agent_short_character', 'agent_skeleton'}:
+        return None
+    name = failed[0]
+    error = str(states[name].get('error') or '').lower()
+    if not any(marker in error for marker in ('internalservererror', 'error code: 500', 'error code: 502',
+                                              'error code: 503', 'error code: 504')):
+        return None
+    definition = task.get('snapshot_definition') or {}
+    node = next((item for item in definition.get('nodes', []) if item['id'] == name), {})
+    previous = node.get('model_override')
+    if not previous or previous == model:
+        return None
+    path = Path(__file__).resolve().parents[1] / 'character_review/character_review.py'
+    gate = execution_guard().load('character_provider_retry', path)
+    if gate.empty_unpublished_batch(Path(root), task['task_id']) is None:
+        return None
+    return {'action': 'advance', 'stage': 'character', 'reset': list(STAGES[STAGES.index('character'):]),
+            'updates': {'characterModelFallback': {'node_id': name, 'model': model, 'source_model': previous,
+                                                   'source_task_id': task['task_id']}}}
+
+
+def _keep_audited_draft(root, state, task):
+    number=chapter(state)
+    if (state.get('mode')!='short' or state.get('readerRepairCount') or 'mvp' not in state.get('completed',[])
+            or number not in (state.get('polishReviewRecoveries') or {}) or number in (state.get('polishDecisions') or {})
+            or Path(task.get('workspace_override') or '').resolve()!=Path(root).resolve()):
+        return None
+    failed={key:node for key,node in (task.get('node_states') or {}).items() if node.get('status')=='failed'}
+    if not failed or not set(failed)<={'agent_pl','agent_local_review','script_local_candidate','script_local_commit'}:
+        return None
+    errors='\n'.join(str(node.get('error') or '') for node in failed.values())
+    if (any(marker in errors for marker in ('PREFLIGHT:','LEASE:','CONTEXT_BUDGET:'))
+            or not any(marker in errors.lower() for marker in ('no streaming chunk received', 'streamchunktimeouterror',
+                'invalid structured output', 'retry_stop: content', 'retry_stop: format', 'retry_stop: evidence'))):
+        return None
+    guard=execution_guard()
+    local=guard.load('production_keep_audited_draft',Path(__file__).resolve().parents[1]/'local_revision/local_revision.py')
+    if local.feedback_layers(root,state.get('values',{}).get('author_feedback_file'))[0].strip():
+        return None
+    ref=(state.get('refs') or {}).get('mvp') or {}
+    if not ref.get('workflow_id') or not ref.get('task_id'):
+        return None
+    draft=guard.terminal_native_task(root,ref['workflow_id'],ref['task_id'])
+    if (not draft or draft['status']!='completed' or any((draft.get('node_states') or {}).get(key,{}).get('status')!='completed'
+            for key in ('script_guard_finish','script_render_si'))):
+        return None
+    directory=Path(root)/'cache/draft-guard'/ref['task_id']
+    receipt_path=directory/'final-receipt.json';audit=directory/'expression-audit.json'
+    body_path=Path(root)/f'story/{number}/chapter.md'
+    if not all(path.is_file() for path in (receipt_path,audit,body_path)):
+        return None
+    receipt=json.loads(receipt_path.read_text(encoding='utf-8-sig'));raw=body_path.read_bytes()
+    text=body_path.read_text(encoding='utf-8-sig').rstrip()
+    bounds=length_quality().target_range(state.get('values',{}).get('target_word_count'))
+    if (receipt.get('phase')!='expression' or text!=receipt.get('body')
+            or hashlib.sha256(text.encode()).hexdigest()!=receipt.get('body_sha256')
+            or hashlib.sha256(audit.read_bytes()).hexdigest()!=receipt.get('audit_sha256')
+            or receipt.get('book_contract_sha256')!=local.book.digest(local.book.resolve(root))
+            or bounds and not bounds[0]<=length_quality().count_prose(text)<=bounds[1]):
+        return None
+    decision={'status':'retained_audited_draft','draft_task_id':ref['task_id'],'failed_task_id':task['task_id'],
+              'body_sha256':hashlib.sha256(raw).hexdigest()}
+    record_stage(root,state,'polish','stage_retained_audited_draft',task)
+    return {'action':'advance','stage':'reader-sim','reset':list(PRODUCTION[2:]),
+            'updates':{'polishDecisions':{**(state.get('polishDecisions') or {}),number:decision}}}
+
+
 def recovery_action(state, stage, task, *, root=None):
     """Bounded, durable relaunch for known execution failures, never content."""
     if stage not in STAGES or task.get('status') != 'failed' or not task.get('task_id'):
@@ -412,6 +499,63 @@ def recovery_action(state, stage, task, *, root=None):
         if state.get('productionLaunchLease'):execution_guard().release_launch(root,state,stage)
         record_stage(root, state, stage, 'stage_failed', task)
         run_control().observe(root,state,stage,task)
+    if stage == 'character':
+        fallback = _character_provider_recovery(root, state, task)
+        if fallback:
+            return fallback
+    if stage in ('mvp','polish') and root is not None:
+        nodes=task.get('node_states') or {}
+        error=str(nodes.get('script_composition_commit',{}).get('error') or '')
+        ref=(state.get('refs') or {}).get(stage) or {}
+        key=f"{chapter(state)}/{stage}/{state.get('readerRepairCount') or 0}"
+        previous=state.get('compositionReviewRefreshRecoveries') or {}
+        if (key not in previous and ref.get('task_id')==task['task_id'] and ref.get('workflow_id')
+                and 'RETRY_STOP: content：方案变化，已重建输入，请复查当前方案。' in error):
+            path=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
+            planner=execution_guard().load('production_composition_refresh',path)
+            if planner.review_refresh_candidate(root,chapter(state),ref['workflow_id'],ref['task_id']):
+                return {'action':'advance','stage':stage,'reset':list(STAGES[STAGES.index(stage):]),
+                        'updates':{'compositionReviewRefreshRecoveries':{**previous,key:dict(ref)}}}
+    if stage == 'mvp' and root is not None and not state.get('automaticCheckpoint'):
+        facts = (task.get('node_states') or {}).get('script_guard_facts_commit') or {}
+        error = str(facts.get('error') or '')
+        if facts.get('status') == 'failed' and 'RETRY_STOP:' in error and '核验凭据无效' in error:
+            checkpoint = recovery_checkpoint().prepare_review(root, state, task, chapter(state))
+            return {'action':'advance', 'stage':'mvp', 'reset':list(PRODUCTION),
+                    'updates':{'automaticCheckpoint':checkpoint}}
+    if stage == 'polish' and root is not None:
+        candidate=(task.get('node_states') or {}).get('script_local_candidate') or {}
+        if candidate.get('status')=='failed' and 'RETRY_STOP: evidence：重规划冲突缺少冻结原文和逐字证据' in str(candidate.get('error') or ''):
+            path=Path(__file__).resolve().parents[1]/'local_revision/local_revision.py'
+            local=execution_guard().load('production_conflict_evidence_recovery',path)
+            local.verify_conflict(root,task,recover_evidence=True)
+        commit=(task.get('node_states') or {}).get('script_local_commit') or {}
+        chapter_number=chapter(state);previous=state.get('polishReviewRecoveries') or {}
+        cycle=int(state.get('readerRepairCount') or 0)
+        key=f'{chapter_number}/{cycle}' if cycle else chapter_number
+        writer=(task.get('node_states') or {}).get('agent_pl') or {}
+        writer_timeout=writer.get('status')=='failed' and any(token in str(writer.get('error') or '').lower() for token in (
+            'streamchunktimeouterror','no streaming chunk received for ','执行超时','readtimeout'))
+        rejected=commit.get('status')=='failed' and 'RETRY_STOP: content' in str(commit.get('error') or '')
+        if key not in previous and (rejected or writer_timeout):
+            path=Path(__file__).resolve().parents[1]/'local_revision/local_revision.py'
+            local=execution_guard().load('production_polish_review_recovery',path)
+            pending=(Path(root)/f"cache/local-revision/{task['task_id']}/working.json").is_file()
+            if rejected or (pending and local.writer_retry_had_review(task)):
+                feedback=local.recover_rejected_review(root,task,interrupted_writer=not rejected)
+                return {'action':'advance','stage':'polish','reset':list(PRODUCTION[1:]),'updates':{
+                    'polishReviewRecoveries':{**previous,key:task['task_id']},
+                    'values':{**state['values'],'author_feedback_file':feedback}}}
+    if (stage == 'mvp' and root is not None and state.get('mode') == 'short' and chapter(state) == '0001'
+            and not state.get('shortContextFallback') and not state.get('automaticCheckpoint')
+            and task.get('parameter_values', {}).get('preparation_mode') == 'compact'
+            and not (Path(root) / 'story/0001/chapter.md').exists()):
+        failed = {name: node for name, node in task.get('node_states', {}).items() if node.get('status') == 'failed'}
+        error = str(failed.get('script_short_context', {}).get('error') or '')
+        if set(failed) == {'script_short_context'} and any(marker in error for marker in (
+                'SHORT_CONTEXT_OVERFLOW:', '超出轻量完整上下文范围', '资料总量超过轻量完整上下文范围')):
+            return {'action': 'advance', 'stage': 'mvp', 'reset': list(PRODUCTION),
+                    'updates': {'shortContextFallback': {'chapter': '0001', 'source_task_id': task['task_id']}}}
     if stage in ('mvp','polish') and root is not None:
         folder=(task.get('parameter_values') or {}).get('revision_dir','') if stage=='polish' else 'cache/draft-guard/'+task['task_id']
         if folder and (Path(root)/folder/'composition-conflict.json').is_file():
@@ -433,6 +577,10 @@ def recovery_action(state, stage, task, *, root=None):
             histories[key]=[*prior,task['task_id']]
             return {'action':'advance','stage':stage,'reset':list(PRODUCTION[1:] if stage=='polish' else PRODUCTION),
                 'updates':{'compositionReplans':histories,'serialReservation':None,'automaticCheckpoint':None}}
+    if stage == 'polish' and root is not None:
+        retained=_keep_audited_draft(root,state,task)
+        if retained:
+            return retained
     if (stage == 'outline' and root is not None
             and task.get('parameter_values', {}).get('planning_mode') == 'rolling'):
         nodes = task.get('node_states') or {}
@@ -454,6 +602,19 @@ def recovery_action(state, stage, task, *, root=None):
                     'script_sync_up', 'script_sync_down_final'}
         nodes = task.get('node_states') or {}
         failed = {key for key, node in nodes.items() if node.get('status') == 'failed'}
+        ref=(state.get('refs') or {}).get(stage) or {}
+        evidence_error=str(nodes.get('script_validate_observation',{}).get('error') or '')
+        if (failed=={'script_validate_observation'} and 'RETRY_STOP: evidence：[archive_evidence]' in evidence_error
+                and ref.get('task_id')==task['task_id'] and ref.get('workflow_id')
+                and execution_guard().terminal_native_task(root,ref['workflow_id'],ref['task_id'])):
+            number=chapter(state);report=reader_report(root,state);body=report['body_sha256']
+            key=f'{number}/{body}';previous=state.get('archiveEvidenceRecoveries') or {}
+            source=Path(root)/f"cache/story-support/reviews/{task['task_id']}/{number}/review-source.json"
+            if key not in previous and report['verdict']=='pass' and source.is_file():
+                frozen=json.loads(source.read_text(encoding='utf-8-sig'))
+                if frozen.get('task_id')==task['task_id'] and frozen.get('body_sha256')==body:
+                    return {'action':'advance','stage':stage,'reset':['post-hoc','export'],
+                            'updates':{'archiveEvidenceRecoveries':{**previous,key:task['task_id']}}}
         if failed == {'script_confirm_archive'} and all(nodes.get(key, {}).get('status') == 'completed' for key in required):
             run_ledger().recover(root)
             file = Path(root) / f'story/{chapter(state)}/confirmed_state.json'
@@ -624,6 +785,12 @@ def repair_request(state):
             "project": state, "_model_override": state.get("repairModel") or None}
 
 
+def repair_feedback_sources(root,state):
+    path=Path(__file__).resolve().parents[1]/'local_revision/local_revision.py'
+    local=execution_guard().load('reader_repair_feedback_sources',path)
+    return local.retained_feedback_sources(root,str(state.get('values',{}).get('author_feedback_file') or '').strip())
+
+
 def repair_ready(state, feedback_path):
     cycle = int(state.get("readerRepairCount") or 0) + 1
     _, _, total = _length_cycle(state)
@@ -648,7 +815,7 @@ def _is_body_writer(node, stage):
     if stage == 'mvp':
         if identity == 'agent_guard_expression_repair':
             return True
-        agent_type = node.get('agent_type', '')
+        agent_type = node.get('agent_type') or ''
         if agent_type.endswith('novel-multi-scene-writer'):
             return True
         if agent_type.endswith('novel-multi-scene-planner'):
@@ -674,7 +841,8 @@ def model_overrides(state, definition, stage):
         if _is_body_writer(node, stage):
             model = (polisher or repair or writer) if stage == 'polish' else writer
         elif stage == 'character' and identity != 'agent_card_semantic_review':
-            model = None  # Respect the selected character author.
+            fallback = state.get('characterModelFallback') or {}
+            model = analysis if fallback.get('node_id') == identity and fallback.get('model') == analysis else None
         else:
             model = analysis or (repair if stage in {'polish', 'reader-sim'} else None)
         if model:

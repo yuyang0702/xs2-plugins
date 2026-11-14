@@ -80,6 +80,33 @@ def test_all_source_workflows_have_valid_script_and_variable_references():
         assert m.check_definition(definition,{})['protocol']=='production-preflight-v1', path
 
 
+def test_character_review_outputs_keep_publication_inputs_stable(tmp_path):
+    m = module()
+    path = PLUGIN/'resources/workflows/character/definition.json'
+    definition = json.loads(path.read_text(encoding='utf-8-sig'))
+    review = m.load('preflight_character_review', PLUGIN/'resources/script-library/xs2/character_review/character_review.py')
+    batch = tmp_path/'cache/character-review/task-synthetic'
+    generated = review._variables(batch)
+    generated.update(card_review_binding_sha='a'*64, character_names='["陈满"]', name='陈满')
+    source = {'premise': '试营业', 'world_foundation': 'meta/world_foundation.md'}
+    frozen = m._input_parameters(tmp_path, definition, source)
+    assert m._input_parameters(tmp_path, definition, {**source, **generated}) == frozen
+    changed = m._input_parameters(tmp_path, definition, {**source, 'premise':'改动后的设定'})
+    assert changed != frozen
+
+
+@pytest.mark.parametrize('stage', ['mvp', 'polish', 'reader-sim', 'outline', 'story-plan'])
+def test_generated_context_and_director_variables_do_not_change_frozen_inputs(tmp_path, stage):
+    m = module()
+    path = PLUGIN/'resources/workflows'/stage/'definition.json'
+    definition = json.loads(path.read_text(encoding='utf-8-sig'))
+    generated = {var['key']: 'cache/generated.md' for var in definition['variables']
+                 if var['key'].startswith(('pp_', 'prose_policy_')) or var['key'] in {
+                     'story_support_context', 'od_intent', 'se_intent'}}
+    assert generated
+    assert m._input_parameters(tmp_path, definition, generated) == m._input_parameters(tmp_path, definition, {})
+
+
 def test_definition_checks_system_prompt_script_reference_and_actual_native_override():
     m=module()
     d={'variables':[], 'nodes':[{'id':'role','node_type':'agent','system_prompt_template':'{{undeclared}}'}]}

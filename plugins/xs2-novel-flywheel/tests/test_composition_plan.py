@@ -34,6 +34,42 @@ def test_default_author_range_is_not_automatically_reduced(tmp_path):
     assert not (tmp_path/'planning/length/0002.json').exists()
 
 
+@pytest.mark.parametrize('condition',['exact','frozen','different_feedback','ambiguous','too_short','planner','stale'])
+def test_single_explicit_deletion_uses_measured_author_range_only_when_bound(tmp_path,condition):
+    from test_local_revision import module as local_module
+    m=module();local=local_module();chapter='0001';task='single-deletion'
+    body='先说条件。重复解释。继续收拾。'
+    target='10-30' if condition=='too_short' else '5-30'
+    put(tmp_path,'.novel-project.json',{'values':{'chapter_number':chapter,'target_word_count':target,'author_feedback_file':'feedback.md'}})
+    put(tmp_path,'meta/length_policy.json',{'schema':1,'ownership':'planner' if condition=='planner' else 'author'})
+    feedback='本轮只改开场这一个问题。删掉“重复解释。”这一句，它重复了前面的条件。保持后续动作，保留其他正文。'
+    put(tmp_path,'feedback.md',feedback + ('再补一个细节。' if condition=='ambiguous' else ''))
+    selected='cache/frozen/feedback.md' if condition in ('frozen','different_feedback') else 'feedback.md'
+    if selected!='feedback.md':put(tmp_path,selected,feedback if condition=='frozen' else '去掉另一句。')
+    put(tmp_path,'story/0001/chapter.md',body)
+    put(tmp_path,'story/0001/reader_report.json',{'assessment_scope':'whole_chapter','verdict':'pass','issues':[],
+        'body_sha256':'old' if condition=='stale' else m.support.digest(tmp_path,'story/0001/chapter.md'),
+        'fact_review':{'verdict':'pass'},'expression_review':{'verdict':'pass'}})
+    request=m.prepare(tmp_path,chapter,task,target,polish_pass='content',feedback_file=selected)
+    if condition not in ('exact','frozen'):
+        assert request['enabled']
+        return
+    assert not request['enabled'] and request['fixed_edit']
+    assert m.effective(tmp_path,chapter,task)['target_word_count']==target
+    out=local.prepare(tmp_path,chapter,task,target,feedback_path=selected)
+    put(tmp_path,'critique.json',{'issues':[]})
+    local.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    fixed=m.fixed_edit(tmp_path,chapter,task)['edit']
+    assert fixed['patch']['edits'][0]['old']=='重复解释。'
+    wrong=copy.deepcopy(fixed['patch']);wrong['edits'][0]['replacement']='又解释。'
+    put(tmp_path,out['revision_patch_path'],wrong)
+    with pytest.raises(ValueError,match='作者指定'):
+        local.candidate(tmp_path,out['revision_dir'])
+    put(tmp_path,out['revision_patch_path'],fixed['patch'])
+    local.candidate(tmp_path,out['revision_dir'])
+    assert json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf-8'))['candidate']=='先说条件。继续收拾。'
+
+
 @pytest.mark.parametrize('mode,fields,expected',[
     ('short',{'autoChapterLimit':1,'autoChapterStarted':None},1),
     ('short',{'autoChapterLimit':None,'autoChapterStarted':None},9999),

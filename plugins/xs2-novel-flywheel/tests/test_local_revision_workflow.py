@@ -10,6 +10,9 @@ def test_content_polish_uses_patches_and_independent_review_length_only_stays_se
     d=literary_graph(json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf-8')))
     nodes={n['id']:n for n in d['nodes']};edges={(e['source'],e['target']) for e in d['edges']}
     assert ('gw_polish_scope','script_local_prepare') in edges
+    assert '--dialogue-check' in nodes['script_local_prepare']['node_params']['script_argv']
+    assert nodes['script_local_prepare']['node_params']['script_argv'][-2:]==['--dialogue-check-version','2']
+    assert nodes['script_local_writer_input']['enable_reject_upstream']
     assert nodes['agent_pl']['node_params']['json_output_schema']['required']==['source_sha256','edits']
     assert ('script_local_candidate','agent_local_review') in edges and ('agent_local_review','script_local_commit') in edges
     assert nodes['script_local_commit']['node_params']['script_stdin_variable']=='revision_review_result'
@@ -78,7 +81,10 @@ def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_o
                 req=json.loads((tmp_path/'cache/composition/scheduler-local/review-input.json').read_text())
                 output={'request_digest':req['request_digest'],'plan_digest':req['plan_digest'],'verdict':'approve','scope_preserved':True,
                     'length_feasible':True,'reason':'不强制新增事件。','checks':[{'segment_id':'reflection','develops_function':True,'style_basis':'本书回环声线','reason':'情绪有发展。'}]}
-            elif node=='agent_sc':output={'feels_human':True,'scene_assessment':'保留原声线，合并复述。','issues':[]}
+            elif node=='agent_sc':
+                output={'feels_human':True,'scene_assessment':'保留原声线，合并复述。','issues':[],
+                        'dialogue_checks':[{'focus':focus,'status':'not_applicable','reason':'本章没有连续对白。','goal':'','turns':[]}
+                                           for focus in ('literal_echo','situational_speech')]}
             elif node=='agent_pl':
                 if calls.count(node)>1:
                     assert '第二段简明。' in kwargs['task_description']

@@ -433,3 +433,19 @@ def test_planned_debt_advance_is_first_recorded_as_plant(tmp_path):
         'debts': [{'id': 'd001', 'operation': 'advance', 'evidence': quote}]}, {}, quote)
     assert result['debts'][0]['operation'] == 'plant'
     assert result['debts'][0]['evidence'] == quote
+
+
+def test_archive_numbered_evidence_resolves_to_exact_frozen_body(tmp_path):
+    body='她把灯放回去。\n\n阿柱把欠条卷起来。'
+    support.write(tmp_path,'story/0001/chapter.md',body)
+    support.begin_review(tmp_path,'0001')
+    view=support.read(tmp_path,support.review_file('0001','archive-evidence-body.md'))
+    assert '@P0001' in view and '@P0002' in view
+    proposed={'characters':[{'name':'赵青','evidence':'@P0001'}],
+              'debts':[{'id':'d001','operation':'plant','evidence':['@P0002']}]}
+    assert list(support.observed_characters(proposed,body))[0][1]=='她把灯放回去。'
+    _, result=support.confirmed_indexes(tmp_path,'0001',proposed,{},body)
+    assert result['debts'][0]['evidence']==['阿柱把欠条卷起来。']
+    proposed['debts'][0]['evidence']=['@P0999']
+    with pytest.raises(ValueError,match=r'd001.*@P0999'):
+        support.confirmed_indexes(tmp_path,'0001',proposed,{},body)

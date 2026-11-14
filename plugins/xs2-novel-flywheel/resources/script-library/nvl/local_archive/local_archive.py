@@ -364,9 +364,34 @@ def _render_value(value: Any, level: int = 2) -> list[str]:
     return [_render_scalar(value)]
 
 
+def _adopted_style_references():
+    if not _workspace_path('learning/active.json').is_file():
+        return None
+    active = _read_json('learning/active.json')
+    relative = active['blueprint_path']
+    if not _workspace_path(relative).is_relative_to(_workspace_path('learning/blueprints')):
+        raise ValueError('采用蓝图路径无效')
+    blueprint = _read_json(relative)
+    if _execution_guard().digest(blueprint) != active['blueprint_sha256']:
+        raise ValueError('采用蓝图与风格档案来源不一致')
+    styles = blueprint.get('styles', [])
+    mechanisms = blueprint.get('mechanisms', [])
+    if ([item['choice_id'] for item in styles] != blueprint.get('selected_style_ids', []) or
+            [item['candidate_id'] for item in mechanisms] != blueprint.get('selected_candidate_ids', [])):
+        raise ValueError('采用蓝图与参考条目不一致')
+    return [
+        *({'id': item['choice_id'], 'style': item['title'], 'guidance': item['guidance']} for item in styles),
+        *({'id': item['candidate_id'], 'mechanism': item['mechanism']} for item in mechanisms),
+    ]
+
+
 def _render_document(raw_path: str, value: Any) -> str:
     if Path(raw_path).name == "body.json" and isinstance(value, dict):
         return str(value.get("body", "")).rstrip() + "\n"
+    if Path(raw_path).as_posix() == 'cache/story_plan/style_profile.json' and isinstance(value, dict):
+        adopted = _adopted_style_references()
+        if adopted is not None:
+            value = {**value, 'references': adopted}
     lines = [f"# {_title(raw_path)}", ""]
     lines.extend(_render_value(value))
     return "\n".join(lines).rstrip() + "\n"

@@ -81,3 +81,21 @@ def test_valid_exact_claim_numerals_keep_their_values(claim, expected):
 def test_nested_literal_with_intervening_narration_remains_unknown(text):
     rows = module().analyze(text)['findings']
     assert rows and all(row['status'] == 'unknown' for row in rows)
+def test_bundled_business_precision_has_book_independent_anchors_and_normalized_values():
+    p=module()
+    rows=p.dialogue_details('“我接了六十份，七点前送到。”\n\n“药得五毫克，八点前服。”\n\n“那家有咖啡。”')
+    assert [r['paragraph_id'] for r in rows]==['p0001','p0002']
+    assert rows[0]['details']==['六十份','七点']
+    assert rows[1]['details']==['五毫克','八点']
+    assert p.detail_keys('60份、07:00前到')==p.detail_keys('六十份，七点前送到')
+
+
+def test_precision_scan_spans_narration_and_linked_turns_but_leaves_relative_language():
+    text = ('他又数了一遍，盘里还剩一颗。\n\n他接过盘子，没说话。\n\n我把那一颗推过去。\n\n'
+            '“六点？”\n\n我把账本翻回来。\n\n“六点要对账。”\n\n“那七点？”\n\n“七点可以。”\n\n'
+            '午后又凉了一点。\n\n我摸到三块钱，两张票据。\n\n第二天见。')
+    rows = module().review_candidates(text)
+    assert {row['paragraph_id']: row['details'] for row in rows} == {
+        'p0001': ['一颗'], 'p0003': ['一颗'], 'p0004': ['六点'], 'p0006': ['六点'],
+        'p0007': ['七点'], 'p0008': ['七点'], 'p0010': ['三块钱', '两张'],
+    }

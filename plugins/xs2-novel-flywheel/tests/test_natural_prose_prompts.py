@@ -75,6 +75,22 @@ def test_workflow_messages_do_not_restore_removed_expression_quotas(prompt_manag
     assert count >= 10
 
 
+@pytest.mark.parametrize('agent', (
+    'novel-single-writer', 'novel-multi-scene-writer', 'novel-description-writer',
+    'novel-polisher', 'novel-professional-polisher', 'xs2-local-revision-critic',
+    'xs2-local-revision-writer', 'xs2-local-revision-reviewer', 'xs2-draft-auditor',
+    'xs2-opening-lead',
+))
+def test_runtime_roles_receive_attention_and_detail_selection_guidance(prompt_manager, agent):
+    prompt = prompt_manager.get_prompt_text(agent)
+    assert prompt.count('【人物注意力与留白】') == 1
+    assert '此刻会注意什么' in prompt
+    assert '数字会改变选择' in prompt
+    assert '读者能从动作或对白推知' in prompt
+    assert '先遮住精确值再读' in prompt
+    assert '第一次出现也要核对' in prompt
+
+
 def test_character_voice_examples_are_not_frequency_or_catchphrase_quotas(prompt_manager):
     prompt = prompt_manager.get_prompt_text("novel-character-voice")
     assert not re.search(r"每[一二三四五六七八九十\d]+句[^\n]{0,25}(?:至少|必须|不超过)", prompt)
@@ -199,3 +215,56 @@ def test_cross_paragraph_semantic_audit_reaches_each_production_role_once(monkey
     actual = PromptBuilder(Resources()).build(agent, is_workflow=True, include_skills=False, include_rules=False)
     assert section['content'] in actual
     assert actual.count(marker) == 1
+
+
+@pytest.mark.parametrize(('stage', 'node_id', 'review'), [
+    ('mvp', 'agent_aw', False),
+    ('mvp', 'agent_si', False),
+    ('mvp', 'agent_sw', False),
+    ('polish', 'agent_pl', False),
+    ('polish', 'agent_pp', False),
+    ('polish', 'agent_sc', True),
+    ('polish', 'agent_local_review', True),
+])
+def test_scene_voice_checks_reach_the_workflow_roles(monkeypatch, stage, node_id, review):
+    from src.agent.definition import AgentDefinition
+    from src.session.prompt_builder import PromptBuilder
+
+    workflow = json.loads((RESOURCES / 'workflows' / stage / 'definition.json').read_text(encoding='utf-8'))
+    node = next(node for node in workflow['nodes'] if node['id'] == node_id)
+    agent = node['agent_type']
+    agents = json.loads((RESOURCES / 'agents.json').read_text(encoding='utf-8'))['agents']
+    templates = json.loads((RESOURCES / 'prompts.json').read_text(encoding='utf-8'))['agents']
+    definition = AgentDefinition(agent_type=agent, **agents[agent])
+    monkeypatch.setattr('src.agent.definition.get_agent_definition', lambda _: definition)
+
+    class Resources:
+        def get_sections(self, template):
+            return templates[template]['sections']
+
+    prompt = PromptBuilder(Resources()).build(agent, is_workflow=True, include_skills=False, include_rules=False)
+    assert prompt.count('【人物当下的声音与注意】') == 1
+    for phrase in ('遮住解释再读', '移到另一场', '接错话', '操作清单', '有意回环'):
+        assert phrase in prompt
+    if review:
+        assert '引用实际承担意思的原文和被怀疑重复的原文' in prompt
+        assert '低影响' in prompt
+
+
+@pytest.mark.parametrize(('stage','node_ids'),[
+    ('mvp',('agent_sw','agent_dw','agent_aw','agent_iw','agent_dsw','agent_tw','agent_si',
+            'agent_guard_expression_repair','agent_guard_expression_audit')),
+    ('reader-sim',('agent_blind_reader','agent_context_reader','agent_reader')),
+    ('polish',('agent_pp','agent_fragment_review')),
+])
+def test_dialogue_criteria_reach_initial_writers_and_independent_readers(stage,node_ids):
+    workflow=json.loads((RESOURCES/'workflows'/stage/'definition.json').read_text(encoding='utf8'))
+    nodes={row['id']:row for row in workflow['nodes']}
+    for key in node_ids:
+        message=nodes[key]['first_message']
+        for phrase in ('【接话与当场说话条件】','实际意图','当时在做什么','有效反问'):
+            assert phrase in message, (stage,key,phrase)
+    if stage=='mvp':
+        schema=nodes['agent_guard_expression_audit']['node_params']['json_output_schema']
+        categories=schema['properties']['issues']['items']['properties']['category']['enum']
+        assert 'convenient_dialogue' in categories

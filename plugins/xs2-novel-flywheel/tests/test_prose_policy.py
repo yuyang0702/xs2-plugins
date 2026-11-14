@@ -173,8 +173,9 @@ async def resolve(text, values, definition, root):
 
 def workflow_context(book, name, task_id):
     definition = load_workflow(name)
+    # Task creation seeds declared nonempty defaults before applying supplied inputs.
     values = {v["key"]: v.get("default", "") for v in definition["variables"]
-              if v.get("source_type") != "output"}
+              if v.get("source_type") != "output" or v.get("default")}
     values.update(chapter_number="0001")
     if name=='polish' and (book/'.novel-project.json').is_file():
         values['author_feedback_file']=json.loads((book/'.novel-project.json').read_text(encoding='utf8')).get('values',{}).get('author_feedback_file','')

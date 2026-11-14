@@ -132,6 +132,56 @@ def test_claim_retry_never_resets_author_world_baseline(gate, tmp_path):
         gate.preflight(*args)
 
 
+@pytest.mark.parametrize('prior_state', ['failed', 'running', 'foreign', 'draft_exists'])
+def test_native_preflight_retires_only_empty_terminal_claim(gate, tmp_path, monkeypatch, prior_state):
+    root = tmp_path / 'book'
+    root.mkdir()
+    world = root / 'world.md'
+    world.write_text('原始设定', encoding='utf-8')
+    args = (root, '题材', '人设', '现实世界', world)
+    first = gate.preflight(*args, 'task-first')
+    old_batch = Path(first['card_batch_dir'])
+    claim = old_batch.parent / 'claim.json'
+    old_bytes = claim.read_bytes()
+    if prior_state == 'draft_exists':
+        write(old_batch / 'draft/characters.json', {'characters': [person()]})
+
+    host = tmp_path / 'host'
+    (host / 'src').mkdir(parents=True)
+    workflow = 'xs2-novel-flywheel-character'
+    tasks = host / 'data/workflows' / workflow / 'tasks'
+    snapshot = {'workflow_id': workflow, 'nodes': [], 'variables': []}
+    old_task = {'workflow_id': workflow, 'task_id': 'task-first',
+                'workspace_override': str(root if prior_state != 'foreign' else host),
+                'status': 'running' if prior_state == 'running' else 'failed',
+                'node_states': {'script_card_preflight': {'status': 'completed'}}}
+    new_task = {'workflow_id': workflow, 'task_id': 'task-next', 'status': 'running',
+                'workspace_override': str(root), 'created_at': '2026-11-12T00:00:00+00:00',
+                'snapshot_definition': snapshot}
+    write(tasks / 'task-first.json', old_task)
+    write(tasks / 'task-next.json', new_task)
+    monkeypatch.setenv('DETERMINFLOW_PROJECT_DIR', str(host))
+    monkeypatch.setenv('WORKFLOW_ID', workflow)
+    monkeypatch.setenv('TASK_ID', 'task-next')
+    source = MODULE.parents[1] / 'production_guard/production_guard.py'
+    spec = importlib.util.spec_from_file_location('semantic_preflight_guard', source)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    guard.run(root, 'character', '0001', 'task-next', workflow)
+
+    archived = old_batch / 'retired-claim.json'
+    if prior_state == 'failed':
+        result = gate.preflight(*args)
+        assert Path(result['card_batch_dir']).name == 'task-next'
+        assert archived.read_bytes() == old_bytes
+        assert gate.preflight(*args) == result
+    else:
+        with pytest.raises(ValueError):
+            gate.preflight(*args)
+        assert claim.read_bytes() == old_bytes
+        assert not archived.exists()
+
+
 def test_project_runtime_progress_tolerated_but_author_values_frozen(gate, tmp_path):
     project = tmp_path / '.novel-project.json'
     original = {'values': {'premise': '归还蓝伞', 'human_intent': '允许犹豫，也能求助', 'world_intent': '现实世界'},

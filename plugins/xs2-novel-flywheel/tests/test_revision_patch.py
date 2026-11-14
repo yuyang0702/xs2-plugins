@@ -18,6 +18,23 @@ def helper():
 SOURCE='雨还没有停。\n\n她又想起那句话。那句话仍在。\n\n潮水会回来。'
 
 
+def test_in_range_local_revision_does_not_suggest_midpoint_padding():
+    budget=helper().length_edit_budget(11216,(11200,12800))
+    assert budget['net_change_minimum']==-16
+    assert budget['suggested_result_word_count']==11216
+    assert budget['suggested_net_change']==0
+
+
+def test_conflict_evidence_binds_label_and_crlf_to_exact_frozen_paragraphs():
+    m=helper();source='我把钱收了。\r\n\r\n他还站在那里。\r\n\r\n她转过身。'
+    quotes=['p0001—p0002（12实字）：\n我把钱收了。\n\n他还站在那里。','她转过身。']
+    assert m.exact_evidence(source,quotes)==['我把钱收了。\r\n\r\n他还站在那里。','她转过身。']
+    with pytest.raises(ValueError,match='逐字证据'):
+        m.exact_evidence(source,['p0001—p0002：\n我把钱还了。\n\n他还站在那里。'])
+    with pytest.raises(ValueError,match='逐字证据'):
+        m.exact_evidence(source,['p0002：\n我把钱收了。'])
+
+
 def payload(*edits):return {'source_sha256':hashlib.sha256(SOURCE.encode()).hexdigest(),'edits':list(edits)}
 def edit(**patch):return {'paragraph_id':'p0002','old':'那句话','occurrence':2,'replacement':'潮声',**patch}
 

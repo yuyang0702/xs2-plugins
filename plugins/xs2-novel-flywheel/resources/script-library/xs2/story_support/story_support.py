@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
+from xml.sax.saxutils import escape
 
 
 HERE = Path(__file__).resolve().parent
@@ -186,6 +187,28 @@ def validated_evidence(evidence, body, error):
     if len(passages) < 2 or not all(exists(quote) for quote in passages):
         raise ValueError(error)
     return passages
+
+
+@lru_cache(maxsize=1)
+def _paragraph_catalog():
+    spec=importlib.util.spec_from_file_location('archive_paragraph_catalog',HERE.parent/'draft_guard/revision_patch.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module.paragraphs
+
+
+def archive_paragraphs(body):
+    return {'@'+row['id'].upper():row['text'] for row in _paragraph_catalog()(body)}
+
+
+def archive_evidence(value,body,paragraphs,error):
+    def resolve(quote):
+        if isinstance(quote,str) and re.fullmatch(r'@P\d{4,}',quote):
+            if quote not in paragraphs:raise ValueError(error+' '+quote)
+            return paragraphs[quote]
+        return quote
+    converted=[resolve(item) for item in value] if isinstance(value,list) else resolve(value)
+    preview=value if isinstance(value,str) else json.dumps(value,ensure_ascii=False)
+    return validated_evidence(converted,body,error+' '+preview[:140])
 
 
 def bodies(root):
@@ -819,12 +842,15 @@ def begin_review(root, chapter):
     write(root, review_file(chapter, 'indexes-before.json'), base)
     dependencies = load(root,f'story/{chapter}/planning_context.json',{}).get('memory_dependencies',[])
     write(root,review_file(chapter,'memory-dependencies.json'),dependencies)
+    write(root,review_file(chapter,'archive-evidence-body.md'),
+          '\n\n'.join(f'{identity}\n{text}' for identity,text in archive_paragraphs(body).items()))
     source = load(root, review_file(chapter, 'review-source.json'))
     source['serial_contract_sha256']=digest(root,'meta/serial_contract.json')
     source['memory_dependencies'] = dependencies
     source['source_hashes'].update({relative: digest(root, relative) for relative in (
         review_file(chapter, 'indexes-before.json'),
         review_file(chapter, 'memory-dependencies.json'),
+        review_file(chapter, 'archive-evidence-body.md'),
         f'story/{chapter}/planned_world_state.json', f'story/{chapter}/planned_hooks.json',
         f'story/{chapter}/planned_debts.json')})
     write(root, review_file(chapter, 'review-source.json'), source)
@@ -832,7 +858,7 @@ def begin_review(root, chapter):
 
 def confirmed_indexes(root, chapter, proposed, arb, body):
     base = load(root, review_file(chapter, 'indexes-before.json'), {})
-    result = {}
+    result = {};paragraphs=archive_paragraphs(body)
     for key, prefix in [('hooks', 'h'), ('debts', 'd')]:
         entries = {item['id']: dict(item) for item in base.get(key, []) if isinstance(item, dict) and item.get('id')}
         planned = {item['id']: item for item in load(root, f'story/{chapter}/planned_{key}.json', []) if isinstance(item, dict) and item.get('id')}
@@ -843,9 +869,9 @@ def confirmed_indexes(root, chapter, proposed, arb, body):
         for item in operations + additions:
             if not isinstance(item, dict) or not re.fullmatch(prefix + r'\d+', str(item.get('id', ''))):
                 raise ValueError('伏笔或债务必须保留有效的原编号。')
-            quote = validated_evidence(item.get('evidence'), body,
-                                       '伏笔或债务缺少真实正文依据，未更新确认档案。')
             identity = item['id']
+            quote = archive_evidence(item.get('evidence'),body,paragraphs,
+                                     f'伏笔或债务 {identity} 缺少真实正文依据，未更新确认档案。')
             old = entries.get(identity, planned.get(identity, {}))
             operation = item.get('operation', 'plant')
             if operation not in ('plant', 'advance', 'resolve'):
@@ -873,11 +899,12 @@ def observed_characters(proposed, body):
     items = proposed.get('characters', [])
     if not isinstance(items, list):
         raise ValueError('人物状态必须是列表。')
+    paragraphs=archive_paragraphs(body)
     for item in items:
         if not isinstance(item, dict) or not item.get('name'):
             raise ValueError("人物状态缺少姓名。")
-        quote = validated_evidence(item.get("evidence"), body,
-                                   "人物状态的正文依据无法核实，未更新正式档案。")
+        quote = archive_evidence(item.get('evidence'),body,paragraphs,
+                                 f"人物 {item['name']} 的正文依据无法核实，未更新正式档案。")
         yield item, quote
 
 
@@ -974,7 +1001,7 @@ def commit(root, chapter):
     prior, _ = confirmed(root, before=int(chapter))
     previous = prior[-1] if prior else {}
     proposed = obs.get("confirmed_state", {})
-    observed = [item for item,quote in observed_characters(proposed,body)]
+    observed = [{**item,'evidence':quote} for item,quote in observed_characters(proposed,body)]
     old_characters, observed, identities = memory().canonicalize(root, previous.get('characters',[]), observed,
                                                                arb.get('identity_rulings',[]), body, previous.get('entities',[]))
     memory_events = memory().validate_events(root,chapter,arb.get('memory_events',[]),prior,identities,body)
@@ -1003,10 +1030,11 @@ def commit(root, chapter):
     changes = obs.get("character_diff", {})
     world = {**previous.get("world", {})}
     facts = list(world.get("facts", []))
+    paragraphs=archive_paragraphs(body)
     for item in arb.get("world_rulings", {}).get("entries", []):
         if item.get("verdict") == "adopt":
-            quote = validated_evidence(item.get('evidence'), body,
-                                       '新增世界事实缺少真实正文依据，未更新确认档案。')
+            quote = archive_evidence(item.get('evidence'),body,paragraphs,
+                                     '新增世界事实缺少真实正文依据，未更新确认档案。')
             facts.append({"description": item.get("fact", ""), "source_chapter": chapter, 'evidence': quote})
     world["facts"] = list({f["description"]: f for f in facts}.values())
     authored = load(root, f"story/{chapter}/planned_world_state.json", {})
@@ -1105,10 +1133,10 @@ def main():
     if args.command == "validate-observation":
         try:
             validate_observation(root, args.chapter)
-        except ValueError:
+        except ValueError as exc:
             _guarded_rejection('<WF_REJECT_UPSTREAM target="agent_obs">[archive_evidence] 对照本章原文重新复制证据，'
                   '包括代词、原标点，不能把“她”改成人名。首次进入正文的伏笔和债务用 plant；'
-                  '缺乏原文依据则不收录。</WF_REJECT_UPSTREAM>')
+                  '可直接引用当前正文编号，缺乏原文依据则不收录。失败项：'+escape(str(exc)[:600])+'</WF_REJECT_UPSTREAM>')
         return
     if args.command == 'reuse-observation':
         guard = archive_store().execution_guard()
@@ -1158,7 +1186,8 @@ def main():
                 print(f"<WF_VAR>{key}:{alias or ' '}</WF_VAR>")
             if key=='pp_learning_context':print(f"<WF_VAR>revision_reference_path:{alias}</WF_VAR>")
     if args.command == 'begin-review':
-        for key, name in [('obs_output_file','observer.json'), ('archive_observer_path','observer.json'), ('archive_arbiter_path','arbiter.json')]:
+        for key, name in [('obs_output_file','observer.json'), ('archive_observer_path','observer.json'), ('archive_arbiter_path','arbiter.json'),
+                          ('archive_evidence_body','archive-evidence-body.md')]:
             print(f'<WF_VAR>{key}:{review_file(chapter_id(args.chapter), name)}</WF_VAR>')
     if args.command == "preflight" and not result["ready"]:
         raise ValueError(result["message"])

@@ -10,9 +10,10 @@ def digest(text):return hashlib.sha256(text.encode()).hexdigest()
 def length_edit_budget(source_word_count,bounds):
     if bounds is None:return {'source_word_count':source_word_count,'target_configured':False}
     lower,upper=bounds
+    suggested=source_word_count if lower<=source_word_count<=upper else (lower+upper)//2
     return {'source_word_count':source_word_count,'target_minimum':lower,'target_maximum':upper,
         'net_change_minimum':lower-source_word_count,'net_change_maximum':upper-source_word_count,
-        'suggested_result_word_count':(lower+upper)//2,'suggested_net_change':(lower+upper)//2-source_word_count}
+        'suggested_result_word_count':suggested,'suggested_net_change':suggested-source_word_count}
 
 
 def paragraphs(body):
@@ -20,6 +21,31 @@ def paragraphs(body):
     for match in re.finditer(r'\S(?:.*?\S)?(?=\r?\n\s*\n|\s*\Z)',body,re.S):
         rows.append({'id':f'p{len(rows)+1:04d}','text':match[0],'sha256':digest(match[0]),'start':match.start(),'end':match.end()})
     return rows
+
+
+def exact_evidence(source,quotes):
+    error='重规划冲突缺少冻结原文和逐字证据'
+    if not isinstance(quotes,list) or not quotes:raise ValueError(error)
+    rows={row['id']:row for row in paragraphs(source)}
+    anchored=re.compile(r'(?P<first>p[0-9]{4,})(?:[—–-](?P<last>p[0-9]{4,}))?(?:（[^\r\n）]*）)?[：:]\r?\n(?P<quote>.+)',re.S)
+    result=[]
+    for raw in quotes:
+        if not isinstance(raw,str) or not raw.strip():raise ValueError(error)
+        if raw in source:
+            result.append(raw);continue
+        label=anchored.fullmatch(raw)
+        if label:
+            first=rows.get(label['first']);last=rows.get(label['last'] or label['first'])
+            if not first or not last or first['start']>last['start']:raise ValueError(error)
+            passage=source[first['start']:last['end']]
+            if passage.replace('\r\n','\n')!=label['quote'].replace('\r\n','\n'):raise ValueError(error)
+        else:
+            pattern=r'\r?\n'.join(re.escape(line) for line in raw.replace('\r\n','\n').split('\n'))
+            match=re.search(pattern,source)
+            if not match:raise ValueError(error)
+            passage=match[0]
+        result.append(passage)
+    return result
 
 
 def apply_patches(source,payload,*,protected_phrases=()):

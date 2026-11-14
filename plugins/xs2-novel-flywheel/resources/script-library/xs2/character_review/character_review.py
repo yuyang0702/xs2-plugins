@@ -173,6 +173,67 @@ def _project_author(root):
     return {key: values[key] for key in ('premise', 'human_intent', 'world_intent') if key in values}
 
 
+def _claim_new(root, claim, batch, expected):
+    if _canonical(root):
+        raise ValueError('existing canonical character files are preserved; new-card gate only')
+    if batch.exists():
+        raise ValueError('unclaimed task directory already exists')
+    try:
+        _write_new(claim, _json(expected).encode('utf-8'))
+    except FileExistsError as error:
+        raise ValueError('another character task already owns this book') from error
+    batch.mkdir()
+    (batch / 'draft').mkdir()
+    return _variables(batch)
+
+
+def empty_unpublished_batch(root, task_id):
+    if not TASK.fullmatch(task_id) or _canonical(root):
+        return None
+    batch = _under(root, f'cache/character-review/{task_id}')
+    retired = _under(batch, 'retired-claim.json')
+    if (not batch.is_dir() or any((batch / name).exists() for name in ('candidate', 'publication', 'publication.json'))
+            or any(not _safe(path).is_dir() for path in batch.rglob('*') if path != retired)):
+        return None
+    return batch
+
+
+def _recover_empty_claim(root, claim, batch, expected):
+    error = 'task claim or immutable author/world sources changed'
+    workflow = os.environ.get('WORKFLOW_ID', '')
+    if workflow.removeprefix('xs2-novel-flywheel-') != 'character' or os.environ.get('TASK_ID') != expected['task_id']:
+        raise ValueError(error)
+    source = Path(__file__).resolve().parents[1] / 'production_guard/production_guard.py'
+    spec = importlib.util.spec_from_file_location('character_claim_guard', source)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    with guard.publication(root) as proof:
+        if not proof or proof['workflow_id'] != workflow or proof['task_id'] != expected['task_id']:
+            raise ValueError(error)
+        previous_bytes = claim.read_bytes()
+        previous = _loads(previous_bytes.decode('utf-8-sig'))
+        prior_id = previous.get('task_id') if isinstance(previous, dict) else None
+        if (not isinstance(prior_id, str) or not TASK.fullmatch(prior_id) or prior_id == expected['task_id']
+                or {**previous, 'task_id': expected['task_id']} != expected):
+            raise ValueError(error)
+        prior = guard.terminal_native_task(root, workflow, prior_id)
+        if (prior is None or prior['status'] == 'completed'
+                or any(node.get('session_id') and node.get('status') == 'completed'
+                       for node in prior.get('node_states', {}).values()) or batch.exists()):
+            raise ValueError(error)
+        previous_batch = empty_unpublished_batch(root, prior_id)
+        if previous_batch is None:
+            raise ValueError(error)
+        retired = _under(previous_batch, 'retired-claim.json')
+        if retired.exists():
+            if retired.read_bytes() != previous_bytes:
+                raise ValueError(error)
+        else:
+            _write_new(retired, previous_bytes)
+        claim.unlink()
+        return _claim_new(root, claim, batch, expected)
+
+
 def preflight(book_dir, premise, human_intent, world_intent, world_file, task_id=None):
     """Claim a new book's character outputs; return absolute workflow path variables."""
     root = _safe(book_dir)
@@ -193,21 +254,11 @@ def preflight(book_dir, premise, human_intent, world_intent, world_file, task_id
     batch = _under(root, f'cache/character-review/{task_id}')
     if claim.exists():
         if _load(claim) != expected:
-            raise ValueError('task claim or immutable author/world sources changed')
+            return _recover_empty_claim(root, claim, batch, expected)
         if not batch.is_dir():
             raise ValueError('claimed task draft is missing')
         return _variables(batch)
-    if _canonical(root):
-        raise ValueError('existing canonical character files are preserved; new-card gate only')
-    if batch.exists():
-        raise ValueError('unclaimed task directory already exists')
-    try:
-        _write_new(claim, _json(expected).encode('utf-8'))
-    except FileExistsError as error:
-        raise ValueError('another character task already owns this book') from error
-    batch.mkdir()
-    (batch / 'draft').mkdir()
-    return _variables(batch)
+    return _claim_new(root, claim, batch, expected)
 
 
 def _context(batch_dir):

@@ -89,6 +89,34 @@ def test_scene_gate_reports_its_own_budget_before_other_writers_finish():
     assert '[scene_length]' in error and '700' in error
     assert m.scene_problem('春' * 710, 700, 742, 'third_person') is None
 
+def test_numbered_source_survives_native_plan_and_handoff(tmp_path, monkeypatch, capsys):
+    m = module()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('TASK_ID', 'task-quote')
+    meta = tmp_path / 'meta'
+    meta.mkdir()
+    quote = '赵师傅拿到预约的早餐。'
+    (meta / 'world_foundation.md').write_text(quote, encoding='utf-8')
+    arguments = ['--target', '300-330', '--pov', 'first_person']
+    monkeypatch.setattr('sys.argv', ['multi_scene', 'prepare', *arguments])
+    m.main()
+    assert 'multi_sources:cache/multi/task-quote/planning-sources-model.md' in capsys.readouterr().out
+    directory = tmp_path / 'cache/multi/task-quote'
+    view = (directory / 'planning-sources-model.md').read_text(encoding='utf-8')
+    label = next(line.split(']')[0][1:] for line in view.splitlines() if line.endswith(quote) and line.startswith('[@Q'))
+    contract = {'schema': 1, 'focus': '陈满', 'facts': [], 'units': {}, 'unit_equations': [], 'accounts': [],
+                'transfers': [], 'events': [{'id': 'pickup', 'scene': 1, 'after': [],
+                                             'description': '熟客取餐', 'source_quote': label}]}
+    m.save_json(directory / 'plan.json', {'focus': '陈满', 'plan_reason': '只安排一场', 'continuity': contract,
+        'scenes': [{'id': 1, 'entry': '开门', 'turn': '取餐', 'exit': '离开', 'knowledge': '现场所见',
+                    'weight': 1, 'budget_reason': '呈现取餐现场'}]})
+    monkeypatch.setattr('sys.argv', ['multi_scene', 'plan', *arguments])
+    m.main()
+    assert m.allocation_policy.read_allocation(directory, (300, 330))['scene_count'] == 1
+    handoff = m.read_json(directory / 'handoff-6.json')
+    assert handoff['continuity']['events'][0]['source_quote'] == quote
+
+
 def test_short_scene_retry_inserts_new_prose_without_rewriting_seed(tmp_path):
     m = module()
     seed = '春' * 30 + '\n\n' + '夏' * 30
