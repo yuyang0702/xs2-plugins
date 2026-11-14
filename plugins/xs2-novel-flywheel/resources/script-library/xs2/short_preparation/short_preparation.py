@@ -274,7 +274,9 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
     guide = sources['outline/near_term_outline.md']
     world_state = sources.get('meta/current_world.md') or sources['meta/world_foundation.md']
     character_state = sources.get('meta/current_characters.md') or sources['meta/character_profiles.md']
-    context_path = 'cache/short/production_context.md'
+    if task_id and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}', task_id):
+        raise ValueError('轻量正文准备需要有效的任务标识')
+    context_path = f'cache/short/{task_id}.md' if task_id else 'cache/short/production_context.md'
     context_text = '# 独立短篇写作上下文\n\n' + context + '\n'
     outputs = {f'story/{chapter}/single_chapter_guide.md': guide,
                     f'story/{chapter}/world_state.md': '# 生成前世界基线\n\n' + world_state,

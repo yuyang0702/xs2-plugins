@@ -111,6 +111,18 @@ def test_compact_writer_context_keeps_complete_facts_voices_and_approved_writing
     assert not (tmp_path / 'story/0001/chapter.md').exists()
 
 
+def test_compact_retry_has_a_new_context_when_only_derived_inputs_change(tmp_path):
+    ready(tmp_path)
+    helper().prepare_context(tmp_path, '0001', task_id='first-attempt')
+    first = tmp_path / 'cache/short/first-attempt.md'
+    assert first.is_file()
+    write(tmp_path, 'cache/story-support/context.md', '新的任务级上下文')
+    path, _ = helper().prepare_context(tmp_path, '0001', task_id='second-attempt')
+    assert '新的任务级上下文' in (tmp_path / path).read_text(encoding='utf-8')
+    assert '新的任务级上下文' not in first.read_text(encoding='utf-8')
+    assert not (tmp_path / 'story/0001/chapter.md').exists()
+
+
 def test_context_limit_stops_before_any_derived_files_are_written(tmp_path):
     ready(tmp_path)
     write(tmp_path, 'meta/character_profiles.md', '完整人物资料' * 5000)
