@@ -87,7 +87,9 @@ def audit_value(directory,phase,body,contract,binding):
         'narrative_pov':binding['pov'],'target_word_count':binding['target'],'actual_word_count':length.count_prose(body),
         'evidence_guidance':('核对先发生的动作与后来告知的区别。正文明确写“告诉我……已经做完”时，分别引告知动作和已完成的分句。'
             '非货币物品先在同一交付场面明确数量、随后由人物接过时，取从数量到交付的连续原文。'
-            '数量引文须包含明确数字及单位，并位于对应事件引文内；两个引文可使用同一段足够短的连续原文。'),
+            '数量引文须包含明确数字及单位，并位于对应事件引文内；两个引文可使用同一段足够短的连续原文。'
+            'fact_observations 记录指向该共享事实的称名或替换。容器、部件、同场另一物件只作上下文。'
+            '存在真实的指代替换时，在 issues 的 facts 中同时给出事实 ID、当前原文及实际替换关系。'),
         'evidence_catalog':[{k:r[k] for k in ('id','kind','text')} for r in policy.audit_evidence.catalog(body,policy.audit_evidence.unit_names(contract))]}
 
 

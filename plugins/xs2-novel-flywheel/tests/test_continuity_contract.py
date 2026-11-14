@@ -263,6 +263,27 @@ def test_same_object_description_does_not_require_identical_words():
     assert any(i['category']=='facts' for i in module().audit_issues(report,body,c,'facts'))
 
 
+def test_expression_rechecks_a_contextual_mention_without_an_identified_object_substitution():
+    m = module()
+    c = contract()
+    old, report = evidence()
+    body = '她把青石铺的招牌指给我看。' + old
+    report.update(candidate_sha256=hashlib.sha256(body.encode()).hexdigest(),
+                  contract_sha256=m.contract_digest(c))
+    report['checks']['repetition'] = True
+    c['facts'][0]['match_mode'] = 'referent'
+    report['contract_sha256'] = m.contract_digest(c)
+    report['fact_observations'][0]['occurrences'] = [
+        {'value':'招牌','quote':span('她把青石铺的招牌指给我看'), 'same_referent':False},
+        {'value':'青石铺','quote':span('青石铺门前'), 'same_referent':True},
+    ]
+    with pytest.raises(ValueError, match='替换|指代'):
+        m.audit_issues(report, body, c, 'expression')
+    report['issues'] = [{'category':'facts','reason':'shop 被另一个实体取代',
+                         'excerpts':['她把青石铺的招牌指给我看'], 'goal':'核对角色到达的是原铺面'}]
+    assert any(item['category']=='facts' for item in m.audit_issues(report, body, c, 'expression'))
+
+
 def test_balance_inside_a_long_event_quote_is_still_after_actual_payment():
     body,report=evidence();body=body.replace('她付一两二钱纸债。她取回工具。余四两八钱。','她付一两二钱纸债，余四两八钱。她取回工具。')
     report['candidate_sha256']=hashlib.sha256(body.encode()).hexdigest()

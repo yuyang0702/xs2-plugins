@@ -517,9 +517,10 @@ def recovery_action(state, stage, task, *, root=None):
                 return {'action':'advance','stage':stage,'reset':list(STAGES[STAGES.index(stage):]),
                         'updates':{'compositionReviewRefreshRecoveries':{**previous,key:dict(ref)}}}
     if stage == 'mvp' and root is not None and not state.get('automaticCheckpoint'):
-        facts = (task.get('node_states') or {}).get('script_guard_facts_commit') or {}
-        error = str(facts.get('error') or '')
-        if facts.get('status') == 'failed' and 'RETRY_STOP:' in error and '核验凭据无效' in error:
+        nodes = task.get('node_states') or {}
+        failed_commits = [nodes.get(f'script_guard_{phase}_commit', {}) for phase in ('facts', 'expression')]
+        if any(node.get('status') == 'failed' and 'RETRY_STOP:' in str(node.get('error') or '')
+               and '核验凭据无效' in str(node.get('error') or '') for node in failed_commits):
             checkpoint = recovery_checkpoint().prepare_review(root, state, task, chapter(state))
             return {'action':'advance', 'stage':'mvp', 'reset':list(PRODUCTION),
                     'updates':{'automaticCheckpoint':checkpoint}}

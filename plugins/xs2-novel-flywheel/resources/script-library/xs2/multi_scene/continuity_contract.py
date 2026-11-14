@@ -446,12 +446,23 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None):
     for key,row in facts.items():
         occurrences=facts_obs[key].get('occurrences');_require(isinstance(occurrences,list),'事实观察须为数组')
         if row['required'] and not occurrences:issue('facts','缺少约定共享事实 '+key,[])
+        observed_same = any(isinstance(obs, dict) and obs.get('same_referent') is True for obs in occurrences)
         for obs in occurrences:
             located(obs.get('quote'),body);value=obs.get('value');_require(isinstance(value,str) and value.strip() and value in obs['quote']['text'],'标准值不能冒充实际引文中的名称')
             _require(type(obs.get('is_name',True)) is bool,'须区分专名使用与普通描述')
             if row.get('match_mode','name')=='referent' or not obs.get('is_name',True):
                 _require(type(obs.get('same_referent')) is bool,'同物指代须经独立语义核对，不能把缺失视为通过')
-                if not obs['same_referent']:issue('facts','共享物件或身份指向发生变化 '+key,[obs['quote']['text']])
+                if not obs['same_referent']:
+                    quote = obs['quote']['text']
+                    if phase == 'expression' and observed_same:
+                        _require(any(item['category'] == 'facts' and key in item['reason']
+                                     and any(quote in evidence or evidence in quote for evidence in item['excerpts'])
+                                     for item in semantic),
+                                 '同一事实同时出现同物指代和异物。请复核 '+key+
+                                 '：容器、部件、同场另一物件只作上下文，不列为该事实的指代。'
+                                 '如正文确实用异物替换原物，须在 issues 的 facts 中列出事实 ID、引文及替换关系。')
+                    else:
+                        issue('facts','共享物件或身份指向发生变化 '+key,[quote])
             elif value not in [row['value'],*row['aliases']]:issue('facts','共享事实 '+key+' 发生变化：'+value,[obs['quote']['text']])
     ledgers=_rows(contract.get('resource_ledgers',[]),'分项资源账')
     resource_obs=observations('resource_observations',ledgers) if ledgers or 'resource_observations' in report else {}
