@@ -11,7 +11,7 @@ def test_content_polish_uses_patches_and_independent_review_length_only_stays_se
     nodes={n['id']:n for n in d['nodes']};edges={(e['source'],e['target']) for e in d['edges']}
     assert ('gw_polish_scope','script_local_prepare') in edges
     assert '--dialogue-check' in nodes['script_local_prepare']['node_params']['script_argv']
-    assert nodes['script_local_prepare']['node_params']['script_argv'][-2:]==['--dialogue-check-version','2']
+    assert nodes['script_local_prepare']['node_params']['script_argv'][-2:]==['--dialogue-check-version','4']
     assert nodes['script_local_writer_input']['enable_reject_upstream']
     assert nodes['agent_pl']['node_params']['json_output_schema']['required']==['source_sha256','edits']
     assert ('script_local_candidate','agent_local_review') in edges and ('agent_local_review','script_local_commit') in edges
@@ -84,7 +84,7 @@ def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_o
             elif node=='agent_sc':
                 output={'feels_human':True,'scene_assessment':'保留原声线，合并复述。','issues':[],
                         'dialogue_checks':[{'focus':focus,'status':'not_applicable','reason':'本章没有连续对白。','goal':'','turns':[]}
-                                           for focus in ('literal_echo','situational_speech')]}
+                                           for focus in ('literal_echo','situational_speech','checklist_exchange','scripted_delivery','voice_contrast')]}
             elif node=='agent_pl':
                 if calls.count(node)>1:
                     assert '第二段简明。' in kwargs['task_description']

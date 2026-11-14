@@ -78,6 +78,20 @@ def candidate(directory,phase):
     return value['body'].strip()
 
 
+COMMITMENT_CHECK = (
+    '核对台词是否把未确认的期限、金额、保证或条款说成已经约定，或擅自加上会改变剧情责任的承诺。'
+    '用 source_constraints、continuity_contract 和 book_contract 核对；答应做某事与承诺何时完成是两件事。'
+    '有依据的约定、新提议、有依据的角色撒谎以及本场应作出的决定照常成立。实质篡改既定事实时用 issues 的 facts，'
+    '引用当前问题台词并在理由中说明既定依据，不把计划当成已发生。'
+)
+QUESTION_CHECK = (
+    '检查一个话轮是否把多个独立问题一口气抛给对方，只为让读者得到资料。'
+    '结合同场动作和接话判断；同一顾虑的自然追问、符合关系的审问、紧急确认可以成立。'
+    '明显生硬时用 convenient_dialogue，按顺序引当场语境和问题台词，'
+    '返修先保留此刻真正要问的事，其余随回应或动作自然出现。'
+)
+
+
 def audit_value(directory,phase,body,contract,binding):
     source=read(directory/f'{phase}-input.json')
     return {'schema':1,'phase':phase,'candidate_sha256':body_digest(body),'contract_sha256':policy.contract_digest(contract),
@@ -89,7 +103,8 @@ def audit_value(directory,phase,body,contract,binding):
             '非货币物品先在同一交付场面明确数量、随后由人物接过时，取从数量到交付的连续原文。'
             '数量引文须包含明确数字及单位，并位于对应事件引文内；两个引文可使用同一段足够短的连续原文。'
             'fact_observations 记录指向该共享事实的称名或替换。容器、部件、同场另一物件只作上下文。'
-            '存在真实的指代替换时，在 issues 的 facts 中同时给出事实 ID、当前原文及实际替换关系。'),
+            '存在真实的指代替换时，在 issues 的 facts 中同时给出事实 ID、当前原文及实际替换关系。'
+            + COMMITMENT_CHECK + (QUESTION_CHECK if phase == 'expression' else '')),
         'evidence_catalog':[{k:r[k] for k in ('id','kind','text')} for r in policy.audit_evidence.catalog(body,policy.audit_evidence.unit_names(contract))]}
 
 

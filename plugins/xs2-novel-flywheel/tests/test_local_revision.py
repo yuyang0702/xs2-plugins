@@ -488,3 +488,45 @@ def test_dialogue_review_v2_requires_both_checks_and_changes_the_targeted_line(t
     edit['replacement']='我没揪。你先把箱子抬下来。'
     with pytest.raises(ValueError,match='目标原话'):
         m.check_dialogue_goals([edit],goals,source)
+
+
+def test_dialogue_review_v3_anchors_checklist_and_one_sided_speech(tmp_path):
+    m=module()
+    body='“来过没有？”\n\n“没有。”\n\n“门呢？”\n\n她给房东留了一段语音：“您好。锁坏了。我还在门口。”'
+    put(tmp_path,'story/0001/chapter.md',body)
+    out=m.prepare(tmp_path,'0001','dialogue-v3','1-100',dialogue_check=True,dialogue_check_version=3)
+    absent={'status':'not_applicable','reason':'没有适用情境。','goal':'','turns':[]}
+    legacy=[dict(absent,focus=focus) for focus in ('literal_echo','situational_speech')]
+    with pytest.raises(m.Retry,match='逐项'):
+        put(tmp_path,'critique.json',{'issues':[],'dialogue_checks':legacy})
+        m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    checks=legacy+[
+        {'focus':'checklist_exchange','status':'revise','reason':'第二问与未等到的人脱节。','target_turn':2,
+         'goal':'由没等到人时必须处理的事引出锁。','preserve':['人还没来，门的情况影响下一步'],
+         'turns':[{'paragraph_id':key,'quote':quote} for key,quote in
+                  [('p0001','来过没有？'),('p0002','没有。'),('p0003','门呢？')]]},
+        {'focus':'scripted_delivery','status':'revise','reason':'她急着进屋却逐项宣读现状。','target_turn':0,
+         'goal':'先说要房东帮忙的事。','preserve':['锁坏了','还在门口'],
+         'turns':[{'paragraph_id':'p0004','quote':'您好。锁坏了。我还在门口。'}]},
+    ]
+    put(tmp_path,'critique.json',{'issues':[],'dialogue_checks':checks})
+    m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    writer=json.loads((tmp_path/out['revision_editor_model']).read_text(encoding='utf8'))
+    assert [(row['focus'],row['preserve']) for row in writer['goals']]==[
+        ('checklist_exchange',['人还没来，门的情况影响下一步']),('scripted_delivery',['锁坏了','还在门口'])]
+    assert writer['goals'][1]['target']['paragraph_id']=='p0004'
+
+
+def test_dialogue_v4_turns_voice_flattening_into_a_grounded_repair():
+    m=module()
+    body='“你先说门怎么坏的。”\n\n“门的确坏了，没约修理时间。”'
+    source={'source_body':body,'paragraphs':m.patches.paragraphs(body),'dialogue_check_version':4}
+    checks=[{'focus':focus,'status':'not_applicable','reason':'本处无该类情境。','goal':'','turns':[]}
+            for focus in ('literal_echo','situational_speech','checklist_exchange','scripted_delivery')]
+    with pytest.raises(ValueError,match='voice_contrast'):
+        m.dialogue_goals(source,checks)
+    checks.append({'focus':'voice_contrast','status':'revise','reason':'答话在汇报，与对方问的事脱节。',
+                   'goal':'让他避开追责，先争取进屋。','target_turn':1,'preserve':['锁坏了，且无人约时间'],
+                   'turns':[{'paragraph_id':'p0001','quote':'你先说门怎么坏的。'},
+                            {'paragraph_id':'p0002','quote':'门的确坏了，没约修理时间。'}]})
+    assert m.dialogue_goals(source,checks)[0]['preserve']==['锁坏了，且无人约时间']

@@ -185,6 +185,7 @@ def focused_goals(goals,body,view):
         row={'id':goal['id'],'goal':goal['goal'],'paragraph_ids':anchors}
         if 'turns' in goal:row['turns']=copy.deepcopy(goal['turns'])
         if 'target' in goal:row.update(focus=goal['focus'],target=copy.deepcopy(goal['target']))
+        if 'preserve' in goal:row['preserve']=copy.deepcopy(goal['preserve'])
         result.append(row)
     return result
 

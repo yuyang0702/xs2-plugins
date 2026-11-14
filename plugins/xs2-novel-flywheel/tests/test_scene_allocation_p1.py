@@ -216,14 +216,14 @@ def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp
             packet=json.loads(messages[1].content)
             if 'turns' in packet:
                 assert packet['turns'][1]['action']=='把门撑住'
-                reply={'accepted':True,'reason':'留意各自眼前的事'}
+                reply={'question_pileup': [], 'unsupported_commitment': [], 'voice_or_knowledge': []}
             elif 'role' in packet:
                 if packet['role']['name']=='阿杏':
                     assert '救下柜台' in str(packet) and '让人能出门' not in str(packet)
-                    reply={'speech':'这头我来。','action':'扶住柜台'}
+                    reply={'speech':'这头我来。','action':'扶住柜台','private_beat':'','wants_reply':False}
                 else:
                     assert packet['observable_turns'][0]['speech']=='这头我来。'
-                    reply={'speech':'','action':'把门撑住'}
+                    reply={'speech':'','action':'把门撑住','private_beat':'','wants_reply':False}
             else:
                 assert '先给动作，再让人接话' in str(packet)
                 reply={'public_start':'门口下着雨','roles':[

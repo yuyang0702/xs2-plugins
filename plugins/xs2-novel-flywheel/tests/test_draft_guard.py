@@ -46,6 +46,9 @@ def test_only_expression_approval_can_replace_the_assembled_draft(tmp_path,monke
     assert (d/'facts-approved.json').is_file()
     _,report=evidence(body);report['checks']['repetition']=True
     save(d/'expression-draft.json',{'body':body});run(m,tmp_path,monkeypatch,capsys,'candidate','expression')
+    guidance=m.read(d/'expression-audit-model.json')['evidence_guidance']
+    assert '多个独立问题' in guidance and 'convenient_dialogue' in guidance
+    assert '未确认的期限' in guidance and 'facts' in guidance
     save(d/'expression-audit.json',report)
     assert 'WF_REJECT' not in run(m,tmp_path,monkeypatch,capsys,'commit','expression')
     assert json.loads((tmp_path/'cache/si/chapter.json').read_text(encoding='utf-8'))['body']==body

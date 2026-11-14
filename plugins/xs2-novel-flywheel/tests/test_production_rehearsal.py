@@ -9,6 +9,42 @@ from test_character_center import book, service  # noqa: F401
 from test_multi_scene import PLUGIN
 
 
+CLEAN_REVIEW = {'question_pileup': [], 'unsupported_commitment': [], 'voice_or_knowledge': []}
+
+
+@pytest.mark.parametrize('response', ['silent', 'reply'])
+def test_roles_can_pass_or_return_to_their_own_private_intent(book, service, response):
+    from importlib import import_module
+
+    module = import_module(service.__package__ + '.production_rehearsal')
+    brief = {'id': 1, 'entry': '阿杏和掌柜在门边', 'rehearsal_cast': ['阿杏', '掌柜']}
+    calls = {}
+    replies = {'director': {'public_start': '雨打在门口', 'roles': [
+        {'name': '阿杏', 'knowledge': '门洞在漏雨', 'goal': '留住作坊', 'voice': '有事先问'},
+        {'name': '掌柜', 'knowledge': '门外有人', 'goal': '守门', 'voice': '话少'},
+    ]}, 'actor-1': {'speech': '', 'action': '', 'private_beat': '我还没想好要不要留下', 'wants_reply': False},
+        'actor-2': {'speech': '' if response == 'silent' else '你还走吗？', 'action': '',
+                    'private_beat': '我开不了口留她', 'wants_reply': response == 'reply'},
+        'actor-3': {'speech': '等雨停吧。', 'action': '', 'private_beat': '拖一会儿', 'wants_reply': False},
+        'review': CLEAN_REVIEW}
+
+    async def call(step, system, packet, parse):
+        calls[step] = json.loads(packet)
+        return parse(json.dumps(replies[step], ensure_ascii=False))
+
+    result = asyncio.run(module.run(book, '0001', [brief], '', call))
+    assert calls['actor-2']['observable_turns'] == []
+    assert '我还没想好' not in str(calls['actor-2'])
+    if response == 'reply':
+        assert calls['actor-3']['own_private_beat'] == '我还没想好要不要留下'
+        assert '我开不了口留她' not in str(calls['actor-3'])
+        assert [turn['name'] for turn in result[0]['turns']] == ['掌柜', '阿杏']
+    else:
+        assert 'actor-3' not in calls
+        assert result[0]['turns'] == []
+    assert 'private_beat' not in str(calls['review']) + str(result)
+
+
 def test_production_scene_uses_own_card_and_prior_observable_action(book, service):
     from importlib import import_module
 
@@ -32,9 +68,9 @@ def test_production_scene_uses_own_card_and_prior_observable_action(book, servic
                 {'name': '阿杏', 'knowledge': '见到雨线', 'goal': '先救柜台', 'voice': '先问后动'},
                 {'name': '掌柜', 'knowledge': '柜台脚泡湿', 'goal': '怕门被堵', 'voice': '说得慢'},
             ]},
-            'actor-1': {'speech': '怕挡门？', 'action': '托住柜台一角'},
-            'actor-2': {'speech': '', 'action': '把门撑开'},
-            'review': {'accepted': True, 'reason': '两人各自有明确的反应。'},
+            'actor-1': {'speech': '怕挡门？', 'action': '托住柜台一角', 'private_beat': '', 'wants_reply': True},
+            'actor-2': {'speech': '', 'action': '把门撑开', 'private_beat': '', 'wants_reply': False},
+            'review': CLEAN_REVIEW,
         }
         return parse(json.dumps(replies[step], ensure_ascii=False))
 
@@ -79,14 +115,16 @@ def test_retry_reuses_finished_calls_but_reassesses_rewritten_exchange(book, ser
         if step == 'actor-2' and calls.count(step) == 1:
             raise TimeoutError
         replies = {'director': director, 'retake-director': director,
-                   'review': {'accepted': False, 'reason': '掌柜这句话和阿杏一个口气。'},
-                   'retake-review': {'accepted': True, 'reason': '掌柜转为让门，没有硬接。'}}
+                   'review': CLEAN_REVIEW | {'voice_or_knowledge': [{
+                       'turn': 2, 'quote': '门开着？', 'reason': '掌柜这句话和阿杏一个口气。',
+                       'repair': '直接把门让开。'}]},
+                   'retake-review': CLEAN_REVIEW}
         if step in replies:
             reply = replies[step]
         elif step == 'retake-actor-2':
-            reply = {'speech': '', 'action': '让开门口'}
+            reply = {'speech': '', 'action': '让开门口', 'private_beat': '', 'wants_reply': False}
         else:
-            reply = {'speech': '门开着？', 'action': ''}
+            reply = {'speech': '门开着？', 'action': '', 'private_beat': '', 'wants_reply': False}
         return parse(json.dumps(reply, ensure_ascii=False))
 
     def prepare():
@@ -103,6 +141,65 @@ def test_retry_reuses_finished_calls_but_reassesses_rewritten_exchange(book, ser
     assert 'retake-review' in calls
     handoff = (book / relative).read_text(encoding='utf-8')
     assert count == 1 and '让开门口' in handoff and '一个口气' not in handoff
+
+
+@pytest.mark.parametrize('review_result', ['retake', 'still_wrong', 'invented_quote', 'missing_check'])
+def test_voice_audit_binds_dialogue_repairs_to_public_lines(book, service, review_result):
+    from importlib import import_module
+
+    module = import_module(service.__package__ + '.production_rehearsal')
+    brief = {'id': 1, 'entry': '作坊漏雨，客人问能不能上门看看；双方尚未约好时间。',
+             'rehearsal_cast': ['阿杏', '掌柜']}
+    director = {'public_start': '两人在门口接雨水。', 'roles': [
+        {'name': '阿杏', 'knowledge': '作坊漏雨', 'goal': '挪盆子', 'voice': '熟人之间说话省事'},
+        {'name': '掌柜', 'knowledge': '客人问能不能来', 'goal': '守住这门生意', 'voice': '想答应又怕担不起'},
+    ]}
+    pileup = '谁找你？你回了什么？你答应几点？'
+    commitment = '我答应今晚去。'
+    report = CLEAN_REVIEW | {
+        'question_pileup': [{'turn': 1, 'quote': pileup, 'reason': '一口气问三个不同的事。',
+                             'repair': '先问影响眼下决定的事。'}],
+        'unsupported_commitment': [{'turn': 2, 'quote': commitment, 'reason': '作者设定明确未约好时间。',
+                                    'repair': '保留客人已有的请求。'}],
+    }
+    if review_result == 'invented_quote':
+        report['unsupported_commitment'][0]['quote'] = '我答应明早去。'
+    if review_result == 'missing_check':
+        del report['unsupported_commitment']
+    calls = {}
+
+    async def call(step, system, packet, parse):
+        calls[step] = json.loads(packet)
+        if step.endswith('director'):
+            reply = director
+        elif step == 'review' or (step == 'retake-review' and review_result == 'still_wrong'):
+            reply = report
+        elif step == 'retake-review':
+            reply = CLEAN_REVIEW
+        else:
+            speech = {'actor-1': pileup, 'actor-2': commitment, 'retake-actor-1': '回人家了？',
+                      'retake-actor-2': '她问能不能来，我手都没擦。'}[step]
+            if review_result == 'still_wrong' and step.startswith('retake-'):
+                speech = pileup if step.endswith('1') else commitment
+            reply = {'speech': speech, 'action': '', 'private_beat': '心里的话', 'wants_reply': False}
+        return parse(json.dumps(reply, ensure_ascii=False))
+
+    task = module.run(book, '0001', [brief], '', call)
+    if review_result in ('invented_quote', 'missing_check'):
+        with pytest.raises(ValueError):
+            asyncio.run(task)
+        assert 'retake-actor-1' not in calls
+    elif review_result == 'still_wrong':
+        with pytest.raises(module.VoiceReviewError):
+            asyncio.run(task)
+        assert 'retake-review' in calls
+    else:
+        result = asyncio.run(task)
+        assert [turn['speech'] for turn in result[0]['turns']] == ['回人家了？', '她问能不能来，我手都没擦。']
+        assert pileup in str(calls['retake-actor-1'])
+        assert commitment not in str(calls['retake-actor-1'])
+        assert commitment in str(calls['retake-actor-2'])
+        assert '心里的话' not in str(calls['review'])
 
 
 def test_both_formal_writer_paths_read_rehearsals_before_request_budget():

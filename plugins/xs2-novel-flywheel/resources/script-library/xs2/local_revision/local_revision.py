@@ -279,27 +279,33 @@ def check_precision_goals(source,edits,goals):
 def dialogue_goals(source, checks):
     if not isinstance(checks,list) or not checks or any(not isinstance(row,dict) for row in checks):
         raise ValueError('须提交对白验收结论，有对白时逐字引出接话，有范围限制时说明')
-    focused=source.get('dialogue_check_version')==2
+    version=source.get('dialogue_check_version',1)
+    focused=version>=2
     required={'literal_echo','situational_speech'}
+    new_checks={'checklist_exchange','scripted_delivery'}
+    if version>=4:new_checks.add('voice_contrast')
+    if version>=3:required.update(new_checks)
     if focused:
         labels=[row.get('focus') for row in checks]
         if (any(label not in (*required,'other') for label in labels)
                 or any(labels.count(label)!=1 for label in required)):
-            raise ValueError('须逐项提交抓字眼与当场说话条件两类对白验收')
+            raise ValueError('须逐项提交对白验收：'+', '.join(sorted(required)))
     paragraphs=source['paragraphs']
     indices={row['id']:index for index,row in enumerate(paragraphs)}
     targets=[]
     seen=set()
     for number,check in enumerate(checks,1):
         status,reason,goal,turns=(check.get(key) for key in ('status','reason','goal','turns'))
+        focus=check.get('focus')
         if (status not in ('pass','revise','not_applicable') or not isinstance(reason,str) or not reason.strip()
                 or not isinstance(goal,str) or not isinstance(turns,list) or (status=='revise')!=bool(goal.strip())):
             raise ValueError('对白验收须有判断与具体理由，返修项须给出可执行目标')
         if status=='not_applicable':
             if turns or (not focused and len(checks)!=1):raise ValueError('不适用仅用于当前范围没有可核对的对白')
             continue
-        if not 2<=len(turns)<=3 or any(not isinstance(turn,dict) for turn in turns):
-            raise ValueError('须对照两到三句原对白')
+        minimum=1 if version>=3 and focus=='scripted_delivery' else 2
+        if not minimum<=len(turns)<=3 or any(not isinstance(turn,dict) for turn in turns):
+            raise ValueError('须引用当前对白；单向讲话可引用一段原话，其余须对照两到三处。')
         offsets=[];quotes=[];scope=[]
         for turn in turns:
             key,quote=turn.get('paragraph_id'),turn.get('quote')
@@ -312,16 +318,22 @@ def dialogue_goals(source, checks):
             if not positions:raise ValueError('对白引文须逐字出自指定段落的台词')
             if start is None:raise ValueError('对白引文须按正文顺序，且不可重叠')
             offsets.append(start+len(quote));quotes.append(quote);scope.append(index)
-        if not expression._distinct_quotes(quotes) or tuple(offsets) in seen:
+        identity=(focus,tuple(offsets)) if version>=3 else tuple(offsets)
+        if not expression._distinct_quotes(quotes) or identity in seen:
             raise ValueError('对白验收须使用不同原句，同一组只提交一次')
-        seen.add(tuple(offsets))
+        seen.add(identity)
         if status=='revise':
             target={'id':f'dialogue-{number}','goal':goal,'excerpts':quotes,
                     'paragraph_ids':[row['id'] for row in paragraphs[scope[0]:scope[-1]+1]],'turns':turns}
             if focused:
                 index=check.get('target_turn')
                 if type(index) is not int or not 0<=index<len(turns):raise ValueError('对白返修须标明要改的目标原话')
-                target.update(focus=check['focus'],target=turns[index])
+                target.update(focus=focus,target=turns[index])
+            if version>=3 and focus in new_checks:
+                preserve=check.get('preserve')
+                if not isinstance(preserve,list) or not preserve or any(not isinstance(s,str) or not s.strip() for s in preserve):
+                    raise ValueError('新对白返修目标须说明需要保留的信息、交际用途或有效口气。')
+                target['preserve']=preserve
             targets.append(target)
     return targets
 
@@ -785,7 +797,7 @@ def main():
     parser.add_argument('--learning-context',default='learning/context/polish.md')
     parser.add_argument('--feedback',default=None)
     parser.add_argument('--dialogue-check',action='store_true')
-    parser.add_argument('--dialogue-check-version',type=int,choices=(1,2),default=1)
+    parser.add_argument('--dialogue-check-version',type=int,choices=(1,2,3,4),default=1)
     parser.add_argument('--critique',default='cache/sc/critique.json');parser.add_argument('--review-stdin',action='store_true')
     args=parser.parse_args();root=Path.cwd()
     try:
