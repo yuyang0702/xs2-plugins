@@ -110,6 +110,8 @@ def validate_events(root, chapter, proposed, prior, records, body):
     if not isinstance(proposed,list):
         raise ValueError('认知与事实事件必须是列表')
     existing = {e['id']:e for state in prior for e in state.get('memory_events',[])}
+    archive = support()
+    paragraphs = archive.archive_paragraphs(body)
     result = []
     for item in proposed:
         if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not item['id'].strip() or item['id'] in existing:
@@ -126,7 +128,7 @@ def validate_events(root, chapter, proposed, prior, records, body):
         old = item.get('supersedes')
         if old and (old not in existing or (existing[old]['kind']=='fact') != (kind=='fact') or existing[old].get('holder') != item.get('holder')):
             raise ValueError('记忆替代须指向同类型、同主体的已有事件')
-        quote = support().validated_evidence(item.get('evidence'),body,'记忆事件缺少真实正文依据')
+        quote = archive.archive_evidence(item.get('evidence'),body,paragraphs,'记忆事件缺少真实正文依据')
         if 'world_time_key' in item and type(item['world_time_key']) is not int:
             raise ValueError('可选世界时间序号须为整数；未指定时保留时间未知')
         value = {**item,'chapter':chapter,'evidence':quote}

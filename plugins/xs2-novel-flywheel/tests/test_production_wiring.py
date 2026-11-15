@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -9,6 +10,53 @@ from test_book_contract import PLUGIN
 
 
 STAGES=('build','character','story-plan','outline','mvp','polish','reader-sim','post-hoc','export')
+
+
+def test_reference_delivery_is_bound_to_writer_task_context_and_current_body(tmp_path):
+    path = PLUGIN/'resources/script-library/xs2/production_guard/production_guard.py'
+    spec = importlib.util.spec_from_file_location('reference_delivery_guard', path)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    root = tmp_path.resolve()
+    context = root/'learning/context/mvp.md'
+    context.parent.mkdir(parents=True)
+    context.write_text('本场试用一条参考。\n', encoding='utf-8')
+    body = root/'story/0001/chapter.md'
+    body.parent.mkdir(parents=True)
+    body.write_text('窗外的风停了。', encoding='utf-8')
+    prepared = root/'learning/receipts/mvp.json'
+    prepared.parent.mkdir()
+    receipt = {'task_id': 'draft-1', 'chapter': '0001', 'context_path': 'learning/context/mvp.md',
+               'context_sha256': hashlib.sha256(context.read_text(encoding='utf-8').encode()).hexdigest(),
+               'candidate_ids': ['case-1']}
+    prepared.write_text(json.dumps(receipt), encoding='utf-8')
+    delivery = root/'learning/receipts/chapters/0001/mvp.json'
+    guard.record_reference_delivery(root, 'mvp', '0001', 'draft-1', {})
+    assert not delivery.exists()
+    written = {'node_states': {'agent_sw': {'status': 'completed'}}}
+    guard.record_reference_delivery(root, 'mvp', '0001', 'draft-2', written)
+    assert not delivery.exists()
+    guard.record_reference_delivery(root, 'mvp', '0001', 'draft-1', written)
+    assert json.loads(delivery.read_text(encoding='utf-8'))['candidate_ids'] == ['case-1']
+
+
+@pytest.mark.parametrize('stage', ('character', 'story-plan', 'outline'))
+def test_scoped_reference_is_generated_without_overwriting_frozen_input(tmp_path, stage):
+    from src.workflow.definition import WorkflowDef
+
+    graph = json.loads((PLUGIN/f'resources/workflows/{stage}/definition.json').read_text(encoding='utf-8'))
+    assert not WorkflowDef.from_dict(graph).validate()
+    variables = {row['key']: row for row in graph['variables']}
+    assert variables['learning_context']['source_type'] == 'input'
+    scoped = variables['scoped_learning_context']
+    assert scoped['source_type'] == 'output' and scoped['default'] == '{{learning_context}}'
+    path = PLUGIN/'resources/script-library/xs2/production_guard/production_guard.py'
+    spec = importlib.util.spec_from_file_location('reference_scoping_guard', path)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    values = {'learning_context': 'learning/active_context.md'}
+    assert guard._input_parameters(tmp_path, graph, values) == guard._input_parameters(tmp_path, graph, {
+        **values, 'scoped_learning_context': f'learning/context/{stage}.md'})
 
 
 @pytest.mark.parametrize('stage',STAGES)

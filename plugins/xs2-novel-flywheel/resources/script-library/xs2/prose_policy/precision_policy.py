@@ -23,9 +23,11 @@ _PURPOSE = re.compile(r'实验|测量|科学|倒计时|截止|期限|限时|计�
 _DETAIL_NUMBER = r'(?:[0-9]+(?:\.[0-9]+)?|[零〇一二两三四五六七八九十百千万]+)'
 _DETAIL = re.compile(
     rf'(?P<clock>(?<![0-9])[0-9]{{1,2}}[:：][0-5][0-9](?![0-9]))|(?P<hour>{_DETAIL_NUMBER})点(?P<half>半|{_DETAIL_NUMBER}分)?'
+    rf'|(?P<half_duration>半(?:个)?(?:小时|钟头)|半分钟)'
+    rf'|(?P<finger_value>{_DETAIL_NUMBER})[ \t]*指(?P<finger_width>宽)?'
     rf'|(?P<value>{_DETAIL_NUMBER})[ \t]*(?P<unit>毫克|千克|公斤|公里|厘米|毫米|毫升|分钟|小时|个月|秒|米|升|克|斤|元|块钱|块|份|单|枚|套|箱|包|袋|颗|张|件|碗|杯|盘|个|次|遍|天|年|月|周|根|勺|步|圈)')
 _PARAGRAPHS = re.compile(r'\S(?:.*?\S)?(?=\r?\n\s*\n|\s*\Z)', re.S)
-_PRECISE_UNIT = {'clock', '秒', '分钟', '小时', '厘米', '毫米', '毫升', '毫克', '千克', '公斤', '公里', '元'}
+_PRECISE_UNIT = {'clock', '秒', '分钟', '小时', '指宽', '厘米', '毫米', '毫升', '毫克', '千克', '公斤', '公里', '元'}
 _ONE_OCLOCK_BEFORE = re.compile(r'(?:凌晨|下午|午后|中午|夜里|半夜|明天|今天|约在|定在|到了|到|约|改)$')
 
 
@@ -46,6 +48,12 @@ def _details(text):
             minute = 30 if match['half']=='半' else _integer(match['half'][:-1]) if match['half'] else 0
             if minute is not None and 0<=minute<60:
                 yield match[0],('clock',hour*60+minute)
+        elif match['half_duration']:
+            yield match[0], ('秒', 30) if match[0]=='半分钟' else ('分钟', 30)
+        elif match['finger_value']:
+            value = _integer(match['finger_value'])
+            if value is not None and (match['finger_width'] or value >= 2):
+                yield match[0], ('指宽', value)
         else:
             if match.start() and text[match.start()-1]=='第' and match['unit'] in {'个','天','次','年','月','周'}:
                 continue

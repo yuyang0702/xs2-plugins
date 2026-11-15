@@ -18,6 +18,41 @@ SHARED_PROSE='candidate-shared-v1'
 COMPACT_PARAGRAPHS='paragraph-map-v1'
 GUIDANCE=('正文按paragraphs顺序完整提供，before与suffix保留原始空白；不是摘要或节选。'
     '段落id可作证据ref_id；精确局部证据也可逐字引用。源稿与候选分开，不混用依据。')
+SPEECH = re.compile(r'“([^”\r\n]+)”|「([^」\r\n]+)」|『([^』\r\n]+)』|"([^"\r\n]+)"|(?m:^\s*[—–-]+[ \t]*([^\r\n]+))')
+SCENE_BREAK = re.compile(r'^(?:#{1,6}[ \t]|[-*—_·～~ 　]{3,}$)')
+
+
+def dialogue_exchanges(paragraphs):
+    """Locate nearby speech and its intervening narration for continuous reading."""
+    turns, spans = {}, []
+    current = []
+    last = None
+    for index, row in enumerate(paragraphs):
+        if SCENE_BREAK.match(row['text']):
+            last = None
+            continue
+        quotes = list(SPEECH.finditer(row['text']))
+        if not quotes:
+            continue
+        if last is None or index - last > 2:
+            current = []
+            spans.append(current)
+        last = index
+        for ordinal, match in enumerate(quotes, 1):
+            turn_id = f'd{len(turns) + 1:04d}'
+            group = match.lastindex
+            turns[turn_id] = {'paragraph_id': row['id'], 'quote': match[group], 'ordinal': ordinal,
+                              'offset': match.start(group), 'paragraph_index': index}
+            current.append(turn_id)
+    exchanges = {}
+    for span in spans:
+        if len(span) < 2:
+            continue
+        first, last = (turns[span[position]]['paragraph_index'] for position in (0, -1))
+        exchanges[f'exchange-{len(exchanges) + 1}'] = {
+            'turn_ids': span, 'paragraph_ids': [row['id'] for row in paragraphs[first:last + 1]],
+        }
+    return turns, exchanges
 
 
 def digest(value):return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -184,8 +219,11 @@ def focused_goals(goals,body,view):
         anchors=goal.get('paragraph_ids') or ([goal['paragraph_id']] if 'paragraph_id' in goal else [ids[i] for i in sorted(references)])
         row={'id':goal['id'],'goal':goal['goal'],'paragraph_ids':anchors}
         if 'turns' in goal:row['turns']=copy.deepcopy(goal['turns'])
-        if 'target' in goal:row.update(focus=goal['focus'],target=copy.deepcopy(goal['target']))
+        if 'focus' in goal:row['focus']=goal['focus']
+        if 'target' in goal:row['target']=copy.deepcopy(goal['target'])
         if 'preserve' in goal:row['preserve']=copy.deepcopy(goal['preserve'])
+        if 'anchors' in goal:row['anchors']=copy.deepcopy(goal['anchors'])
+        if 'exchange_id' in goal:row['exchange_id']=goal['exchange_id']
         result.append(row)
     return result
 
@@ -201,6 +239,9 @@ def local(data,role):
             result['composition_plan']={'plan':{'goal_plans':copy.deepcopy(goal_plans)}}
     else:
         result=copy.deepcopy(data)
+    confirmed_facts_only = role == 'draft-auditor' and result.pop('facts_from_confirmed_sources', False)
+    if confirmed_facts_only:
+        result.pop('source_body', None)
     result.pop('writer_view_version',None)
     result.pop('reviewer_view_version',None)
     result.pop('critic_view_version',None)
@@ -221,8 +262,12 @@ def local(data,role):
         if result['book_contract'].get('reading_contract'):
             spec=importlib.util.spec_from_file_location('packet_reading',Path(__file__).with_name('reading_contract.py'))
             reading=importlib.util.module_from_spec(spec);spec.loader.exec_module(reading)
-            result['_book_guidance']+='\n'+reading.GUIDANCE
+            result['book_contract']=reading.legacy_book_view(result['book_contract'])
+            if result['book_contract'].get('reading_contract'):
+                result['_book_guidance']+='\n'+reading.GUIDANCE
     result['_model_view']={'protocol':PROTOCOL,'role':role,'canonical_sha256':digest(data),'guidance':GUIDANCE}
+    if confirmed_facts_only:
+        result['_model_view']['guidance']+=' 当前事实核验以 source_constraints、continuity_contract 和 book_contract 的已确认原始资料为准。未审核的上一版草稿留在冻结凭据中，不作为事实来源。'
     if focused and role=='writer':
         result['goals']=focused_goals(data['goals'],data['source_body'],result['source_body'])
         result['_model_view']['guidance']+=' 本轮问题见goals。paragraph_ids指向上方原文，空数组表示没有可逐字绑定的引文，请按问题和作者要求在全文中核对。'
@@ -236,6 +281,11 @@ def local(data,role):
         result['_model_view']['guidance']+=' 候选paragraphs是段号到原文的映射；按段号顺序阅读。段前空白取before_overrides对应值，否则取default_before；篇末空白为suffix。'
     if compact_critic:
         result['_model_view']['guidance']+=' confirmed_context若含parts，按顺序阅读；ref是本输入中的字段路径，line_endings为lf时只转换原有换行。'
+    if role == 'critic' and data.get('dialogue_check_version', 1) >= 6:
+        turns, exchanges = dialogue_exchanges(data['paragraphs'])
+        result['dialogue_exchanges'] = exchanges
+        result['dialogue_turns'] = {key: {'paragraph_id': row['paragraph_id'], 'ordinal': row['ordinal']}
+                                    for key, row in turns.items()}
     result['_precision_guidance']=precision().GUIDANCE
     if data.get('precision_review_version')==2:
         result['_precision_guidance']=precision().DEFAULT_PROSE+'\n'+result['_precision_guidance']

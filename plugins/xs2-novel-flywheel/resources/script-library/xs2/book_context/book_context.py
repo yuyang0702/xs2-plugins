@@ -1,5 +1,6 @@
 """Prepare the shared book contract before an adviser has chapters to read."""
 import argparse
+from collections import Counter
 import importlib.util
 import json
 import os
@@ -14,10 +15,46 @@ def project_constraints(root,book):
             'opening_lead':str(values.get('opening_lead') or '')}
 
 
+def rank_snapshot(root, scope):
+    root = Path(root).resolve()
+    workspaces = root.parent.parent
+    paths = [(root, root/'market/zhihu-ranking.json')]
+    if root.parent.name == 'books' and workspaces.name == 'workspaces':
+        paths.append((workspaces, workspaces/'market/market/zhihu-ranking.json'))
+    for boundary, path in paths:
+        if not path.is_file() or not path.resolve().is_relative_to(boundary):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding='utf-8-sig'))
+        except (OSError, ValueError):
+            continue
+        if (not isinstance(data, dict) or data.get('source') != 'zhihu-salt'
+                or not isinstance(data.get('works'), list)):
+            continue
+        seen = set()
+        categories = Counter()
+        for row in data['works']:
+            if not isinstance(row, dict) or (scope == 'short_full' and '长篇' in str(row.get('ranking_name'))):
+                continue
+            identifier = row.get('platform_work_id') or row.get('title')
+            category = row.get('category')
+            if not isinstance(identifier, str) or identifier in seen or not isinstance(category, str):
+                continue
+            seen.add(identifier)
+            categories[category[:32]] += 1
+        if seen:
+            return {'source': '知乎盐选榜单', 'captured_at': data.get('captured_at'),
+                    'sample_count': len(seen), 'categories': dict(categories.most_common(8))}
+    return None
+
+
 def constraint_prompt(request):
-    return ('【作者本次篇幅与作品形态】\n'+json.dumps(request,ensure_ascii=False,indent=2)+
+    prompt = ('【作者本次篇幅与作品形态】\n'+json.dumps(request,ensure_ascii=False,indent=2)+
         '\n明确的目标篇幅与短篇/连载范围约束本次建议。不得自行扩大作者上限或把完整短篇规划成连载；'
         '容量不足时先建议取舍主线与场景。未指定时可提出供作者选择的范围，不以题材自动决定篇幅。\n')
+    if request.get('market_snapshot'):
+        prompt += '榜单快照仅用于了解对应日期的平台题材分布，选题仍以本书可写的冲突和材料为准。\n'
+    return prompt
 
 
 def main():
@@ -41,6 +78,9 @@ def main():
             'conflict_plan_mode':args.scope or binding['base_constraints']['conflict_plan_mode']}
         if args.opening_lead not in ('', 'book'):
             binding['request_constraints']['opening_lead']=args.opening_lead
+        market = rank_snapshot(root, binding['request_constraints']['conflict_plan_mode'])
+        if market:
+            binding['request_constraints']['market_snapshot'] = market
         path=book.safe(root,f'cache/book-contract/{task_id}/advisor-binding.json')
         if path.exists() and book.read(path)!=binding:raise ValueError('本书顾问输入已有变化，请新建任务')
         path.write_text(json.dumps(binding,ensure_ascii=False),encoding='utf8')
@@ -49,6 +89,9 @@ def main():
         constraints_path.write_text(text,encoding='utf8')
         print('<WF_VAR>advisor_constraints_file:'+f'cache/book-contract/{task_id}/constraints.md</WF_VAR>')
         print('<WF_VAR>advisor_draft_path:'+f'cache/book-contract/{task_id}/advisor-report.json</WF_VAR>')
+        scoped = 'learning/context/novel-advisor.md'
+        if book.safe(root, scoped).is_file():
+            print(f'<WF_VAR>learning_context_file:{scoped}</WF_VAR>')
     else:
         import re
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',task_id):raise ValueError('缺少有效顾问任务编号')

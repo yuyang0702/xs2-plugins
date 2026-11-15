@@ -46,6 +46,13 @@ def test_local_replacement_preserves_every_unedited_character_and_noop_is_valid(
     assert m.apply_patches(SOURCE,payload())==SOURCE
 
 
+def test_patch_rejects_control_characters_without_rejecting_dialogue_and_line_breaks():
+    m = helper()
+    with pytest.raises(ValueError, match='控制字符 U\\+001C'):
+        m.apply_patches(SOURCE, payload(edit(replacement='\x1c潮声\x1d')))
+    assert '“潮声。”\n\n' in m.apply_patches(SOURCE, payload(edit(replacement='“潮声。”\n\n')))
+
+
 @pytest.mark.parametrize('patch',[{'paragraph_id':'p9999'},{'old':'别的稿子'},
     {'occurrence':0},{'occurrence':True},{'replacement':3}])
 def test_patch_never_guesses_a_stale_or_ambiguous_anchor(patch):

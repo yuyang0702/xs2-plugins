@@ -52,6 +52,139 @@ def test_exact_local_publication_keeps_untouched_bytes_and_recovers_after_public
     m.commit(tmp_path,out['revision_dir'],expected)
 
 
+def test_checklist_exchange_repair_requires_a_change_beyond_layout():
+    m=module()
+    body='“开不开？”\n\n“不开。钥匙不在我手里。”\n\n“钥匙在哪？”'
+    source={'paragraphs':m.patches.paragraphs(body)}
+    goal={'id':'dialogue-1','focus':'checklist_exchange','goal':'让他顾上对方不肯开门的反应。',
+          'target':{'paragraph_id':'p0002','quote':'不开。钥匙不在我手里。'}}
+    edit={'paragraph_id':'p0002','old':'不开。钥匙不在我手里。','occurrence':1,'replacement':'不开。\n\n钥匙不在我手里。'}
+    with pytest.raises(ValueError,match='仍保留目标原话'):
+        m.check_dialogue_goals([edit],[goal],source)
+    edit['replacement']='门后头不是你要找的人。'
+    m.check_dialogue_goals([edit],[goal],source)
+
+
+def test_continuous_dialogue_cannot_be_skipped_and_layout_cannot_resolve_it():
+    m = module()
+    body = '“谁来过？”\n\n她停了手。\n\n“送货的。”\n\n“他什么时候走的？”\n\n“刚走。”'
+    source = {'source_body': body, 'paragraphs': m.patches.paragraphs(body), 'dialogue_check_version': 6}
+    checks = [{'focus': focus, 'status': 'not_applicable', 'reason': '略。', 'goal': '', 'turns': []}
+              for focus in ('literal_echo', 'situational_speech', 'checklist_exchange', 'scripted_delivery', 'voice_contrast')]
+    with pytest.raises(ValueError, match='连续对白'):
+        m.dialogue_goals(source, checks)
+    review = checks[2]
+    review.update(exchange_id='exchange-1', status='revise', reason='对方停手后仍按顺序盘问。',
+                  goal='让接话受对方的犹豫影响。', target_turn=1, preserve=['送货的人刚走'],
+                  turns=[{'turn_id': 'd0002'}, {'turn_id': 'd0003'}])
+    refs = [row if row is not review else row | {'turns': [{'turn_id': 'd0001'}, {'turn_id': 'd0003'}]}
+            for row in checks]
+    with pytest.raises(ValueError, match='紧接的话轮'):
+        m.dialogue_goals(source, refs)
+    expanded, = m.dialogue_goals(source | {'dialogue_check_version':7}, refs)
+    assert expanded['turns'][1]['quote'] == '送货的。'
+    assert expanded['target']['quote'] == '他什么时候走的？'
+    all_turns = [{'turn_id': f'd{number:04d}'} for number in range(1, 5)]
+    extended = review | {'turns': all_turns, 'target_turn': 2}
+    assert m.dialogue_goals(source, [extended if row is review else row for row in checks])[0]['target']['quote'] == '他什么时候走的？'
+    goal, = m.dialogue_goals(source, checks)
+    assert goal['paragraph_ids'] == ['p0001', 'p0002', 'p0003', 'p0004', 'p0005']
+    assert goal['target']['quote'] == '他什么时候走的？'
+    old = source['paragraphs'][3]['text']
+    edit = {'paragraph_id': 'p0004', 'old': old, 'occurrence': 1, 'replacement': '“他，什么时候走的？”'}
+    with pytest.raises(ValueError, match='整段对白'):
+        m.check_dialogue_goals([edit], [goal], source)
+    edit['replacement'] = '“你没让他进门吧？”'
+    m.check_dialogue_goals([edit], [goal], source)
+
+
+def test_exchange_opening_requires_its_own_verdict_before_passing_dialogue():
+    m = module()
+    body = '“谁来过？”\n\n“送货的。”\n\n“他什么时候走的？”\n\n“可他的钥匙还在这儿。”'
+    source = {'source_body': body, 'paragraphs': m.patches.paragraphs(body), 'dialogue_check_version': 8}
+    checks = [{'focus': focus, 'status': 'not_applicable', 'reason': '无该类问题。', 'goal': '', 'turns': []}
+              for focus in ('literal_echo', 'situational_speech', 'scripted_delivery', 'voice_contrast')]
+    review = {'focus': 'checklist_exchange', 'exchange_id': 'exchange-1', 'status': 'pass',
+              'reason': '后半段因新证据改变。', 'goal': '',
+              'turns': [{'turn_id': f'd{number:04d}'} for number in range(1, 5)]}
+    with pytest.raises(ValueError, match='开场.*结论'):
+        m.dialogue_goals(source, [*checks, review])
+    review.update(opening_status='revise', opening_reason='前段只报告情况，语气可以互换。')
+    with pytest.raises(ValueError, match='开场.*返修'):
+        m.dialogue_goals(source, [*checks, review])
+    review.update(status='revise', target_turn=0, goal='让开场更贴合两人的关系。', preserve=['送货人没有带走钥匙'])
+    assert m.dialogue_goals(source, [*checks, review])[0]['target']['quote'] == '谁来过？'
+    review.update(status='pass', goal='', opening_status='pass', opening_reason='问话让对方认出送货人。')
+    assert m.dialogue_goals(source, [*checks, review]) == []
+
+
+def test_scene_revision_binds_the_exchange_and_reviews_grouped_actions(tmp_path):
+    m=module()
+    body='“你留一把钥匙。”\n\n他没伸手。\n\n“我给你放窗台。”\n\n他把钥匙拿走了。\n\n院子里还有雨。'
+    put(tmp_path,'story/0001/chapter.md',body)
+    out=m.prepare(tmp_path,'0001','scene-trial','1-5000',dialogue_check=True,dialogue_check_version=5)
+    checks=[{'focus':focus,'status':'not_applicable','reason':'无该类问题。','goal':'','turns':[]}
+            for focus in ('literal_echo','situational_speech','checklist_exchange','scripted_delivery','voice_contrast')]
+    critique={'issues':[],'dialogue_checks':checks}
+    put(tmp_path,'critique.json',critique)
+    with pytest.raises(m.Retry,match='scene_review_format'):
+        m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+
+    scene={'status':'revise','reason':'答应收钥匙之前缺少能改变他选择的回应。',
+           'goal':'让她接住他不肯伸手的反应，他再自己把钥匙拿走。',
+           'preserve':['他最后拿走钥匙'],'anchors':[
+               {'paragraph_id':'p0001','quote':'你留一把钥匙。'},
+               {'paragraph_id':'p0002','quote':'他没伸手。'},
+               {'paragraph_id':'p0004','quote':'他把钥匙拿走了。'}]}
+    critique['scene_checks']=[scene]
+    put(tmp_path,'critique.json',critique)
+    m.writer_input(tmp_path,out['revision_dir'],'critique.json')
+    editor=json.loads((tmp_path/out['revision_editor_model']).read_text('utf8'))
+    goal=editor['goals'][0]
+    assert goal['id']=='scene-1' and goal['paragraph_ids']==['p0001','p0002','p0003','p0004']
+    assert goal['anchors']==scene['anchors'] and goal['preserve']==scene['preserve']
+    edits=[{'paragraph_id':'p0002','old':'他没伸手。','occurrence':1,'replacement':'他把手往袖子里缩了缩。','group_id':'scene-1'},
+           {'paragraph_id':'p0003','old':'我给你放窗台。','occurrence':1,'replacement':'你要不回来，挂门上就是。','group_id':'scene-1'}]
+    payload={'source_sha256':editor['source_sha256'],'edits':[]}
+    put(tmp_path,out['revision_patch_path'],payload)
+    with pytest.raises(m.Retry,match='scene-1'):
+        m.candidate(tmp_path,out['revision_dir'])
+    payload['edits']=edits
+    put(tmp_path,out['revision_patch_path'],payload)
+    m.candidate(tmp_path,out['revision_dir'])
+    context=json.loads((tmp_path/out['revision_review_input']).read_text('utf8'))
+    assert context['candidate'].replace('\r\n','\n').endswith('他把钥匙拿走了。\n\n院子里还有雨。')
+    report=json.loads(approved(m,out,tmp_path))
+    for check in report['expression_checks']:check['excerpts']=['院子里还有雨。']
+    report['issue_outcomes']=[{'id':'scene-1','status':'not_applicable','excerpts':['他把钥匙拿走了。'],'reason':'略过。'}]
+    assert any('场景' in reason for reason in m.review_decision(report,context))
+    report['issue_outcomes'][0].update(status='resolved',excerpts=['他把钥匙拿走了。'])
+    with pytest.raises(ValueError,match='两处'):
+        m.review_decision(report,context)
+    report['issue_outcomes'][0].update(excerpts=['你要不回来，挂门上就是。','他把钥匙拿走了。'],
+                                       reason='她让他可以随时退还，他因此愿意拿走。')
+    assert not m.review_decision(report,context)
+
+
+def test_narration_review_covers_the_scene_and_rejects_cosmetic_repair():
+    m = module()
+    body = '他掀了盖。\n\n又把手擦了擦。\n\n盖底的水是热的。'
+    source = {'source_body':body,'paragraphs':m.patches.paragraphs(body),'dialogue_check_version':7}
+    row = {'status':'revise','focus':'causality','reason':'动作写成了步骤。','goal':'把篇幅留给水温的异常。',
+           'anchors':[{'paragraph_id':f'p{index:04d}'} for index in range(1,4)],'preserve':['水是热的']}
+    with pytest.raises(ValueError, match='整段叙述'):
+        m.scene_goals(source, [row])
+    row['focus'] = 'narration'
+    goal, = m.scene_goals(source, [row])
+    assert goal['focus'] == 'narration'
+    assert goal['paragraph_ids'] == ['p0001','p0002','p0003']
+    edit = {'paragraph_id':'p0002','old':'又把手擦了擦。','occurrence':1,'replacement':'又，把手擦了擦。','group_id':goal['id']}
+    with pytest.raises(ValueError, match='表面'):
+        m.check_scene_goals([edit], [goal], source)
+    edit['replacement'] = '盖底的水淌到指缝，他松了手。'
+    m.check_scene_goals([edit], [goal], source)
+
+
 @pytest.mark.parametrize('kind',['body','feedback','book','patch','review'])
 def test_changed_inputs_or_old_audit_cannot_publish(tmp_path,kind):
     m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir']);expected=approved(m,out,tmp_path)

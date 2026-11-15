@@ -160,7 +160,8 @@ def test_review_seed_runs_actual_guards_then_si_conversion_and_render(tmp_path,m
     with pytest.raises(ValueError):module.verify(tmp_path,state,task)
 
 
-def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_path,monkeypatch,capsys):
+@pytest.mark.parametrize('inspect_first',[False,True])
+def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_path,monkeypatch,capsys,inspect_first):
     from src.workflow.definition import WorkflowDef,WorkflowTask,WorkflowRunRecord
     from src.workflow.engine import WorkflowEngine
     from src.workflow.manager import WorkflowManager
@@ -169,6 +170,11 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
     from src.workflow.variable_resolution import resolve_placeholders
     from test_longrun import helper
     state,source,raw,body=fixture(tmp_path,monkeypatch,capsys);module=load('recovery_checkpoint')
+    if inspect_first:
+        source['node_states'].pop('script_guard_facts_commit')
+        source['node_states']['script_guard_facts_accept']={'status':'completed'}
+        binding=tmp_path/'cache/draft-guard/task-guard/binding.json'
+        save(binding,{**json.loads(binding.read_text(encoding='utf-8')),'inspect_first':True})
     state['automaticCheckpoint']=module.prepare_review(tmp_path,state,source,'0001')
     options=module.options(tmp_path,state,raw,source);wf=WorkflowDef.from_dict(raw)
     values=helper('driver').task_parameters(state,raw,load('production'),options)
@@ -178,7 +184,9 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
         node_type='agent'
         async def execute(self,ctx):
             key=ctx.node_def.id;calls.append(key)
-            assert key in {'agent_guard_facts_repair','agent_guard_facts_audit','agent_guard_expression_repair','agent_guard_expression_audit'}
+            phase_agents={'facts','expression'}
+            expected={'inspect'} if inspect_first else {'repair','audit'}
+            assert key in {f'agent_guard_{phase}_{action}' for phase in phase_agents for action in expected}
             directory=tmp_path/ctx.parameter_values['guard_dir'];phase='expression' if 'expression' in key else 'facts'
             if key.endswith('_repair'):
                 data={'source_sha256':__import__('hashlib').sha256(body.encode()).hexdigest(),'edits':[]} if phase=='expression' else {'body':body}
@@ -216,5 +224,5 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
             needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
     outcome=asyncio.run(run())
     if outcome!='completed':raise AssertionError(json.dumps({key:(node.status,node.error) for key,node in task.node_states.items() if key in options['selected_node_ids']}))
-    assert len(calls)==4
+    assert len(calls)==(2 if inspect_first else 4)
     module.verify(tmp_path,state,task.to_dict())

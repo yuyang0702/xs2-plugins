@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 import pytest
@@ -62,22 +63,59 @@ def test_goal_adoption_does_not_revoke_historical_fact_archive_identity(tmp_path
     assert archive.contract(tmp_path,persistent=True)==before
 
 
-@pytest.mark.parametrize('defect',['missing','unknown','fake_quote','duplicate'])
-def test_every_selected_goal_requires_current_prose_and_real_identity(tmp_path,defect):
+@pytest.mark.parametrize('defect',['unknown','fake_quote','duplicate'])
+def test_optional_reference_comments_require_current_prose_and_real_identity(tmp_path,defect):
     adopt(tmp_path);m=module();contract=m.for_book(tmp_path);rows=checks(contract)
-    if defect=='missing':rows=[]
-    elif defect=='unknown':rows[0]['goal_id']='invented'
+    if defect=='unknown':rows[0]['goal_id']='invented'
     elif defect=='fake_quote':rows[0]['excerpts']=['正文不存在这句话。']
     else:rows*=2
     with pytest.raises(ValueError):m.validate_checks({'reading_checks':rows},'风停了。',contract)
 
 
-def test_reading_failure_stays_blocking_when_facts_and_expression_pass(tmp_path):
+def test_reference_comment_is_advisory_even_when_model_marks_it_high(tmp_path):
     adopt(tmp_path);m=module();contract=m.for_book(tmp_path)
-    report={'verdict':'pass','issues':[],'reading_checks':checks(contract,'revise')}
-    issues=m.validate_checks(report,'风停了。',contract)
-    assert len(issues)==1 and issues[0]['priority']=='medium'
-    assert issues[0]['source']=='reading_contract'
+    report={'verdict':'revise','issues':[],'reading_checks':checks(contract,'revise')}
+    report['reading_checks'][0]['priority']='high'
+    assert m.validate_checks({},'风停了。',contract)==[]
+    result=m.apply(report,'风停了。',contract)
+    assert result['verdict']=='pass'
+    assert len(result['issues'])==1 and result['issues'][0]['priority']=='low'
+    assert result['issues'][0]['source']=='reading_contract'
+
+
+def test_reference_usage_requires_delivery_to_this_chapter_and_matching_prose(tmp_path):
+    adopt(tmp_path)
+    m = module()
+    contract = m.for_book(tmp_path)
+    receipt = {'blueprint_version': 1, 'blueprint_sha256': contract['blueprint_sha256'],
+               'chapter': '0001', 'candidate_ids': ['mechanism-opening'], 'dialogue': {}}
+    put(tmp_path, 'story/0001/chapter.md', '风停了。')
+    receipt['body_sha256'] = hashlib.sha256((tmp_path/'story/0001/chapter.md').read_bytes()).hexdigest()
+    put(tmp_path, 'learning/receipts/mvp.json', receipt)
+    used = {'reading_checks': checks(contract)}
+    assert m.application_receipt(tmp_path, '0002', '风停了。', used, contract) is None
+    assert m.application_receipt(tmp_path, '0001', '风停了。', used, contract) is None
+    put(tmp_path, 'learning/receipts/chapters/0001/mvp.json', receipt)
+    result = m.application_receipt(tmp_path, '0001', '风停了。', used, contract)
+    assert result['items'] == [{'candidate_id': 'mechanism-opening', 'status': 'observed',
+                                'excerpts': ['风停了。']}]
+    assert m.application_receipt(tmp_path, '0001', '风停了。', {}, contract)['items'][0]['status'] == 'unreviewed'
+    with pytest.raises(ValueError):
+        m.application_receipt(tmp_path, '0001', '正文改了。', used, contract)
+    put(tmp_path, 'story/0001/chapter.md', '正文改了。')
+    assert m.application_receipt(tmp_path, '0001', '正文改了。', {}, contract) is None
+
+
+def test_typed_reference_does_not_leak_through_generic_book_prompt(tmp_path):
+    book = helper()
+    blueprint = adopt(tmp_path, [{**definition(), 'intent': '采用规则的专属表达'}])
+    blueprint['mechanisms'][0]['dimension'] = 'structure'
+    put(tmp_path, 'learning/blueprints/v0001.json', blueprint)
+    put(tmp_path, 'learning/active.json', {'version': 1, 'blueprint_path': 'learning/blueprints/v0001.json',
+                                        'blueprint_sha256': book.digest(blueprint)})
+    actual = book.resolve(tmp_path)
+    assert '采用规则的专属表达' not in book.prompt(actual)
+    assert actual['reading_contract']['objectives'][0]['intent'] == '采用规则的专属表达'
 
 
 def test_tampered_blueprint_and_unselected_goal_are_not_silently_adopted(tmp_path):

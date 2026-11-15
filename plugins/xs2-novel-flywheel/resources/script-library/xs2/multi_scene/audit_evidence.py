@@ -21,6 +21,20 @@ def _occurrence(body,text,start):
     return count
 
 
+def position(body,quote):
+    if not isinstance(quote,dict) or set(quote)!={'text','occurrence'}:
+        raise ValueError('凭据需要逐字引文和出现序号')
+    text,occ=quote['text'],quote['occurrence']
+    if not isinstance(text,str) or not text.strip() or type(occ) is not int or not 1<=occ<=1000:
+        raise ValueError('引文或出现序号无效')
+    start=-1
+    for _ in range(occ):
+        start=body.find(text,start+1)
+        if start<0:
+            raise ValueError('核验引文不在当前正文中：'+text[:100])
+    return start,start+len(text)
+
+
 def catalog(body,units=None):
     rows=[]
     def add(kind,prefix,matches):
@@ -53,12 +67,8 @@ def resolve_report(report,body,units=None):
             text=body[start['start']:end['end']]
             return {'text':text,'occurrence':_occurrence(body,text,start['start'])}
         if set(value)=={'text','occurrence'}:
-            text=value['text'];occ=value['occurrence']
-            if not isinstance(text,str) or not text.strip() or type(occ) is not int or not 1<=occ<=1000:fail(path,'引文或出现序号无效')
-            position=-1
-            for _ in range(occ):
-                position=body.find(text,position+1)
-                if position<0:fail(path,'核验引文不在当前正文中：'+text[:100])
+            try:position(body,value)
+            except ValueError as exc:fail(path,str(exc))
             return dict(value)
         fail(path,'凭据结构无效')
     def walk(value,path):

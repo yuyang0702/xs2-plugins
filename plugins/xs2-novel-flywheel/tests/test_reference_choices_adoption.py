@@ -52,5 +52,33 @@ class ReferenceAdoptionTests(unittest.TestCase):
         self.assertIn('原创设定',(self.root/'learning/context/mvp.md').read_text(encoding='utf-8'))
         self.assertFalse((self.root/'learning/active.json').exists())
 
+    def test_selected_dimensions_reach_their_own_stage_with_traceable_evidence(self):
+        targets = {'structure': 'outline', 'voice': 'character', 'topic': 'novel-advisor',
+                   'case': 'story-plan', 'pacing': 'mvp', 'layout': 'export', 'expression': 'polish'}
+        candidates = [
+            {'candidate_id': dimension, 'dimension': dimension, 'mechanism': '选中写法-' + dimension,
+             'transfer_guidance': '本书可试-' + dimension, 'layer': 'narrative_lens', 'scopes': [stage],
+             'evidence': [{'source_start': 3, 'source_end': 9, 'excerpt': '范文独有内容'}]}
+            for dimension, stage in targets.items()
+        ]
+        data = {**self.data, 'candidates': candidates, 'candidates_sha256': fingerprint(candidates)}
+        (self.root/'learning/candidates.json').write_text(json.dumps(data), encoding='utf-8')
+        selection = {'candidates_sha256': data['candidates_sha256'], 'selected_candidate_ids': list(targets)}
+        result = subprocess.run([sys.executable, str(SCRIPT), 'adopt', '--selection-json', json.dumps(selection)],
+                                cwd=self.root, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        blueprint = json.loads((self.root/'learning/blueprints/v0001.json').read_text(encoding='utf-8'))
+        self.assertEqual([row['dimension'] for row in blueprint['mechanisms']], list(targets))
+        self.assertEqual(blueprint['mechanisms'][0]['evidence'][0]['source_start'], 3)
+        for dimension, stage in targets.items():
+            with self.subTest(stage=stage):
+                context = (self.root/f'learning/context/{stage}.md').read_text(encoding='utf-8')
+                actual = json.loads((self.root/f'learning/receipts/{stage}.json').read_text(encoding='utf-8'))
+                self.assertEqual(actual['candidate_ids'], [dimension])
+                self.assertEqual(context.count('本书可试-' + dimension), 1)
+                self.assertNotIn('范文独有内容', context)
+                for other in set(targets) - {dimension}:
+                    self.assertNotIn('本书可试-' + other, context)
+
 
 if __name__=='__main__': unittest.main()

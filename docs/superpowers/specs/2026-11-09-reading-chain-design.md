@@ -1,0 +1,21 @@
+# Selected learning → book goals → planning → evidence-based acceptance
+
+User approved implementing this chain entirely in the plugin, with Zhihu short fiction as an optional analysis direction, no restriction on other styles, and verification on one independent copy of the previously generated five stories. Original manuscripts and stopped100k run stay untouched.
+
+## Decisions
+
+- Extend the existing reference-distillation input with general (default), zhihu_short, and custom learning focus. The focus controls what the source analyst examines, never implies sample origin or automatically sets a book's style. Keep evidence/offset validation and author selection. Add optional abstract reading_objectives to individual mechanism candidates; preserve them through both CLI adoption and compatibility-reviewed console adoption, versioned blueprints and stage contexts. No new parallel adoption store or copied source quotations in generation context.
+- Add a generic reading_contract helper: selected objective IDs, intended effect, planning and acceptance questions, scope and limits. No selected objectives means no change to existing book contracts/gates. Extend frozen per-book contract with these selected goals; blind reading sees only generic public questions by dimension, never source excerpts or private reveal answers. Reading taste is excluded from persistent factual archive identity, while live task/book and planning fingerprints invalidate stale goal approvals.
+- Reuse composition planning/review nodes to record an evidence-based application for every active goal: planned or not_applicable with reason; per-goal reader start/end understanding and segment placement. If goals activate planning on an author-bounded book, preserve the author range exactly. Quotas/approved plans stay source-bound and cached through existing P0 machinery; no goals never activate extra planning.
+- Add optional reading_checks to existing draft-expression auditor, local revision reviewer, blind and contextual readers. Each adopted goal needs status, priority, current-text evidence, reason and book-style basis. Medium/high revise judgments block existing publication/advance paths independently of facts/expression pass. Missing, unknown or forged-evidence checks retry the responsible reviewer. Generated goal findings integrate with existing permission classification; local revisions recheck all goals after every candidate change. No mandatory first person, reversal frequency, sentence length or paragraph quota.
+- Reuse existing roles and workflow schemas, not a separate per-platform writing pipeline. Keep the style profiler strategic; execution-specific goals live in the book's plan. Expose focus through the plugin reference workflow's input, candidate review/selection artifacts and existing library metadata. Main program source stays unchanged.
+
+## Validation and boundaries
+
+RED/GREEN tests for evidence→adoption survival, unselected isolation, blueprint/source tamper, blind privacy, author-owned budget, per-goal plan/acceptance coverage, issue blocking, v1/v2 compatibility and native responsible-role retries. No-goal books and different narrative styles retain their current behavior.
+
+Freeze current plugin as baseline. Use original short《回声在四分钟之后》at C:/xs2/data/verification/20261108-local-revision-v1/cases/scifi/book, copy-only. Exercise real source analysis, explicit test-copy selection, approved planning, local writing revision and independent acceptance with the already approved lingsuan:gpt-6.1-sol/edge route (and writing route only if needed). Preserve raw model responses and usage; distinguish fixtures/offline checks from live results; report failures instead of dropping goals. Never launch the paused100k controller. Full regressions, fresh read-only final review and installed-resource/cold-load checks.
+
+## Scope rulings
+
+User's accepted direction supplies design approval; no repeated permission question. Continue inline in the existing dirty plugin checkout with a complete baseline snapshot because prior authorized uncommitted changes must survive; no Git reset/commit/push. New goals are optional per-book targets, not new fictional facts or universal genre rules. Validation may revise a copy; it does not claim general literary equivalence or generate another longrun.

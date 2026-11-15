@@ -33,6 +33,16 @@ def test_actual_upstream_files_and_runtime_functions():
     assert support.methods()['indexed_sections'] > 0
 
 
+def test_archive_can_bind_punctuation_width_to_one_exact_source():
+    body = '我看着井，水在涨。'
+    assert support.archive_evidence('我看着井,水在涨。', body, {}, '证据无效') == body
+    assert support.archive_evidence('"往上退。"', '“往上退。”', {}, '证据无效') == '“往上退。”'
+    with pytest.raises(ValueError, match='证据无效'):
+        support.archive_evidence('我看着井,水没涨。', body, {}, '证据无效')
+    with pytest.raises(ValueError, match='证据无效'):
+        support.archive_evidence('我看着井,水在涨。', body+'\n\n'+body, {}, '证据无效')
+
+
 def test_deleted_chapter_blocks_later_production_even_when_outline_exists(tmp_path):
     support.write(tmp_path, "archive/chapter_resets/0002.json", {"operation": "delete"})
     support.write(tmp_path, "outline/near_term_outline.md", "### 第3章\n推进")
@@ -370,7 +380,7 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                 # Guard inputs include the same confirmed context inside their
                 # frozen planning sources; avoid injecting a second live copy.
                 phase='expression' if 'expression' in node['id'] else 'facts'
-                key=f'guard_{phase}_audit_model' if node['id'].endswith('_audit') else f'guard_{phase}_model'
+                key=f'guard_{phase}_audit_model' if node['id'].endswith(('_audit','_inspect')) else f'guard_{phase}_model'
                 assert '{{'+key+'}}' in node['first_message']
                 assert any(n['id']=='script_guard_prepare' for n in data['nodes'])
             elif node['id'].startswith('agent_rolling_'):
@@ -378,7 +388,11 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                 assert any(n['id']=='script_serial_prepare' for n in data['nodes'])
                 assert '{{story_support_context}}' not in node['first_message']
             else:
-                assert '{{story_support_context}}' in node['first_message']
+                prompt=node['first_message']
+                if node['id']=='agent_sw':
+                    assert '{{single_writer_context}}' in prompt
+                    prompt+=next(v['default'] for v in data['variables'] if v['key']=='single_writer_context')
+                assert '{{story_support_context}}' in prompt
     post = literary_graph(json.loads((ROOT/'resources/workflows/post-hoc/definition.json').read_text(encoding='utf-8')))
     assert any(e['source']=='script_confirm_archive' and e['target']=='__end__' for e in post['edges'])
 

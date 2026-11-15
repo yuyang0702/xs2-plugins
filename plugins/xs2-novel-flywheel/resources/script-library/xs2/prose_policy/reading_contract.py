@@ -1,4 +1,4 @@
-"""Explicitly adopted reading goals; genre and platform supply no defaults."""
+"""Optional reading suggestions from references selected for the book."""
 import copy
 import hashlib
 import json
@@ -11,10 +11,9 @@ QUESTIONS={
     'payoff':'前文核心期待是否按本篇范围得到回应，余味是否与本书选择一致？',
     'voice':'叙述口吻是否具体且符合本书声音，是否保留有作用的心理、议论、回环或留白？',
     'custom':'本书选择的阅读目标是否由当前正文支持？'}
-GUIDANCE=('仅对reading_contract中本书显式采用的目标提交reading_checks，未采用时省略或为空。'
+GUIDANCE=('reading_contract里的蒸馏阅读目标是参考。reading_checks可省略，或只对有实际阅读价值的条目留言。'
     '每项交goal_id、status(pass/revise/not_applicable)、priority(low/medium/high)、excerpts、reason、style_basis。'
-    'pass/revise须引当前正文，not_applicable须说明本书题材或范围为何无对应对象，不能因风格允许而免检。'
-    'revise由程序展开为阅读目标问题；中高优先级独立阻止通过。'
+    'pass/revise须引当前正文。revise只产生建议；未使用参考写法不影响验收。若另有实质问题，用当前原文独立说明其损害。'
     '区分作者、人物、叙述者和读者的信息；有意不可靠叙述、慢热或无反转本身不是错误。'
     '不固定第一人称、句长、反转数量、高潮或段长，不在正文复述检查项。')
 
@@ -58,16 +57,21 @@ def for_book(root):
     if selected!=[r.get('candidate_id') for r in mechanisms] or len(set(selected))!=len(selected):raise ValueError('采用目标与显式选择记录不一致')
     objectives=[]
     for item in mechanisms:
+        if item.get('dimension') == 'topic':
+            continue
         for row in definitions(item.get('reading_objectives',[])):
             objectives.append({'id':'reading-'+digest([item['candidate_id'],row])[:20],**row,
                 'source_candidate_id':item['candidate_id'],'application_scope':item.get('application_scope') or ['general']})
+            if item.get('dimension'):
+                objectives[-1]['source_dimension'] = item['dimension']
     return {'schema':1,'blueprint_sha256':entry['blueprint_sha256'],'objectives':objectives,
         'boundary':'阅读目标是作者选择的效果和核对依据，不是原作剧情、本书已发生事实或统一文风。'} if objectives else None
 
 
 def public(contract):
     return {'schema':1,'objectives':[{'id':g['id'],'dimension':g['dimension'],'question':QUESTIONS[g['dimension']],
-        'application_scope':g.get('application_scope',['general'])} for g in contract.get('objectives',[]) if g['dimension']!='custom']}
+        'application_scope':g.get('application_scope',['general'])} for g in contract.get('objectives',[])
+        if g['dimension']!='custom' and not g.get('source_dimension')]}
 
 
 def schema(excerpt=None):
@@ -80,7 +84,7 @@ def schema(excerpt=None):
 def validate_checks(report,body,contract):
     if contract is None:return []
     expected={g['id']:g for g in contract.get('objectives',[])};rows=report.get('reading_checks',[])
-    if not isinstance(rows,list) or len(rows)!=len(expected):raise ValueError('已采用阅读目标未逐项验收')
+    if not isinstance(rows,list):raise ValueError('阅读参考意见须为数组')
     seen=set();issues=[]
     for row in rows:
         if not isinstance(row,dict) or row.get('goal_id') not in expected or row['goal_id'] in seen:raise ValueError('阅读目标编号未知或重复')
@@ -93,9 +97,71 @@ def validate_checks(report,body,contract):
         if row['status']=='revise':
             goal=expected[row['goal_id']]
             issues.append({'id':'reading-issue-'+row['goal_id'],'source':'reading_contract','kind':'expression',
-                'location':goal.get('dimension','reading'),'priority':row['priority'],'excerpts':quotes,
+                'location':goal.get('dimension','reading'),'priority':'low','excerpts':quotes,
                 'impact':row['reason'],'goal':goal.get('intent') or goal.get('question') or '按本书目标调整阅读作用。'})
     return issues
+
+
+def without_unrequested_checks(report, contract):
+    """Discard optional model notes when this book supplied no reference goals."""
+    if (isinstance(report,dict) and 'reading_checks' in report
+            and not (contract or {}).get('objectives')):
+        return {key:value for key,value in report.items() if key!='reading_checks'}
+    return report
+
+
+def delivered_candidates(root, chapter, contract):
+    if not contract:
+        return []
+    root = Path(root).resolve()
+    body = root / f'story/{chapter}/chapter.md'
+    if not body.is_file() or not body.resolve().is_relative_to(root):
+        return []
+    body_sha = hashlib.sha256(body.read_bytes()).hexdigest()
+    delivered = []
+    for stage in ('mvp', 'polish'):
+        path = root / f'learning/receipts/chapters/{chapter}/{stage}.json'
+        if not path.is_file() or not path.resolve().is_relative_to(root):
+            continue
+        receipt = json.loads(path.read_text(encoding='utf-8-sig'))
+        if (receipt.get('chapter') != chapter or
+                receipt.get('body_sha256') != body_sha or
+                receipt.get('blueprint_sha256') != contract['blueprint_sha256']):
+            continue
+        delivered.extend(receipt.get('candidate_ids', []))
+        delivered.extend(row['reference_id'] for row in receipt.get('dialogue', {}).get('matches', []))
+    return list(dict.fromkeys(delivered))
+
+
+def legacy_book_view(book):
+    if not book.get('reading_contract'):
+        return book
+    contract = book['reading_contract']
+    objectives = [goal for goal in contract['objectives'] if not goal.get('source_dimension')]
+    if len(objectives) == len(contract['objectives']):
+        return book
+    view = {key: value for key, value in book.items() if key != 'reading_contract'}
+    if objectives:
+        view['reading_contract'] = {**contract, 'objectives': objectives}
+    return view
+
+
+def application_receipt(root, chapter, body, report, contract):
+    """Distinguish a delivered suggestion from an effect located in current prose."""
+    delivered = delivered_candidates(root, chapter, contract)
+    if not delivered:
+        return None
+    validate_checks(report, body, contract)
+    comments = {row['goal_id']: row for row in report.get('reading_checks', [])}
+    items = []
+    for candidate in delivered:
+        matches = [comments[goal['id']] for goal in contract['objectives']
+                   if goal['source_candidate_id'] == candidate and goal['id'] in comments]
+        evidence = list(dict.fromkeys(quote for row in matches if row['status'] == 'pass'
+                                     for quote in row['excerpts']))
+        status = 'observed' if evidence else ('reviewed' if matches else 'unreviewed')
+        items.append({'candidate_id': candidate, 'status': status, 'excerpts': evidence})
+    return {'chapter': chapter, 'blueprint_sha256': contract['blueprint_sha256'], 'items': items}
 
 
 def apply(report,body,contract):
@@ -104,10 +170,28 @@ def apply(report,body,contract):
     for row in result.get('issues',[]):
         if row.get('source')=='reading_contract':
             expected=by_id.get(row.get('id'))
-            if not expected or any(row.get(k)!=v for k,v in expected.items()):raise ValueError('阅读目标派生问题与实际判断不符')
+            if not expected or any(row.get(k)!=v for k,v in expected.items() if k!='priority'):raise ValueError('阅读目标派生问题与实际判断不符')
         else:
             if row.get('id') in by_id:raise ValueError('阅读目标问题编号与模型问题冲突')
             kept.append(row)
     result['issues']=kept+generated
-    if any(r['priority'] in ('medium','high') for r in generated) and result.get('verdict')=='pass':result['verdict']='revise'
+    return advisory_report(result)
+
+
+def advisory_report(report):
+    """Read previously saved reports under the current reference policy."""
+    if not isinstance(report,dict):return report
+    issues=report.get('issues')
+    if not isinstance(issues,list):return report
+    def from_reference(row):
+        return isinstance(row,dict) and row.get('kind')=='expression' and (
+            row.get('source')=='reading_contract' or row.get('source')=='blind_review'
+            and str(row.get('id','')).startswith('blind-reading-issue-'))
+    if not any(from_reference(row) for row in issues):return report
+    result={**report,'issues':[{**row,'priority':'low'} if from_reference(row) else row for row in issues]}
+    if (result.get('verdict')=='revise'
+            and all(isinstance(row,dict) and row.get('priority')=='low' for row in result['issues'])
+            and all(result.get(key,{}).get('verdict','pass')=='pass' for key in ('fact_review','expression_review'))):
+        result['verdict']='pass'
+        if result.get('quality_verdict')=='revise':result['quality_verdict']='pass'
     return result

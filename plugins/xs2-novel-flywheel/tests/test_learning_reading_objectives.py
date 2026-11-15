@@ -31,7 +31,7 @@ def test_evidence_checked_goals_survive_selection_and_stage_context(tmp_path):
     result=run(tmp_path,'adopt');assert result.returncode==0,result.stderr
     goals=reading().for_book(tmp_path);assert goals['objectives'][0]['dimension']=='opening_promise'
     text=(tmp_path/'learning/active_context.md').read_text(encoding='utf8')
-    assert goals['objectives'][0]['id'] in text and '本书已采用阅读目标' in text
+    assert goals['objectives'][0]['id'] in text and '范文阅读效果参考' in text
     assert '她发现列车表上的名字消失了' not in text
     assert '知乎' in (tmp_path/'learning/dna/instructions.md').read_text(encoding='utf8')
 

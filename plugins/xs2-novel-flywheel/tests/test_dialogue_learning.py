@@ -81,6 +81,17 @@ def test_source_dialogue_cannot_omit_an_intervening_reply():
         checked(module, [sample], window, raw)
 
 
+def test_wrong_speaker_in_real_surrounding_quote_is_never_verified():
+    module = reference()
+    raw, window, sample = source_sample()
+    sample['turns'][0]['speaker'], sample['turns'][1]['speaker'] = '绣工', '掌柜'
+    for turn in sample['turns']:
+        turn['attribution'] = 'observed'
+        turn['attribution_evidence'] = {'window_id': window['window_id'], 'excerpt': raw}
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_tentative'
+
+
 def test_both_writer_modes_and_polish_receive_dialogue_learning_contract():
     prompts = json.loads((RESOURCES/'prompts.json').read_text(encoding='utf-8'))
     for name in ['novel-single-writer', 'novel-dialogue-writer', 'novel-storyboard-integrator',

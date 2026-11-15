@@ -7,10 +7,11 @@ from collections import Counter
 from pathlib import Path
 import json
 import re
+from dialogue_learning import SOURCE_BOUNDARY, profile_samples
+from distill_schema import DIMENSIONS, LAYERS
 
 UPSTREAM_DOCUMENTS = ("语言DNA.md", "文章结构模板.md", "写作视角与认知框架.md", "视觉风格指南.md", "Writing-DNA.md")
 DOCUMENTS = (*UPSTREAM_DOCUMENTS, "人物写法.md")
-LAYERS = {"language", "structure", "narrative_lens", "dialogue", "imagery", "theme", "character"}
 
 
 def prepare(raw, source, mode, save,*,direction='general',focus=''):
@@ -29,8 +30,7 @@ def prepare(raw, source, mode, save,*,direction='general',focus=''):
         '样本没有体现的作用不补造目标，未经本书选择不生效。')
     save("learning/dna/instructions.md", skill + "\n\n" + adapter+'\n\n## 当前学习侧重点\n'+emphasis)
     save("learning/dna/templates.md", templates)
-    marker = re.compile(r"^===== SOURCE (?:CHAPTER|FILE).*?=====$", re.M)
-    markers = list(marker.finditer(raw))
+    markers = list(SOURCE_BOUNDARY.finditer(raw))
     units = [{"title": match.group(0).strip("= "), "source_start": match.end(), "source_end": markers[i + 1].start() if i + 1 < len(markers) else len(raw)} for i, match in enumerate(markers)]
     if not units:
         units = [{"title": "导入文本（完整性待核实）", "source_start": 0, "source_end": len(raw)}]
@@ -38,7 +38,7 @@ def prepare(raw, source, mode, save,*,direction='general',focus=''):
         raise ValueError("语料类型必须为 auto、short_full 或 serial_chapters")
     inferred = "serial_chapters" if mode == "auto" and "===== SOURCE CHAPTER" in raw else mode
     # Exclude import wrappers from language measurements, but keep source offsets.
-    body = marker.sub("", raw)
+    body = SOURCE_BOUNDARY.sub("", raw)
     sentences = [re.sub(r"\s", "", s) for s in re.split(r"[。！？!?]+", body) if s.strip()]
     paragraphs = [re.sub(r"\s", "", p) for p in body.splitlines() if p.strip()]
     lengths = [len(s) for s in sentences]
@@ -87,8 +87,9 @@ def checked_extras(payload, window, raw, text_field, strings, evidence_position)
     patterns = []
     for item in values("conflict_patterns", 8):
         fields = {key: text_field(item, key) for key in ("name", "goal", "foreshadowing", "obstacle", "resolution", "cost", "next_obstacle", "causal_link", "payoff")}
-        if item.get("application_scope") not in {"short_full", "serial_opening", "serial_chapter", "serial_arc", "general"}:
-            raise ValueError("冲突链的篇幅范围无效")
+        scope = item.get('application_scope')
+        if not isinstance(scope, str) or scope not in {"short_full", "serial_opening", "serial_chapter", "serial_arc", "general"}:
+            raise ValueError('冲突链的 application_scope 须为一个篇幅范围字符串')
         if item.get("confidence") not in {"high", "medium", "low"}:
             raise ValueError("冲突链的置信度无效")
         patterns.append({**fields, "application_scope": item["application_scope"],
@@ -97,7 +98,6 @@ def checked_extras(payload, window, raw, text_field, strings, evidence_position)
 
 
 def bundle(data, candidates, observations, patterns, load, save):
-    from dialogue_learning import profile_samples
     metadata = load("learning/dna/metadata.json")
     # Every window is analyzed and the full checked results remain in candidates.
     # Global synthesis uses bounded representatives instead of overflowing a
@@ -124,14 +124,28 @@ def bundle(data, candidates, observations, patterns, load, save):
                 result.append(item)
                 budget -= size
         return result
+    candidate_rank = {"high": 0, "medium": 1, "low": 2}
+    ranked = sorted(candidates, key=lambda item: candidate_rank[item["confidence"]])
+    by_dimension = {dimension: [item for item in ranked if item.get("dimension") == dimension]
+                    for dimension in DIMENSIONS}
+    dimension_examples = bounded(
+        {**{key: item[key] for key in ("candidate_id", "dimension", "mechanism", "transfer_guidance",
+                                      "constraints", "application_scope", "confidence")},
+         "evidence": item["evidence"][:2]}
+        for index in range(2)
+        for records in by_dimension.values()
+        for item in records[index:index + 1]
+    )
     selected_patterns = bounded(selected_patterns)
     selected = bounded(selected)
     result = {**metadata, "covered_window_ids": data["covered_window_ids"],
               "dialogue_samples": profile_samples(candidates),
+              "dimension_examples": dimension_examples,
               "style_observations": selected, "conflict_patterns": selected_patterns,
               "analysis_counts": {"all_observations": len(observations), "all_conflicts": len(patterns),
-                                  "summary_observations": len(selected), "summary_conflicts": len(selected_patterns)},
-              "summary_scope": "各窗口完整分析后，从各层抽取高置信代表进行总览；全部证据保存在候选档案。",
+                                  "summary_observations": len(selected), "summary_conflicts": len(selected_patterns),
+                                  "by_dimension": {key: len(records) for key, records in by_dimension.items()}},
+              "summary_scope": "总览选取有原文证据的代表写法；完整条目和原文位置见候选档案。",
               "candidate_names": [item["mechanism"] for item in candidates[:80]]}
     save("learning/dna/bundle.json", result)
 

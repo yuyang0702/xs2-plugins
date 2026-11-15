@@ -6,6 +6,18 @@ LEGACY_DIMENSIONS=('semantic_increment','constraint_transcription','imagery_func
 NARRATIVE_DIMENSIONS=('explanation_progression','turning_point_payoff')
 SCENE_DIMENSIONS=('scene_conflict_progression','aftermath_transition')
 DIMENSIONS=LEGACY_DIMENSIONS+NARRATIVE_DIMENSIONS+SCENE_DIMENSIONS
+GUARD_DIMENSIONS=('constraint_transcription','dialogue_function','voice_alignment',
+                  'turning_point_payoff','ending_function')
+GUARD_ISSUE_DIMENSIONS={
+    'constraint_transcription':'constraint_transcription',
+    'convenient_dialogue':'dialogue_function',
+    'scripted_dialogue':'dialogue_function',
+    'dialogue_stall':'dialogue_function',
+    'voice_flattening':'voice_alignment',
+    'turning_point_summary':'turning_point_payoff',
+    'ending_overstatement':'ending_function',
+}
+GUARD_PAIRED_DIMENSIONS=('dialogue_function','turning_point_payoff','ending_function')
 SCENE_PROBLEMS=('scene_conflict_stall','aftermath_transition_flat')
 STAGED_PROBLEMS=('premature_explanation','convenient_dialogue','aftermath_checklist',
                  'dialogue_stall','post_action_restatement')+SCENE_PROBLEMS
@@ -88,11 +100,28 @@ GUIDANCE='''逐项提交expression_checks，每项包含dimension、status(pass/
 在semantic_increment和voice_alignment中核对精确计数的叙事作用；无用计数可用unnecessary_precision类别给逐字依据、影响和局部目标。金额、期限、技术规则、资源账、人物计数习惯、夸张或本书风格需要的数字应保留；不设数字上限，不把数字多当成质量失败。'''
 
 
-def schema(excerpt_schema=None):
+GUARD_GUIDANCE=(
+    '逐项给 expression_checks，写明当前原文、本书声线或叙述方式、实际阅读作用。'
+    'constraint_transcription 对照冻结资料和人物叙述。编辑要求或规划口吻被照写时，'
+    '在 issues 的 constraint_transcription 给当前原句及 source_constraints 中逐字的 source_quote。'
+    '适合人物和场合的程序、立场与明确说明可保留。'
+    'dialogue_function 顺着话轮检查当下的意图、听见后的回应、回应如何改变下一步。'
+    '报问题时引前一话轮或动作及出问题的接话。'
+    'voice_alignment 用人物此刻的用语、节奏、判断或注意力辨认声音。有意切换语体按本书要求判断。'
+    'turning_point_payoff 核心场景若只在事后概述，核对此前施压和此后可感知的选择或后果。'
+    'ending_function 对照已完成的选择或有效意象与末尾解释，确认末尾是否增加判断、情绪或悬念。'
+    '有效的跳切、概述、留白、安静收束与回环可以成立。'
+    '每项 issue 须链接相应 issues 的 id，写具体阅读损害与可执行的局部目标。'
+    '对白、转折、结尾的实质问题按正文顺序各引至少两处不同原文。'
+    'pass 引当前依据，not_applicable 只在没有对应情节或表达时使用，说明理由。无实质问题时 issues=[]。'
+)
+
+
+def schema(excerpt_schema=None, *, dimensions=DIMENSIONS):
     excerpt=excerpt_schema or {'type':'string','minLength':1}
-    return {'type':'array','minItems':len(DIMENSIONS),'maxItems':len(DIMENSIONS),'items':{
+    return {'type':'array','minItems':len(dimensions),'maxItems':len(dimensions),'items':{
         'type':'object','required':['dimension','status','excerpts','reason','style_basis','issue_ids'],
-        'properties':{'dimension':{'enum':list(DIMENSIONS)},'status':{'enum':['pass','issue','not_applicable']},
+        'properties':{'dimension':{'enum':list(dimensions)},'status':{'enum':['pass','issue','not_applicable']},
             'excerpts':{'type':'array','items':copy.deepcopy(excerpt)},'reason':{'type':'string','minLength':1},
             'style_basis':{'type':'string','minLength':1},'issue_ids':{'type':'array','items':{'type':'string','minLength':1},'uniqueItems':True}},
         'additionalProperties':False}}
@@ -123,15 +152,17 @@ def validate_narrative_issue(issue, context_excerpts=()):
         raise ValueError('表达验收的转折、对白或动作解释问题须对照两处不同的当前原文')
 
 
-def validate_checks(report,body,required=False):
+def validate_checks(report,body,required=False,*,dimensions=None):
     if 'expression_checks' not in report:
         if required:raise ValueError('表达验收缺少逐维度原文与文风依据')
         return []
     rows=report['expression_checks']
     if not isinstance(rows,list):raise ValueError('表达验收维度缺失或重复')
-    dimensions = LEGACY_DIMENSIONS+NARRATIVE_DIMENSIONS
-    # Stored reports remain readable. Live agent schemas require the current dimensions.
-    expected = set({len(LEGACY_DIMENSIONS): LEGACY_DIMENSIONS, len(dimensions): dimensions}.get(len(rows), DIMENSIONS))
+    if dimensions is None:
+        # Stored reports remain readable. Live agent schemas require the current dimensions.
+        narrative = LEGACY_DIMENSIONS+NARRATIVE_DIMENSIONS
+        dimensions = {len(LEGACY_DIMENSIONS): LEGACY_DIMENSIONS, len(narrative): narrative}.get(len(rows), DIMENSIONS)
+    expected = set(dimensions)
     if len(rows)!=len(expected):raise ValueError('表达验收维度缺失或重复')
     resolved={r.get('issue_id') for r in report.get('blind_resolutions',[]) if isinstance(r,dict)}
     issues=[*report.get('issues',[]),*report.get('expression_review',{}).get('issues',[]),
@@ -158,3 +189,34 @@ def validate_checks(report,body,required=False):
                 or any(k not in known for k in ids) or (row['status']=='issue')!=bool(ids)):
             raise ValueError('表达验收问题编号不存在或与维度结论不一致')
     return copy.deepcopy(rows)
+
+
+def validate_guard_checks(report, body, source_constraints):
+    findings = [issue for issue in report['issues'] if issue['category'] in GUARD_ISSUE_DIMENSIONS]
+    if 'expression_checks' not in report and all(issue['category']=='convenient_dialogue' for issue in findings):
+        return  # Accept stored draft reports that predate these checks.
+    rows = validate_checks(report, body, required=True, dimensions=GUARD_DIMENSIONS)
+    known = {}
+    for issue in findings:
+        key, category = issue.get('id'), issue['category']
+        if not isinstance(key,str) or not key.strip() or key in known:
+            raise ValueError('表达验收问题缺少独立编号或编号重复')
+        known[key] = issue
+        if category=='constraint_transcription':
+            quote=issue.get('source_quote')
+            if not isinstance(quote,str) or not quote.strip() or quote not in source_constraints:
+                raise ValueError('指令直译问题须引用冻结资料中逐字存在的 source_quote')
+        if GUARD_ISSUE_DIMENSIONS[category] in GUARD_PAIRED_DIMENSIONS:
+            excerpts=issue['excerpts']
+            if not any(_distinct_quotes(pair) and _ordered_quotes(body,pair) for pair in combinations(excerpts,2)):
+                raise ValueError('表达验收的接话、转折或结尾问题须按正文顺序对照两处不同原文')
+    linked=set()
+    for row in rows:
+        for key in row['issue_ids']:
+            issue=known.get(key)
+            if (issue is None or GUARD_ISSUE_DIMENSIONS[issue['category']]!=row['dimension']
+                    or not any(a in b or b in a for a in row['excerpts'] for b in issue['excerpts'])):
+                raise ValueError('表达验收须将问题编号和当前原文绑定到对应维度')
+            linked.add(key)
+    if linked!=known.keys():
+        raise ValueError('表达验收缺少对应问题的逐维度复核')

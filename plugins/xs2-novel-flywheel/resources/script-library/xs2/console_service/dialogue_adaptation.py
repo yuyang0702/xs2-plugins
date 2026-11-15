@@ -39,8 +39,9 @@ def source_samples(item):
     values = [*values, *(s for s in profiles if isinstance(s, dict) and s.get('candidate_id') == identifier)]
     source = candidate.get('source') or item.get('library', {}).get('candidates', {}).get('source', {})
     checked = {}
+    tentative = set()
     for sample in values:
-        if (not isinstance(sample, dict) or sample.get('status') != 'context_verified'
+        if (not isinstance(sample, dict) or sample.get('status') not in ('context_verified', 'context_tentative')
                 or sample.get('source_sha256') != source.get('text_sha256')):
             raise ValueError('对白样本与所选来源身份不符')
         context = sample.get('context', {});turns = sample.get('turns', [])
@@ -62,6 +63,8 @@ def source_samples(item):
         key = sample.get('sample_id')
         if not isinstance(key, str) or not key.startswith('dialogue-'):
             raise ValueError('来源对白样本编号无效')
+        if sample['status'] == 'context_tentative' or any(t.get('attribution') == 'tentative' for t in turns):
+            tentative.add(key)
         comparable = {k:v for k,v in sample.items() if k != 'candidate_id'}
         if key in checked:
             if _proof(checked[key]) != _proof(comparable):
@@ -71,7 +74,7 @@ def source_samples(item):
                 if variant not in variants:variants.append(variant)
         else:
             checked[key] = {**comparable, 'analysis_variants':list(comparable.get('analysis_variants', [_annotations(comparable)]))}
-    return list(checked.values())
+    return [sample for key, sample in checked.items() if key not in tentative]
 
 
 def _scene_in_chapter(text, evidence, chapter, project):

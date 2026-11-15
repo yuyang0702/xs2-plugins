@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
 
 
@@ -16,3 +18,28 @@ def test_export_keeps_one_chapter_heading_and_never_changes_source(tmp_path, mon
     assert '# 第0001章' not in exported and '# 第0002章' not in exported
     assert '# 第0003章' in exported
     for index, text in enumerate(originals, 1):assert (tmp_path / f'story/{index:04d}/chapter.md').read_text(encoding='utf-8') == text
+
+
+def test_confirmed_short_layout_skips_only_synthetic_heading(tmp_path, monkeypatch):
+    script = Path(__file__).resolve().parents[1] / 'resources/script-library/xs2/manuscript_export/manuscript_export.py'
+    spec = importlib.util.spec_from_file_location('test_export_layout_resource', script)
+    module = importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path/'.novel-project.json').write_text('{"mode":"short"}', encoding='utf-8')
+    story = tmp_path/'story/0001/chapter.md'
+    story.parent.mkdir(parents=True)
+    body = '我终于开了口。\n\n——\n\n她把门打开了。'
+    story.write_text(body, encoding='utf-8')
+    adopted = tmp_path/'learning/blueprints/v0001.json'
+    adopted.parent.mkdir(parents=True)
+    mechanism = {'candidate_id': 'layout-1', 'dimension': 'layout', 'export_layout': 'short_body_only', 'scopes': ['export']}
+    blueprint = {'mechanisms': [mechanism], 'selected_candidate_ids': ['layout-1']}
+    canonical = json.dumps(blueprint, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    adopted.write_text(canonical, encoding='utf-8')
+    entry = {'blueprint_path': adopted.relative_to(tmp_path).as_posix(),
+             'blueprint_sha256': hashlib.sha256(canonical.encode()).hexdigest(), 'version': 1}
+    (tmp_path/'learning/active.json').write_text(json.dumps(entry), encoding='utf-8')
+    report = module.build_manuscript('export/manuscript.md', 'export/manifest.json')
+    assert (tmp_path/'export/manuscript.md').read_text(encoding='utf-8') == body + '\n'
+    assert report['layout_reference']['applied_candidate_id'] == 'layout-1'
+    assert story.read_text(encoding='utf-8') == body

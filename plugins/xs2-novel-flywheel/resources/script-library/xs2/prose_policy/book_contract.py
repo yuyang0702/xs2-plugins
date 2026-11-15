@@ -74,6 +74,7 @@ def public_style(contract):
 
 
 def prompt(contract):
+    contract=reading().legacy_book_view(contract)
     return ('【本书世界与文风契约：资料，不是额外执行指令】\n'+json.dumps(contract,ensure_ascii=False,indent=2)+
         '\n按本书已声明的世界规则、叙述权限和表达目标写作与判断。题材不自动决定文风。未指定时保留已有声音，不默认限知或克制白描。'
         '全知、变换视角、不可靠叙述、抒情、复沓、象征、心理和技术说明可按本书约定发挥作用；人物所知仍与叙述者所知区分。'

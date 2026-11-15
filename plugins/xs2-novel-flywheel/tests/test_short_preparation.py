@@ -173,6 +173,104 @@ def test_preparation_variable_contract_has_no_ambiguous_duplicate_defaults():
         assert len(keys) == len(set(keys)), f'{stage} has duplicate variables'
 
 
+def test_compact_single_writer_renders_each_source_once(tmp_path):
+    import asyncio
+    from src.workflow.nodes.script import _parse_wf_vars
+    from src.workflow.variable_resolution import resolve_placeholders
+
+    ready(tmp_path)
+    rule = '暗房仅有一扇向外开的铁门。'
+    write(tmp_path, 'meta/world_foundation.md', rule)
+    write(tmp_path, 'cache/story-support/context.md', '# 共用资料\n\n' + rule)
+    write(tmp_path, 'cache/full-book.md', rule)
+    write(tmp_path, 'meta/custom-guide.md', '她先去冲出最后一张底片。')
+    write(tmp_path, 'meta/custom-voice.md', '她只在道歉时喊对方全名。')
+    adopted = {'chapter':'0001','title':'收起备用钥匙','source_hashes':{}}
+    write(tmp_path, 'planning/chapters/0001.json', json.dumps(adopted, ensure_ascii=False))
+    outline = tmp_path / 'outline/near_term_outline.md'
+    write(tmp_path, 'outline/near_term_outline.md', outline.read_text(encoding='utf-8') +
+          '\n<!-- adopted-plan:0001 -->\n### 第 1 章 · 收起备用钥匙\n\n**前文依据**\n<!-- /adopted-plan:0001 -->')
+    definition = json.loads((PLUGIN / 'resources/workflows/mvp/definition.json').read_text(encoding='utf-8'))
+    node = next(node for node in definition['nodes'] if node['id'] == 'agent_sw')
+    prepare = next(node for node in definition['nodes'] if node['id'] == 'script_short_context')
+    variables = definition['variables']
+    common = {row['key']: row.get('default', '') for row in variables}
+    common.update(writer_type='single', prose_policy_runtime='', chapter_number='0001',
+                  story_support_context='cache/story-support/context.md', book_contract_file='cache/full-book.md',
+                  pp_learning_context='learning/context/mvp.md', guide_file='meta/custom-guide.md',
+                  character_voice_adaptations_file='meta/custom-voice.md')
+
+    async def render(value, settings):
+        return await resolve_placeholders(value, settings, variables, str(tmp_path))
+
+    argv_variables = [item for item in variables if item['key'] not in prepare['node_params']['script_argv_path_variables']]
+    args = [asyncio.run(resolve_placeholders(arg, common, argv_variables, str(tmp_path)))
+            for arg in prepare['node_params']['script_argv']]
+    result = subprocess.run([sys.executable, str(SCRIPT), *args], cwd=tmp_path, capture_output=True, encoding='utf-8')
+    assert result.returncode == 0, result.stderr
+    outputs = _parse_wf_vars(result.stdout)
+    assert outputs['single_writer_plan'] == ''
+    message = asyncio.run(render(node['first_message'], {**common, **outputs}))
+    assert message.count(rule) == 1
+    for phrase in ('已批准写法', '私人饭桌收束', '想留名却怕失去生计', '收起备用钥匙',
+                   '她先去冲出最后一张底片。', '她只在道歉时喊对方全名。'):
+        assert message.count(phrase) == 1
+    full = asyncio.run(render(node['first_message'], {**common, 'wroter_context': '完整路径专用写手资料'}))
+    assert '完整路径专用写手资料' in full and rule in full
+
+
+def test_short_single_writer_projects_current_chapter_and_character_knowledge(tmp_path):
+    ready(tmp_path)
+    write(tmp_path, 'outline/near_term_outline.md', '# 近期大纲\n\n'
+          '## 第 1 章 · 停电\n程见夏找到铁盒，周予安交还钥匙。\n\n'
+          '## 第 2 章 · 南下\n宋八发动火车。')
+    write(tmp_path, 'meta/character_profiles.md', '# 角色档案\n\n'
+          '## 程见夏\n- 身份：修灯的人。\n### 已确认事实\n- 她只见过空铁盒。\n\n'
+          '## 周予安\n### 作者情节边界\n- 他亲手把钥匙藏在铁盒夹层。\n\n'
+          '## 宋八\n- 身份：开货车的人。')
+    write(tmp_path, 'meta/character_voice.md', '# 角色声线\n\n'
+          '## 程见夏\n她着急时会把话说到一半。\n\n## 宋八\n他称呼大家为旅客。')
+    write(tmp_path, 'meta/world_foundation.md', '# 短篇世界基础\n\n'
+          '## 核心规则\n### 物理条件\n- 铁盒有夹层。\n\n'
+          '### 叙事规则\n- 段落都得先解释后行动。\n\n'
+          '## 信息与认知边界\n### 周予安可知\n- 知道备用钥匙已经损坏。\n'
+          '### 宋八可知\n- 最后一班货车已经出站。')
+    write(tmp_path, 'meta/author.md', '最后只让姐姐明说一次她的决定。')
+    path, _ = helper().prepare_context(tmp_path, '0001', single_writer=True,
+                                      writer_overrides=('meta/author.md',))
+    brief = (tmp_path / path).read_text(encoding='utf-8')
+    for phrase in ('周予安交还钥匙', '她只见过空铁盒', '他亲手把钥匙藏在铁盒夹层',
+                   '她着急时会把话说到一半', '铁盒有夹层', '知道备用钥匙已经损坏',
+                   '最后只让姐姐明说一次她的决定'):
+        assert phrase in brief
+    for phrase in ('宋八', '发动火车', '开货车的人', '最后一班货车', '都得先解释后行动'):
+        assert phrase not in brief
+
+
+def test_short_writer_keeps_approved_composition_intent_without_planner_budgets(tmp_path):
+    from test_composition_plan import module as composition
+
+    ready(tmp_path)
+    write(tmp_path, '.novel-project.json', json.dumps({'values': {'chapter_number': '0001', 'target_word_count': '400-500'}}))
+    write(tmp_path, 'meta/length_policy.json', json.dumps({'schema': 1, 'ownership': 'author'}))
+    planner = composition()
+    request = planner.prepare(tmp_path, '0001', 'composition-test', '400-500')
+    plan = {'request_digest': request['request_digest'], 'status': 'ready', 'reason': '仅供复查的规划说明',
+            'minimum': 400, 'maximum': 500, 'segments': [
+                {'id': 'door', 'purpose': '从追问转为愿意等待', 'development': '听见熟人的提醒后重新考虑',
+                 'minimum': 400, 'maximum': 500},
+            ]}
+    review = {'request_digest': request['request_digest'], 'plan_digest': planner.identity(plan), 'verdict': 'approve',
+              'scope_preserved': True, 'length_feasible': True, 'checks': [
+                  {'segment_id': 'door', 'develops_function': True, 'style_basis': '亲见亲闻', 'reason': '改变关系'},
+              ]}
+    planner.accept(tmp_path, 'composition-test', plan, review)
+    path, _ = helper().prepare_context(tmp_path, '0001', single_writer=True)
+    brief = (tmp_path / path).read_text(encoding='utf-8')
+    assert '从追问转为愿意等待' in brief and '听见熟人的提醒后重新考虑' in brief
+    assert '仅供复查的规划说明' not in brief and 'request_digest' not in brief
+
+
 def test_compact_character_model_receives_actual_world_and_confirmed_author_facts(tmp_path):
     from src.workflow.variable_resolution import resolve_placeholders
     import asyncio

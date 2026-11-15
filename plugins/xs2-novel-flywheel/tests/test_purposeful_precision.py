@@ -99,3 +99,14 @@ def test_precision_scan_spans_narration_and_linked_turns_but_leaves_relative_lan
         'p0001': ['一颗'], 'p0003': ['一颗'], 'p0004': ['六点'], 'p0006': ['六点'],
         'p0007': ['七点'], 'p0008': ['七点'], 'p0010': ['三块钱', '两张'],
     }
+
+
+def test_half_durations_and_finger_widths_are_reviewable_precision():
+    policy = module()
+    body = '水已经比半小时前高了。\n\n它离井沿还有三指宽，转眼只剩两指。'
+    assert policy.review_candidates(body) == [
+        {'paragraph_id': 'p0001', 'details': ['半小时']},
+        {'paragraph_id': 'p0002', 'details': ['三指宽', '两指']},
+    ]
+    assert policy.detail_keys('半个钟头、二指宽') == policy.detail_keys('三十分钟、2指')
+    assert not policy.review_candidates('这事八字还没一撇。他伸手一指。')

@@ -159,7 +159,7 @@ def release(root,lease):
 
 def classify(reason):
     text=str(reason).lower()
-    if text.startswith('composition_review_refresh:'):return 'dependency_refresh'
+    if text.startswith(('composition_review_refresh:', 'draft_audit_refresh:')):return 'dependency_refresh'
     if text.startswith('dialogue_review_format:'):return 'format'
     if any(s in text for s in ('resource:','preflight:','dependency','漂移','filenotfound')):return 'installation'
     if any(s in text for s in ('lease:','来源哈希不匹配','来源已有变化','哈希不匹配','冻结资料已有变化','冻结原文已有变化')):return 'source'
@@ -257,9 +257,10 @@ def _reconcile_native_failures(root,native,context):
 
 def retry(root,scope,target,reason,total=4):
     category=classify(reason);fingerprint=digest([category,str(reason)])
-    refresh=target=='agent_composition_review' and category=='dependency_refresh'
+    refresh=target in {'agent_composition_review','agent_guard_facts_audit','agent_guard_expression_audit'} and category=='dependency_refresh'
     if refresh:
-        scope='composition-refresh/'+scope.rsplit('/',1)[-1]
+        family = 'composition-refresh' if target == 'agent_composition_review' else target+'-refresh'
+        scope=family+'/'+scope.rsplit('/',1)[-1]
     original_scope=scope;scope,context=_retry_scope(root,scope,None if refresh else target)
     native=None;source_key=None
     task=os.environ.get('TASK_ID');workflow=os.environ.get('WORKFLOW_ID');host=host_root()
@@ -693,8 +694,9 @@ def release_launch(root,state,stage):
     return False
 
 
-def _finish(root,saved):
-    lease=saved['lease'];receipt={'task_id':saved['manifest']['task_id'],'workflow_id':saved['manifest']['workflow_id'],
+def _finish(root,saved,native):
+    manifest=saved['manifest']
+    lease=saved['lease'];receipt={'task_id':manifest['task_id'],'workflow_id':manifest['workflow_id'],
                                 'manifest_sha256':digest(saved['manifest']),'epoch':lease['epoch']}
     with closing(_db(root)) as db, db:
         db.execute('BEGIN IMMEDIATE')
@@ -705,8 +707,35 @@ def _finish(root,saved):
             events=db.execute("SELECT data FROM run_events WHERE kind='execution_complete'")
             if not any(json.loads(r['data'])==receipt for r in events):raise ValueError('LEASE: 已释放执行缺少本次完成凭据')
             return
+        record_reference_delivery(root,manifest['stage'],manifest['chapter'],manifest['task_id'],native)
         db.execute('UPDATE execution_intents SET active=0 WHERE scope=?',(lease['scope'],))
         store()._event(db,'execution_complete',receipt)
+
+
+def record_reference_delivery(root, stage, chapter, task, native):
+    writers = {'mvp': ('agent_sw', 'agent_si'), 'polish': ('agent_pp',)}
+    if not any(native.get('node_states', {}).get(node, {}).get('status') == 'completed'
+               for node in writers.get(stage, ())):
+        return
+    relative = f'learning/context/{stage}.md'
+    prepared = root / f'learning/receipts/{stage}.json'
+    context = root / relative
+    body = root / f'story/{chapter}/chapter.md'
+    if not all(path.is_file() and path.resolve().is_relative_to(root) for path in (prepared, context, body)):
+        return
+    receipt = _read(prepared)
+    if not (receipt.get('candidate_ids') or receipt.get('dialogue', {}).get('matches')):
+        return
+    effective = native.get('parameter_values', {})
+    context_sha = hashlib.sha256(context.read_text(encoding='utf-8-sig').encode()).hexdigest()
+    if (receipt.get('chapter') != chapter or receipt.get('task_id') != task
+            or receipt.get('context_path') != relative
+            or effective.get('learning_context', relative) != relative
+            or receipt.get('context_sha256') != context_sha):
+        return
+    delivery = {**receipt, 'body_sha256': hashlib.sha256(body.read_bytes()).hexdigest()}
+    target = f'learning/receipts/chapters/{chapter}/{stage}.json'
+    store().atomic(root, target, json.dumps(delivery, ensure_ascii=False, indent=2) + '\n')
 
 
 def run(root,stage,chapter,task,workflow,finish=False):
@@ -717,7 +746,7 @@ def run(root,stage,chapter,task,workflow,finish=False):
     if path.is_file():
         saved=_read(path)
         if saved['manifest']!=manifest:raise ValueError('PREFLIGHT: frozen effective inputs/resources changed')
-        if finish:_finish(root,saved)
+        if finish:_finish(root,saved,native)
         else:verify_claim(root,saved['lease'])
         return saved
     if finish:raise ValueError('PREFLIGHT: completion lacks frozen execution manifest')
@@ -917,6 +946,10 @@ def main():
     args=p.parse_args()
     if args.command=='budget':request_budget(Path.cwd(),args.node)
     else:run(Path.cwd(),args.stage,args.chapter,os.environ['TASK_ID'],os.environ['WORKFLOW_ID'],args.command=='finish')
+    if args.command == 'start' and args.stage in ('character', 'story-plan', 'outline'):
+        reference = f'learning/context/{args.stage}.md'
+        if (Path.cwd() / reference).is_file():
+            print(f'<WF_VAR>scoped_learning_context:{reference}</WF_VAR>')
     print('Plugin production preflight complete')
 
 

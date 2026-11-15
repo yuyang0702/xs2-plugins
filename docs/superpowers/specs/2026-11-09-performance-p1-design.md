@@ -1,0 +1,16 @@
+# Performance P1: retain useful edits and parallel independent reading
+
+The user approved the two P1 items in the previous optimization proposal and requested implementation. Keep all production changes in the plugin, all book-specific styles/rules and existing gates, original manuscripts unchanged and the100k run paused. Continue inline execution; preserve previous dirty changes and use a frozen full-plugin baseline rather than resetting Git or creating a clean checkout that omits them.
+
+## Decisions
+
+1. Keep the immutable original fact baseline and paragraph anchors. A pending working draft retains exact patches individually judged improved in a structurally valid independent review with compatible=true and no fact issues. Further attempts submit only additional/updated original-anchored patches; the program merges them with retained patches. Exact same spans may explicitly replace a retained edit; ambiguous partial overlaps fail. The final full original-versus-candidate review rechecks every cumulative edit, every original goal, all facts and expression dimensions. Pending material is never published as prose or trusted fictional facts. Signed P0 derived-view receipts protect working draft provenance, source dependencies, raw real review and prompt/code version; process recovery verifies them. Rejected fact changes are never retained. Existing retry/replan limits remain unchanged.
+2. Parallelize existing blind reading and the independent first contextual assessment on one frozen chapter. The contextual first pass cannot see blind findings and must return empty blind_resolutions. Join only after both branches validate. If the blind reader has any findings, run the existing dependent contextual reviewer after joining, with the full blind report, to preserve its ability to classify permissions and resolve evidenced false positives. With no blind findings the validated independent contextual report is sufficient; existing merge/whole-chapter/cross-chapter/cognition gates remain unchanged. This adds a contextual call in difficult cases, documented and measured; it never accepts a more permissive result to obtain speed.
+
+## Approaches considered
+
+Changing the factual baseline to the latest rejected draft risks factual drift; keep original anchors and program-merge valid patches instead. Parallelizing the current dependent contextual reviewer directly would remove its blind-report dependency; use independent first pass plus conditional reconciliation instead. Leaving all checks sequential preserves correctness but misses the approved P1 benefit. These are implementation choices within the user's approved direction, not new author constraints.
+
+## Validation
+
+RED/GREEN retention, explicit replacement, overlap, tamper, changed dependency/version, fact rejection, raw-response binding, full final review and process recovery tests. Native scheduler demonstrates concurrent reader calls, join-before-publication, responsible-branch retries and reconciliation when any blind findings exist. Copy-only baseline/optimized comparison includes retained edit replay and same-model independent reading pair. All protected source manifests and paused flags checked before/after. No novel driver or100k launcher. Small samples cannot establish universal literary equivalence or speed gains.

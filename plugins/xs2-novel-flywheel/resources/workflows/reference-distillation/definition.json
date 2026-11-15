@@ -52,7 +52,7 @@
       "node_type": "agent",
       "agent_type": "xs2-reference-distiller",
       "system_prompt_template": "",
-      "first_message": "请分析当前参考资料窗口，提取可迁移的抽象叙事机制和 Writing DNA 观察项。当前语料类型：{{source_mode}}。short_full 表示短篇全文，serial_chapters 表示长篇章节样本，auto 表示请根据来源标记和内容判断。分析开篇钩子时必须遵循对应尺度：短篇看前几百字和全文回收，长篇看前 1～3 章、章首章末和卷级持续性。\n\n==== 当前窗口 ====\n{{window_file}}\n\n必须返回纯 JSON，格式为：{\"window_id\":\"{{window_id}}\",\"source_sha256\":\"参考资料哈希\",\"candidates\":[{\"mechanism\":\"抽象机制\",\"layer\":\"language|structure|narrative_lens|dialogue|imagery|theme|character\",\"transfer_guidance\":\"迁移建议\",\"constraints\":[\"使用边界\"],\"scopes\":[\"build\",\"character\",\"story-plan\",\"outline\",\"mvp\",\"polish\",\"post-hoc\"],\"application_scope\":[\"short_full|serial_opening|serial_chapter|serial_arc|general\"],\"source_pov\":[\"first_person|third_person|mixed|unknown\"],\"target_pov\":[\"first_person|third_person\"],\"pov_compatibility\":\"direct|adaptable|risky\",\"adaptation_guidance\":\"视角适配说明\",\"risk_flags\":[\"潜在风险\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"{{window_id}}\",\"evidence_id\":\"当前窗口 evidence_catalog 中的真实编号\",\"reason\":\"证据说明\"}]}]}。允许 candidates 为空。不得复述原文，不得复制具体人物、标题、剧情、句子或包装。\n\n【实际读取的上游分析指令与小说适配约定】\n{{dna_instructions_file}}\n\n【语言统计与语料元数据】\n{{dna_metadata_file}}\n\n在上述 candidates 之外，同一 JSON 顶层还必须提供以下两个数组：\n\"style_observations\":[{\"layer\":\"language|structure|narrative_lens|dialogue|imagery|theme|character\",\"rule\":\"可观察风格规律\",\"transfer_guidance\":\"可迁移的抽象建议\",\"limits\":[\"样本局限或适配边界\"],\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"当前窗口ID\",\"evidence_id\":\"当前窗口 evidence_catalog 中的真实编号\",\"reason\":\"支持观察的理由\"}]}],\n\"conflict_patterns\":[{\"name\":\"抽象链条名称\",\"goal\":\"目标机制\",\"foreshadowing\":\"此前埋下的条件或样本未见\",\"obstacle\":\"阻碍机制\",\"resolution\":\"采取行动或局部解决\",\"cost\":\"行动代价或样本未见\",\"next_obstacle\":\"后续阻碍机制或样本未见\",\"causal_link\":\"为什么前一行动或已有规则引发新阻碍\",\"payoff\":\"回收方式或样本未见\",\"application_scope\":\"short_full|serial_opening|serial_chapter|serial_arc|general\",\"confidence\":\"high|medium|low\",\"evidence\":[{\"window_id\":\"当前窗口ID\",\"evidence_id\":\"当前窗口 evidence_catalog 中的真实编号\",\"reason\":\"支持链条的哪一环\"}]}]。\n每窗口最多12条风格观察、8条冲突链，每条1～8处证据；没有证据则返回空数组，不编造完整链。证据字符原样复制，来源字体混淆时不得猜测还原。少量样本只描述本样本，不宣称作者稳定风格。\n\n证据选择：直接引用当前窗口 evidence_catalog 的 evidence_id，连同 window_id 和 reason 返回，不要重打摘录或自行计算偏移。脚本会从原文快照提取实际字符并校验；严禁编造编号。\n人物写法必须独立观察（layer=character）：人物自己的欲望/恐惧、矛盾、压力下的选择与代价、情绪如何通过动作或语言显露、各人的说话差异、关系改变、配角是否有独立目标。若有证据，给出可迁移的 character 候选（scopes 包含 character、mvp、polish）和风格观察；样本不足则指出未知，不凭印象补人格。发现人物机械化或只讲规则时作为风险指出，不把缺点提炼成推荐规则。\n\n输出长度约束（保证JSON完整）：本窗口候选至多5条，优先彼此不同且有证据的机制；风格观察至多7条，每个有依据的层次给1条代表；冲突链至多3条。每条证据1～3个真实编号即可。字段用简洁中文，通常20～60字，最长120字；全部JSON控制在8000字符内，不缩进、不重复相同建议。覆盖整个窗口，优先选代表而不是穷举，宁可减少重复条目也不能截断JSON。\n\n==== 对白学习扩展（兼容旧格式） ====\n当候选涉及对话或人物声音时，结合窗口前后语境分析同一次交谈，不从孤立金句推断人设。候选对象可增加dialogue_samples数组（每候选至多3项）；说话人或轮次无法可靠确认时用空数组，不猜名字、不补写上下文。\n每项格式：{\"scene_type\":\"实际场景类型\",\"relationship\":\"原文支持的双方关系分析\",\"turns\":[{\"speaker\":\"邻近原文中可确认的姓名或身份称呼\",\"text\":\"原文引号内的准确台词，不含外层引号\",\"intent\":\"这句如何回应上一句或争取什么\",\"evidence\":{\"window_id\":\"当前窗口ID\",\"excerpt\":\"能唯一定位该台词的原文摘录，可含必要周边文字\"}},{\"speaker\":\"另一位可确认人物\",\"text\":\"下一轮原文台词\",\"intent\":\"实际回应作用\",\"evidence\":{\"window_id\":\"当前窗口ID\",\"excerpt\":\"准确摘录\"}}],\"transferable_moves\":[\"根据前后反应提炼的说话方法，不能复述原作剧情\"],\"limits\":[\"关系、场合、情绪与信息边界等使用条件\"]}。\nturns为原文顺序的2至8个连续回应，不能跳过中间台词，不能改写引文；仅分析窗口中完整可见的直接引语，不把旁白当台词。关系分析和人物归属必须结合前后文，无法确认就省略该样本。前后原文、位置和来源编号由校验脚本保存，禁止自行补全缺失的情节。\n没有可确认的对白时仍可正常返回其他候选；不为配额制造对白样本。\n\n【阅读目标学习】根据dna_instructions_file的学习方向分析；zhihu_short是可选分析侧重点，不能据此假定来源平台或约束其他作品。有真实证据的机制可附reading_objectives数组（至多8项）：每项{dimension:opening_promise/information_release/relationship_progression/payoff/voice/custom,intent:抽象作用,planning_question:本书规划要回答的问题,acceptance_question:按正文可检查的问题,limits:[使用条件]}。分析样本实际开篇期待、信息释放、关系发展、兑现或声音，没体现就省略；不要复制样本的人名、答案、剧情和句子。目标跟随机制的evidence精确核验，并且只有本书明确选择后才生效。\n【上次本窗口的校验反馈；为空则首次分析】\n{{distill_feedback_file}}\n只依据当前原文和实际编号修正结构或重新分析，不改来源、不猜证据。\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"window_id\",\n    \"candidates\"\n  ],\n  \"properties\": {\n    \"window_id\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"source_sha256\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[a-f0-9]{64}$\"\n    },\n    \"candidates\": {\n      \"type\": \"array\",\n      \"maxItems\": 12,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"mechanism\",\n          \"transfer_guidance\",\n          \"constraints\",\n          \"scopes\",\n          \"confidence\",\n          \"evidence\"\n        ],\n        \"properties\": {\n          \"mechanism\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"transfer_guidance\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"constraints\": {\n            \"type\": \"array\",\n            \"maxItems\": 16,\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            }\n          },\n          \"scopes\": {\n            \"type\": \"array\",\n            \"maxItems\": 16,\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            }\n          },\n          \"confidence\": {\n            \"enum\": [\n              \"high\",\n              \"medium\",\n              \"low\"\n            ]\n          },\n          \"evidence\": {\n            \"type\": \"array\",\n            \"minItems\": 1,\n            \"maxItems\": 8,\n            \"items\": {\n              \"type\": \"object\",\n              \"required\": [\n                \"window_id\",\n                \"reason\"\n              ],\n              \"properties\": {\n                \"window_id\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                \"reason\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                \"evidence_id\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^window-\\\\d{4}-e\\\\d{4}$\"\n                },\n                \"source_start\": {\n                  \"type\": \"integer\",\n                  \"minimum\": 0\n                },\n                \"source_end\": {\n                  \"type\": \"integer\",\n                  \"minimum\": 1\n                },\n                \"excerpt\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              \"anyOf\": [\n                {\n                  \"required\": [\n                    \"evidence_id\"\n                  ]\n                },\n                {\n                  \"required\": [\n                    \"source_start\",\n                    \"source_end\",\n                    \"excerpt\"\n                  ]\n                }\n              ]\n            }\n          },\n          \"source_pov\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 4,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"target_pov\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 4,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"risk_flags\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 8,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"application_scope\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 5,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"reading_objectives\": {\n            \"type\": \"array\",\n            \"maxItems\": 8,\n            \"items\": {\n              \"type\": \"object\"\n            }\n          }\n        }\n      }\n    },\n    \"style_observations\": {\n      \"type\": \"array\",\n      \"maxItems\": 12,\n      \"items\": {\n        \"type\": \"object\"\n      }\n    },\n    \"conflict_patterns\": {\n      \"type\": \"array\",\n      \"maxItems\": 8,\n      \"items\": {\n        \"type\": \"object\"\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
+      "first_message": "请分析当前参考资料窗口，从原文提取可独立选择的抽象写法。语料类型为 {{source_mode}}。短篇全文可分析开篇承诺与全文回收，长篇章节样本只分析可见章节及其承接。只有样本确实覆盖时才评价完整故事或卷级结构。\n\n==== 当前窗口 ====\n{{window_file}}\n\n【实际读取的上游分析指令与小说适配约定】\n{{dna_instructions_file}}\n\n【语言统计与语料元数据】\n{{dna_metadata_file}}\n\n每条 candidates 优先标注一个有证据的 dimension。层次 layer 可同时用于原有 Writing DNA 分析，例如 character 或 dialogue。\n- structure（结构，story-plan / outline）看信息顺序、局部目标、动作与代价、伏笔和回收如何连接。说明迁移所需的前置条件。\n- voice（语感，character / mvp / polish）看叙述距离、措辞习惯、人物在特定关系里的声线及语体变化。结合说话对象、上下文和关系压力。\n- topic（选题，novel-advisor）看题材如何接到一个具体矛盾、未知或想知道的后果。说明该吸引力由原文哪些内容支撑，限定到样本实际可见的读者期待。\n- case（案例，novel-advisor / story-plan / outline / mvp）拆解一处有条件、有行为和有后果的具体案例，提炼可换人物和题材的因果关系，标明改变前提后哪里会失效。\n- pacing（节奏，outline / mvp）看场景、跳叙、压缩、展开、停顿或信息释放的快慢变化及其阅读作用。记录局部对照和适用场景。\n- layout（排版，mvp / export）看当前文本实际用于组织阅读的章标题、分段、留白、对话换行或分隔。若摘录保留了相邻证据间的换行，可用起止编号引用。只在语料明确为单篇短篇全文、眼前开头直接进入正文且证据覆盖其首字符时，才可附 export_layout=short_body_only，供已采用该项的短篇导出不附加章节标题。一般观察可省略该字段。\n- expression（表达，mvp / polish）看具体的词句、动作、细节、修辞或信息表达如何改变理解与感受。写出能在本书落地的方法及其适用条件。\n\n按样本实际可见范围和侧重点选择，不凑齐维度。相近发现只保留最贴合且可操作的候选；人物写法有证据时分析其独立欲望、矛盾、压力下的选择与代价、具体情绪行动或人物关系，无法确认的部分保留未知。有 dimension 的候选省略 scopes，由程序按维度确定使用阶段。候选的 application_scope 用数组选择 short_full（短篇全文）、serial_opening（长篇开局）、serial_chapter（普通章）、serial_arc（长篇篇章）或 general。视角影响迁移时填写 source_pov（first_person / third_person / mixed / unknown）、target_pov（first_person / third_person）、pov_compatibility 和 adaptation_guidance，必要时加 risk_flags。transfer_guidance 与 constraints 要解释本书怎样重新实现同一种阅读作用和何时不宜使用。原作人物、标题、情节、表达及包装只可出现在来源证据中。\n\n证据优先使用当前 evidence_catalog 的真实 evidence_id，并写 window_id、reason。reason 指明它支持的可观察事实及推断边界。要保留相邻段落间的原始换行或留白，可再填 end_evidence_id 引用一段连续原文（最多600字符）。也可用准确且唯一的 excerpt；不要自行计算偏移或猜测混淆字符。候选的证据限当前窗口正文。\n可补充独立的 style_observations 和 conflict_patterns。style_observations 每项含 layer、rule、transfer_guidance、limits、confidence、evidence；conflict_patterns 每项含 name、goal、foreshadowing、obstacle、resolution、cost、next_obstacle、causal_link、payoff、application_scope、confidence、evidence。风格观察 limits 用数组。冲突链的 application_scope 填一个字符串。未见环节如实标记。无独立发现可返回空数组。样本范围有限时只描述当前证据能支持的结论。\n\n【对白语境】\n人物或对白候选可附 dialogue_samples。连续选取同一次交谈按原顺序的2至8轮直接引语，保留每句引号内原话并逐轮给唯一 evidence。窗口的 dialogue_context.before/after 与当前 text 是同份原文连续片段，可用来找齐跨窗的对话与前后动作；至少一轮与当前 text 相交，不能跨越 SOURCE 标记，也不能跳过中间回应。候选的一般证据仍在当前窗口内。\n记录 scene_type、relationship、transferable_moves、limits，并说明谁对谁说、当时争取什么、哪种人物关系和场合才适用。每轮 intent 说明回应作用。如果前文明确触发该句，可填 trigger 和前文 trigger_evidence；后文明确显示结果时可填 reaction 和后文 reaction_evidence。两类证据均直接准确引用原文。关系证据可附 relationship_evidence。\n说话人由邻近的叙述或名字确认时用 attribution=observed 并引用有名字的 attribution_evidence。只能从交替回应推测但人物范围清楚时用 tentative，并谨慎描述推断的边界。无法确认是谁或无连续回应时省略该样本。dialogue_samples 的原作片段仅供证据查阅，transferable_moves 提炼方法。\n\n【阅读目标学习】根据dna_instructions_file的学习方向分析；zhihu_short是可选分析侧重点，不能据此假定来源平台或约束其他作品。有真实证据的机制可附reading_objectives数组（至多8项）：每项{dimension:opening_promise/information_release/relationship_progression/payoff/voice/custom,intent:抽象作用,planning_question:本书规划要回答的问题,acceptance_question:按正文可检查的问题,limits:[使用条件]}。分析样本实际开篇期待、信息释放、关系发展、兑现或声音，没体现就省略；不要复制样本的人名、答案、剧情和句子。目标跟随机制的evidence精确核验，并且只有本书明确选择后才生效。\n【上次本窗口的校验反馈；为空则首次分析】\n{{distill_feedback_file}}\n只依据当前原文和实际编号修正结构或重新分析，不改来源、不猜证据。\n【返回格式】\n用 UTF-8 JSON 返回当前 window_id={{window_id}} 和窗口给出的 source_sha256。字段用简洁中文，保留若干最有证据的独立发现，保证 JSON 完整。\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"window_id\",\n    \"candidates\"\n  ],\n  \"$defs\": {\n    \"dialogueProof\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"window_id\"\n      ],\n      \"properties\": {\n        \"window_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"reason\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"evidence_id\": {\n          \"type\": \"string\",\n          \"pattern\": \"^window-\\\\d{4}-e\\\\d{4}$\"\n        },\n        \"end_evidence_id\": {\n          \"type\": \"string\",\n          \"pattern\": \"^window-\\\\d{4}-e\\\\d{4}$\"\n        },\n        \"source_start\": {\n          \"type\": \"integer\",\n          \"minimum\": 0\n        },\n        \"source_end\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        },\n        \"excerpt\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      },\n      \"dependentRequired\": {\n        \"end_evidence_id\": [\n          \"evidence_id\"\n        ]\n      },\n      \"anyOf\": [\n        {\n          \"required\": [\n            \"evidence_id\"\n          ]\n        },\n        {\n          \"required\": [\n            \"excerpt\"\n          ]\n        }\n      ]\n    }\n  },\n  \"properties\": {\n    \"window_id\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"source_sha256\": {\n      \"type\": \"string\",\n      \"pattern\": \"^[a-f0-9]{64}$\"\n    },\n    \"candidates\": {\n      \"type\": \"array\",\n      \"maxItems\": 12,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"mechanism\",\n          \"transfer_guidance\",\n          \"constraints\",\n          \"confidence\",\n          \"evidence\"\n        ],\n        \"anyOf\": [\n          {\n            \"required\": [\n              \"dimension\"\n            ]\n          },\n          {\n            \"required\": [\n              \"scopes\"\n            ]\n          }\n        ],\n        \"if\": {\n          \"required\": [\n            \"export_layout\"\n          ]\n        },\n        \"then\": {\n          \"required\": [\n            \"dimension\"\n          ],\n          \"properties\": {\n            \"dimension\": {\n              \"const\": \"layout\"\n            }\n          }\n        },\n        \"properties\": {\n          \"mechanism\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"transfer_guidance\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"constraints\": {\n            \"type\": \"array\",\n            \"maxItems\": 16,\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            }\n          },\n          \"scopes\": {\n            \"type\": \"array\",\n            \"maxItems\": 16,\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            }\n          },\n          \"dimension\": {\n            \"enum\": [\n              \"structure\",\n              \"voice\",\n              \"topic\",\n              \"case\",\n              \"pacing\",\n              \"layout\",\n              \"expression\"\n            ]\n          },\n          \"layer\": {\n            \"enum\": [\n              \"language\",\n              \"structure\",\n              \"narrative_lens\",\n              \"dialogue\",\n              \"imagery\",\n              \"theme\",\n              \"character\"\n            ]\n          },\n          \"export_layout\": {\n            \"enum\": [\n              \"preserve\",\n              \"short_body_only\"\n            ]\n          },\n          \"confidence\": {\n            \"enum\": [\n              \"high\",\n              \"medium\",\n              \"low\"\n            ]\n          },\n          \"evidence\": {\n            \"type\": \"array\",\n            \"minItems\": 1,\n            \"maxItems\": 8,\n            \"items\": {\n              \"type\": \"object\",\n              \"required\": [\n                \"window_id\",\n                \"reason\"\n              ],\n              \"properties\": {\n                \"window_id\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                \"reason\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                },\n                \"evidence_id\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^window-\\\\d{4}-e\\\\d{4}$\"\n                },\n                \"end_evidence_id\": {\n                  \"type\": \"string\",\n                  \"pattern\": \"^window-\\\\d{4}-e\\\\d{4}$\"\n                },\n                \"source_start\": {\n                  \"type\": \"integer\",\n                  \"minimum\": 0\n                },\n                \"source_end\": {\n                  \"type\": \"integer\",\n                  \"minimum\": 1\n                },\n                \"excerpt\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              \"dependentRequired\": {\n                \"end_evidence_id\": [\n                  \"evidence_id\"\n                ]\n              },\n              \"anyOf\": [\n                {\n                  \"required\": [\n                    \"evidence_id\"\n                  ]\n                },\n                {\n                  \"required\": [\n                    \"excerpt\"\n                  ]\n                }\n              ]\n            }\n          },\n          \"source_pov\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 4,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"target_pov\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 4,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"pov_compatibility\": {\n            \"enum\": [\n              \"direct\",\n              \"adaptable\",\n              \"risky\"\n            ]\n          },\n          \"adaptation_guidance\": {\n            \"type\": \"string\",\n            \"maxLength\": 800\n          },\n          \"risk_flags\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 8,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"application_scope\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 5,\n                \"items\": {\n                  \"type\": \"string\",\n                  \"minLength\": 1\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"dialogue_samples\": {\n            \"anyOf\": [\n              {\n                \"type\": \"array\",\n                \"maxItems\": 3,\n                \"items\": {\n                  \"type\": \"object\",\n                  \"required\": [\n                    \"scene_type\",\n                    \"relationship\",\n                    \"turns\",\n                    \"transferable_moves\",\n                    \"limits\"\n                  ],\n                  \"properties\": {\n                    \"scene_type\": {\n                      \"type\": \"string\",\n                      \"minLength\": 1\n                    },\n                    \"relationship\": {\n                      \"type\": \"string\",\n                      \"minLength\": 1\n                    },\n                    \"relationship_evidence\": {\n                      \"$ref\": \"#/$defs/dialogueProof\"\n                    },\n                    \"turns\": {\n                      \"type\": \"array\",\n                      \"minItems\": 2,\n                      \"maxItems\": 8,\n                      \"items\": {\n                        \"type\": \"object\",\n                        \"required\": [\n                          \"speaker\",\n                          \"text\",\n                          \"intent\",\n                          \"evidence\"\n                        ],\n                        \"properties\": {\n                          \"speaker\": {\n                            \"type\": \"string\",\n                            \"minLength\": 1\n                          },\n                          \"text\": {\n                            \"type\": \"string\",\n                            \"minLength\": 1\n                          },\n                          \"intent\": {\n                            \"type\": \"string\",\n                            \"minLength\": 1\n                          },\n                          \"evidence\": {\n                            \"$ref\": \"#/$defs/dialogueProof\"\n                          },\n                          \"trigger\": {\n                            \"type\": \"string\",\n                            \"minLength\": 1\n                          },\n                          \"trigger_evidence\": {\n                            \"$ref\": \"#/$defs/dialogueProof\"\n                          },\n                          \"reaction\": {\n                            \"type\": \"string\",\n                            \"minLength\": 1\n                          },\n                          \"reaction_evidence\": {\n                            \"$ref\": \"#/$defs/dialogueProof\"\n                          },\n                          \"attribution\": {\n                            \"enum\": [\n                              \"observed\",\n                              \"tentative\"\n                            ]\n                          },\n                          \"attribution_evidence\": {\n                            \"$ref\": \"#/$defs/dialogueProof\"\n                          }\n                        },\n                        \"dependentRequired\": {\n                          \"trigger\": [\n                            \"trigger_evidence\"\n                          ],\n                          \"trigger_evidence\": [\n                            \"trigger\"\n                          ],\n                          \"reaction\": [\n                            \"reaction_evidence\"\n                          ],\n                          \"reaction_evidence\": [\n                            \"reaction\"\n                          ],\n                          \"attribution_evidence\": [\n                            \"attribution\"\n                          ]\n                        },\n                        \"if\": {\n                          \"required\": [\n                            \"attribution\"\n                          ],\n                          \"properties\": {\n                            \"attribution\": {\n                              \"const\": \"observed\"\n                            }\n                          }\n                        },\n                        \"then\": {\n                          \"required\": [\n                            \"attribution_evidence\"\n                          ]\n                        }\n                      }\n                    },\n                    \"transferable_moves\": {\n                      \"type\": \"array\",\n                      \"maxItems\": 6,\n                      \"items\": {\n                        \"type\": \"string\",\n                        \"minLength\": 1\n                      },\n                      \"minItems\": 1\n                    },\n                    \"limits\": {\n                      \"type\": \"array\",\n                      \"maxItems\": 6,\n                      \"items\": {\n                        \"type\": \"string\",\n                        \"minLength\": 1\n                      },\n                      \"minItems\": 1\n                    }\n                  }\n                }\n              },\n              {\n                \"type\": \"null\"\n              }\n            ]\n          },\n          \"reading_objectives\": {\n            \"type\": \"array\",\n            \"maxItems\": 8,\n            \"items\": {\n              \"type\": \"object\"\n            }\n          }\n        }\n      }\n    },\n    \"style_observations\": {\n      \"type\": \"array\",\n      \"maxItems\": 12,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"layer\",\n          \"rule\",\n          \"transfer_guidance\",\n          \"limits\",\n          \"confidence\",\n          \"evidence\"\n        ],\n        \"properties\": {\n          \"limits\": {\n            \"type\": \"array\",\n            \"maxItems\": 16,\n            \"items\": {\n              \"type\": \"string\",\n              \"minLength\": 1\n            }\n          },\n          \"layer\": {\n            \"enum\": [\n              \"language\",\n              \"structure\",\n              \"narrative_lens\",\n              \"dialogue\",\n              \"imagery\",\n              \"theme\",\n              \"character\"\n            ]\n          }\n        }\n      }\n    },\n    \"conflict_patterns\": {\n      \"type\": \"array\",\n      \"maxItems\": 8,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"application_scope\"\n        ],\n        \"properties\": {\n          \"application_scope\": {\n            \"enum\": [\n              \"short_full\",\n              \"serial_opening\",\n              \"serial_chapter\",\n              \"serial_arc\",\n              \"general\"\n            ]\n          }\n        }\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n只返回 JSON 对象，不用 Markdown 围栏。",
       "position": {
         "x": 520,
         "y": 150
@@ -65,6 +65,61 @@
             "window_id",
             "candidates"
           ],
+          "$defs": {
+            "dialogueProof": {
+              "type": "object",
+              "required": [
+                "window_id"
+              ],
+              "properties": {
+                "window_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "pattern": "^window-\\d{4}-e\\d{4}$"
+                },
+                "end_evidence_id": {
+                  "type": "string",
+                  "pattern": "^window-\\d{4}-e\\d{4}$"
+                },
+                "source_start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "source_end": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "excerpt": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "dependentRequired": {
+                "end_evidence_id": [
+                  "evidence_id"
+                ]
+              },
+              "anyOf": [
+                {
+                  "required": [
+                    "evidence_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "excerpt"
+                  ]
+                }
+              ]
+            }
+          },
           "properties": {
             "window_id": {
               "type": "string",
@@ -83,10 +138,36 @@
                   "mechanism",
                   "transfer_guidance",
                   "constraints",
-                  "scopes",
                   "confidence",
                   "evidence"
                 ],
+                "anyOf": [
+                  {
+                    "required": [
+                      "dimension"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "scopes"
+                    ]
+                  }
+                ],
+                "if": {
+                  "required": [
+                    "export_layout"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "dimension"
+                  ],
+                  "properties": {
+                    "dimension": {
+                      "const": "layout"
+                    }
+                  }
+                },
                 "properties": {
                   "mechanism": {
                     "type": "string",
@@ -111,6 +192,34 @@
                       "type": "string",
                       "minLength": 1
                     }
+                  },
+                  "dimension": {
+                    "enum": [
+                      "structure",
+                      "voice",
+                      "topic",
+                      "case",
+                      "pacing",
+                      "layout",
+                      "expression"
+                    ]
+                  },
+                  "layer": {
+                    "enum": [
+                      "language",
+                      "structure",
+                      "narrative_lens",
+                      "dialogue",
+                      "imagery",
+                      "theme",
+                      "character"
+                    ]
+                  },
+                  "export_layout": {
+                    "enum": [
+                      "preserve",
+                      "short_body_only"
+                    ]
                   },
                   "confidence": {
                     "enum": [
@@ -142,6 +251,10 @@
                           "type": "string",
                           "pattern": "^window-\\d{4}-e\\d{4}$"
                         },
+                        "end_evidence_id": {
+                          "type": "string",
+                          "pattern": "^window-\\d{4}-e\\d{4}$"
+                        },
                         "source_start": {
                           "type": "integer",
                           "minimum": 0
@@ -155,6 +268,11 @@
                           "minLength": 1
                         }
                       },
+                      "dependentRequired": {
+                        "end_evidence_id": [
+                          "evidence_id"
+                        ]
+                      },
                       "anyOf": [
                         {
                           "required": [
@@ -163,8 +281,6 @@
                         },
                         {
                           "required": [
-                            "source_start",
-                            "source_end",
                             "excerpt"
                           ]
                         }
@@ -201,6 +317,17 @@
                       }
                     ]
                   },
+                  "pov_compatibility": {
+                    "enum": [
+                      "direct",
+                      "adaptable",
+                      "risky"
+                    ]
+                  },
+                  "adaptation_guidance": {
+                    "type": "string",
+                    "maxLength": 800
+                  },
                   "risk_flags": {
                     "anyOf": [
                       {
@@ -231,6 +358,144 @@
                       }
                     ]
                   },
+                  "dialogue_samples": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "maxItems": 3,
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "scene_type",
+                            "relationship",
+                            "turns",
+                            "transferable_moves",
+                            "limits"
+                          ],
+                          "properties": {
+                            "scene_type": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "relationship": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "relationship_evidence": {
+                              "$ref": "#/$defs/dialogueProof"
+                            },
+                            "turns": {
+                              "type": "array",
+                              "minItems": 2,
+                              "maxItems": 8,
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "speaker",
+                                  "text",
+                                  "intent",
+                                  "evidence"
+                                ],
+                                "properties": {
+                                  "speaker": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "intent": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "evidence": {
+                                    "$ref": "#/$defs/dialogueProof"
+                                  },
+                                  "trigger": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "trigger_evidence": {
+                                    "$ref": "#/$defs/dialogueProof"
+                                  },
+                                  "reaction": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "reaction_evidence": {
+                                    "$ref": "#/$defs/dialogueProof"
+                                  },
+                                  "attribution": {
+                                    "enum": [
+                                      "observed",
+                                      "tentative"
+                                    ]
+                                  },
+                                  "attribution_evidence": {
+                                    "$ref": "#/$defs/dialogueProof"
+                                  }
+                                },
+                                "dependentRequired": {
+                                  "trigger": [
+                                    "trigger_evidence"
+                                  ],
+                                  "trigger_evidence": [
+                                    "trigger"
+                                  ],
+                                  "reaction": [
+                                    "reaction_evidence"
+                                  ],
+                                  "reaction_evidence": [
+                                    "reaction"
+                                  ],
+                                  "attribution_evidence": [
+                                    "attribution"
+                                  ]
+                                },
+                                "if": {
+                                  "required": [
+                                    "attribution"
+                                  ],
+                                  "properties": {
+                                    "attribution": {
+                                      "const": "observed"
+                                    }
+                                  }
+                                },
+                                "then": {
+                                  "required": [
+                                    "attribution_evidence"
+                                  ]
+                                }
+                              }
+                            },
+                            "transferable_moves": {
+                              "type": "array",
+                              "maxItems": 6,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "minItems": 1
+                            },
+                            "limits": {
+                              "type": "array",
+                              "maxItems": 6,
+                              "items": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "minItems": 1
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "reading_objectives": {
                     "type": "array",
                     "maxItems": 8,
@@ -245,14 +510,57 @@
               "type": "array",
               "maxItems": 12,
               "items": {
-                "type": "object"
+                "type": "object",
+                "required": [
+                  "layer",
+                  "rule",
+                  "transfer_guidance",
+                  "limits",
+                  "confidence",
+                  "evidence"
+                ],
+                "properties": {
+                  "limits": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "layer": {
+                    "enum": [
+                      "language",
+                      "structure",
+                      "narrative_lens",
+                      "dialogue",
+                      "imagery",
+                      "theme",
+                      "character"
+                    ]
+                  }
+                }
               }
             },
             "conflict_patterns": {
               "type": "array",
               "maxItems": 8,
               "items": {
-                "type": "object"
+                "type": "object",
+                "required": [
+                  "application_scope"
+                ],
+                "properties": {
+                  "application_scope": {
+                    "enum": [
+                      "short_full",
+                      "serial_opening",
+                      "serial_chapter",
+                      "serial_arc",
+                      "general"
+                    ]
+                  }
+                }
               }
             }
           }
@@ -339,7 +647,7 @@
       "node_type": "agent",
       "agent_type": "xs2-reference-distiller",
       "system_prompt_template": "",
-      "first_message": "执行 writing-dna-skill 的最终汇总。必须实际读取以下上游指令、中文模板和证据校验后的分析包。\n\n【指令和小说适配】\n{{dna_instructions_file}}\n\n【上游中文模板】\n{{dna_templates_file}}\n\n【校验后的分析包】\n{{dna_bundle_file}}\n\n只返回纯JSON：{\"source_sha256\":\"分析包来源哈希\",\"documents\":{\"语言DNA.md\":\"Markdown全文\",\"文章结构模板.md\":\"Markdown全文\",\"写作视角与认知框架.md\":\"Markdown全文\",\"视觉风格指南.md\":\"Markdown全文\",\"Writing-DNA.md\":\"Markdown全文\",\"人物写法.md\":\"小说扩展的Markdown全文\"}}。每份40～16000字符，以中文写清可执行规则、已校验窗口依据、置信度和样本边界，不留待填写。统计数字严格取分析包，不把高频字串伪称词性词频。结构分析区分短篇全文与长篇开局/章节；单一作品不能代表作者全部作品；未见环节保留未知。纯文本未提供图片或网页样式，视觉文档明确无法判断，只记录可观察的段落组织。角色认知不等同作者信念。不得新增无证据的冲突链或具体剧情，不能自动采用或改本书风格。Writing-DNA.md 应整合语言、结构、视角、对话、主题呈现、篇幅迁移和局限，附采用前需要检查的冲突项。\n人物写法.md 是本项目小说扩展，上游五份文档保持原名。根据已校验的 character 观察、对话及认知观察分析人物欲望、内在矛盾、情绪行动、独立目标、声线与关系选择的写法；逐项写依据、迁移建议、风险和未知。不能仅列原作人物履历。没有相关证据时明确暂无法判断，勿虚构。\n汇总输出长度约束：六份文档每份约300～800中文字，合计不超过6000中文字。使用简洁Markdown标题和段落，不重复原文与完整候选表，JSON不要缩进，必须完整闭合。\n人物写法.md须结合分析包dialogue_samples的前后语境说明：谁对谁说、关系压力、前一句如何引出后一句、适用场合与不确定性。只提炼方法，不把原作完整台词写成通用正文模板。无样本时明确语境不足。",
+      "first_message": "执行 writing-dna-skill 的最终汇总。必须实际读取以下上游指令、中文模板和证据校验后的分析包。\n\n【指令和小说适配】\n{{dna_instructions_file}}\n\n【上游中文模板】\n{{dna_templates_file}}\n\n【校验后的分析包】\n{{dna_bundle_file}}\n\n只返回纯JSON：{\"source_sha256\":\"分析包来源哈希\",\"documents\":{\"语言DNA.md\":\"Markdown全文\",\"文章结构模板.md\":\"Markdown全文\",\"写作视角与认知框架.md\":\"Markdown全文\",\"视觉风格指南.md\":\"Markdown全文\",\"Writing-DNA.md\":\"Markdown全文\",\"人物写法.md\":\"小说扩展的Markdown全文\"}}。每份40～16000字符，以中文写清可执行规则、已校验窗口依据、置信度和样本边界，不留待填写。统计数字严格取分析包，不把高频字串伪称词性词频。结构分析区分短篇全文与长篇开局/章节；单一作品不能代表作者全部作品；未见环节保留未知。纯文本未提供图片或网页样式，视觉文档明确无法判断，只记录可观察的段落组织。角色认知不等同作者信念。不得新增无证据的冲突链或具体剧情，不能自动采用或改本书风格。Writing-DNA.md 应整合语言、结构、视角、对话、主题呈现、篇幅迁移和局限，附采用前需要检查的冲突项。\n人物写法.md 是本项目小说扩展，上游五份文档保持原名。根据已校验的 character 观察、对话及认知观察分析人物欲望、内在矛盾、情绪行动、独立目标、声线与关系选择的写法；逐项写依据、迁移建议、风险和未知。不能仅列原作人物履历。没有相关证据时明确暂无法判断，勿虚构。\n汇总输出长度约束：六份文档每份约300～800中文字，合计不超过6000中文字。使用简洁Markdown标题和段落，不重复原文与完整候选表，JSON不要缩进，必须完整闭合。\n人物写法.md须结合分析包dialogue_samples的前后语境说明：谁对谁说、关系压力、前一句如何引出后一句、适用场合与不确定性。只提炼方法，不把原作完整台词写成通用正文模板。无样本时明确语境不足。\n按 dimension_examples 的已核验证据归纳结构、语感、选题、案例、节奏、排版和表达；缺少依据可说明范围。对白须区分原文能看到的动作和人物归属推测。若有 trigger 或 reaction，结合所附证据写清回应怎样改变了下一步选择。tentative 的人物归属仅作为待核对解释。",
       "position": {
         "x": 1200,
         "y": 150

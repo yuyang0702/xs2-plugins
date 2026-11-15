@@ -103,9 +103,13 @@ def test_writing_contextual_review_and_revision_share_the_contract_file():
                 model_views={'agent_sc':'revision_source_model','agent_pl':'revision_editor_model','agent_local_review':'revision_review_model',
                     'agent_composition_plan':'composition_request_model','agent_composition_review':'composition_review_model',
                     'agent_guard_facts_repair':'guard_facts_model','agent_guard_facts_audit':'guard_facts_audit_model',
-                    'agent_guard_expression_repair':'guard_expression_model','agent_guard_expression_audit':'guard_expression_audit_model'}
+                    'agent_guard_expression_repair':'guard_expression_model','agent_guard_expression_audit':'guard_expression_audit_model',
+                    'agent_guard_facts_inspect':'guard_facts_audit_model','agent_guard_expression_inspect':'guard_expression_audit_model'}
                 if n['id'] in model_views:
                     assert '{{'+model_views[n['id']]+'}}' in n['first_message'] and 'book_contract' in n['first_message']
+                elif n['id']=='agent_sw':
+                    default=next(v['default'] for v in d['variables'] if v['key']=='single_writer_context')
+                    assert '{{single_writer_context}}' in n['first_message'] and '{{book_contract_file}}' in default
                 else:assert '{{book_contract_file}}' in n['first_message'],(stage,n['id'])
 
 
@@ -146,9 +150,14 @@ def test_single_writer_uses_the_same_frozen_plan_and_two_stage_guard(tmp_path,mo
     wf=WorkflowDef.from_dict(raw);calls=[]
     class Trace(BaseNodePlugin):
         async def execute(self,ctx):
-            calls.append(ctx.node_def.id)
-            return NodeResult(status='completed',outputs={'guard_enabled':'yes'} if ctx.node_def.id=='script_guard_prepare' else {})
+            key=ctx.node_def.id;calls.append(key)
+            outputs={'script_guard_prepare':{'guard_enabled':'yes'},
+                     'script_guard_facts_precheck':{'guard_facts_needs_repair':'no'},
+                     'script_guard_expression_precheck':{'guard_expression_needs_repair':'no'}}
+            return NodeResult(status='completed',outputs=outputs.get(key,{}))
     monkeypatch.setitem(registry._plugins,'script',Trace);monkeypatch.setitem(registry._plugins,'agent',Trace)
+    rehearsal_type=next(n['node_type'] for n in raw['nodes'] if n['id']=='rehearse_agent_sw')
+    monkeypatch.setitem(registry._plugins,rehearsal_type,Trace)
     engine=WorkflowEngine(SimpleNamespace(sessions={},main_session_id=''))
     async def no_save(*_):pass
     monkeypatch.setattr(engine,'_save_task_state',no_save);monkeypatch.setattr(engine,'_push_wf_task_update',lambda *_:None)
@@ -159,4 +168,25 @@ def test_single_writer_uses_the_same_frozen_plan_and_two_stage_guard(tmp_path,mo
             disabled_ids=set(),shared_ws=tmp_path,parent_id='test',on_node_started=lambda _:None,needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
     assert asyncio.run(run())=='completed'
     assert 'agent_sw' in calls
-    assert calls.index('agent_nw')<calls.index('agent_sw')<calls.index('agent_guard_facts_repair')<calls.index('agent_guard_expression_repair')
+    assert calls.index('agent_nw')<calls.index('agent_sw')<calls.index('agent_guard_facts_inspect')<calls.index('agent_guard_expression_inspect')
+    assert not {'agent_guard_facts_repair','agent_guard_expression_repair'}.intersection(calls)
+def test_advisor_uses_existing_rank_snapshot_without_work_titles(tmp_path):
+    import importlib.util
+
+    path = PLUGIN/'resources/script-library/xs2/book_context/book_context.py'
+    spec = importlib.util.spec_from_file_location('advisor_rank_snapshot', path)
+    advisor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(advisor)
+    root = tmp_path/'workspaces/books/a-book'
+    root.mkdir(parents=True)
+    snapshot = {
+        'source': 'zhihu-salt', 'captured_at': '2026-11-11T00:00:00Z', 'works': [
+            {'ranking_name': '热度榜', 'platform_work_id': '123', 'category': '言情', 'title': '原作标题'},
+            {'ranking_name': '推荐榜', 'platform_work_id': '123', 'category': '言情'},
+            {'ranking_name': '长篇榜', 'platform_work_id': '456', 'category': '科幻'}]}
+    put(tmp_path, 'workspaces/market/market/zhihu-ranking.json', snapshot)
+    result = advisor.rank_snapshot(root, 'short_full')
+    assert result['sample_count'] == 1
+    assert result['categories'] == {'言情': 1}
+    assert result['captured_at'] == snapshot['captured_at']
+    assert '原作标题' not in str(result)

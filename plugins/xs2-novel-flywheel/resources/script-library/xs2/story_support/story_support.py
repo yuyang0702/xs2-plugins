@@ -201,10 +201,20 @@ def archive_paragraphs(body):
 
 
 def archive_evidence(value,body,paragraphs,error):
+    punctuation = str.maketrans('，！？：；（）“”「」', ',!?:;()""""')
+    folded_body = body.translate(punctuation)
+
     def resolve(quote):
         if isinstance(quote,str) and re.fullmatch(r'@P\d{4,}',quote):
             if quote not in paragraphs:raise ValueError(error+' '+quote)
             return paragraphs[quote]
+        if isinstance(quote, str) and quote.strip() and quote not in body:
+            # Recover a uniquely located typography variant as the actual source.
+            pattern = r'\s+'.join(re.escape(part) for part in quote.strip().translate(punctuation).split())
+            matches = list(re.finditer(pattern, folded_body))
+            if len(matches) == 1:
+                match = matches[0]
+                return body[match.start():match.end()]
         return quote
     converted=[resolve(item) for item in value] if isinstance(value,list) else resolve(value)
     preview=value if isinstance(value,str) else json.dumps(value,ensure_ascii=False)

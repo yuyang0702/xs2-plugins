@@ -9,6 +9,13 @@ from decimal import Decimal
 from fractions import Fraction
 
 HARD=('money','facts','pov','handoff','resources')
+EVENT_STATES=('asked','conditional','committed','acted')
+EVENT_STATE_GUIDANCE=(
+    '逐项按冻结计划目标区分 asked（开口提问或请求）、conditional（有条件的提议或答复）、'
+    'committed（明确无条件承诺）和 acted（实际做了，包括明确的已完成事实转述）。'
+    '看同一人物对同一事项达到了哪一步。同一事项在本场有多步时，各用本步最小完整原文。'
+    '用台词核对开口承诺，用实际交付或付款的描写核对履行。真实履行账只能绑定 acted。'
+)
 _DIGITS=dict(zip('零〇一二两三四五六七八九', [0,0,1,2,2,3,4,5,6,7,8,9]))
 _spec=importlib.util.spec_from_file_location('continuity_audit_evidence',Path(__file__).with_name('audit_evidence.py'))
 audit_evidence=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(audit_evidence)
@@ -229,7 +236,10 @@ def validate_contract(data,sources,scene_count):
         quote=supported(row);aliases=row.get('aliases')
         _require(isinstance(row.get('value'),str) and row['value'].strip() and row['value'] in quote
                  and isinstance(aliases,list) and all(isinstance(a,str) and a.strip() and a in quote for a in aliases)
-                 and type(row.get('required')) is bool,'标准名称或别名没有来源依据')
+                 and type(row.get('required')) is bool,
+                 f"标准名称或别名没有来源依据：facts.{row.get('id')} 的 value={row.get('value')!r}、"
+                 f"aliases={aliases!r} 必须逐字包含在同一条 source_quote={quote!r} 里。"
+                 '请换成同时包含称名的原文；别称无依据时用 aliases:[]，不要只引称名后的描述。')
         _require(row.get('match_mode','name') in ('name','referent'),'共享事实须声明称名或同物指代核验方式')
     units=data.get('units');_require(isinstance(units,dict) and all(isinstance(k,str) and k.strip() and type(v) is int and v>0 for k,v in units.items()),'单位比例须为正整数')
     equations=data.get('unit_equations');_require(isinstance(equations,list),'缺少换算依据')
@@ -253,6 +263,8 @@ def validate_contract(data,sources,scene_count):
     events=_rows(data.get('events'),'履行事件')
     for key,row in events.items():
         supported(row)
+        _require('expected_state' not in row or row['expected_state'] in EVENT_STATES,
+                 f'事件 {key} 的 expected_state 无效')
         _require(type(row.get('scene')) is int and 1<=row['scene']<=scene_count and isinstance(row.get('description'),str) and row['description'].strip(),'事件场次或说明无效')
         deps=row.get('after');_require(isinstance(deps,list) and len(deps)==len(set(deps)) and all(d in events and d!=key and events[d]['scene']<=row['scene'] for d in deps),'事件依赖或场次先后无效')
     visited=set()
@@ -280,6 +292,7 @@ def validate_contract(data,sources,scene_count):
         _require(balances[row['account']]>=0 and balances[row['account']]==row['balance'],'钱款余款不闭合或发生无来源支出')
         event=events.get(row.get('event_id'))
         _require(event is not None and event['scene']==scene,'钱款须绑定本场实际履行事件')
+        _require(event.get('expected_state','acted')=='acted','实际钱款或资源变动须绑定 acted 事件')
     for row in _rows(data.get('resource_ledgers',[]),'分项资源账').values():
         validate_contract(resource_contract(data,row),sources,scene_count)
     return data
@@ -315,13 +328,13 @@ def _report_of_completed_event(body, previous, later):
                                           completed.group('action')))
 
 
-def _narrow_verified_events(event_obs, positions, edges, body, contract, facts_audit):
+def _narrow_verified_events(event_obs, positions, edges, body, contract, facts_audit, narrative_pov):
     """Reuse only exact, previously verified subspans of the current citations."""
     overlapping = [(before, after) for before, after in edges
                    if _overlapping(positions[before], positions[after])]
     if not overlapping or not facts_audit or facts_audit.get('candidate_sha256') != hashlib.sha256(body.encode()).hexdigest():
         return
-    if audit_issues(facts_audit, body, contract, 'facts'):
+    if audit_issues(facts_audit, body, contract, 'facts', narrative_pov=narrative_pov):
         return
     prior = audit_evidence.resolve_report(facts_audit, body, evidence_unit_names(contract))
     quotes = {row['id']: row['quote'] for row in prior['event_observations'] if row.get('quote') is not None}
@@ -336,14 +349,29 @@ def _narrow_verified_events(event_obs, positions, edges, body, contract, facts_a
                 positions[key] = verified[key]
 
 
-def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None):
+def first_person_narrator(contract, narrative_pov):
+    """Identify a named narrator only when the frozen plan explicitly says so."""
+    if narrative_pov != 'first_person':
+        return None
+    focus = contract['focus'].strip()
+    matches = []
+    for fact in contract['facts']:
+        name = re.escape(fact['value'])
+        if re.match(rf'^(?:以\s*)?{name}\s*(?:的\s*|[（(]\s*)?第一人称', focus) or re.match(
+            rf'^第一人称叙述者\s*[:：]\s*{name}(?=$|[\s，。；（(])', focus
+        ):
+            matches.append(fact['id'])
+    return matches[0] if len(matches) == 1 else None
+
+
+def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None,narrative_pov=None):
     _require(phase in ('facts','expression') and isinstance(report,dict) and report.get('schema')==1,'核验报告格式无效')
     _require(report.get('candidate_sha256')==hashlib.sha256(body.encode()).hexdigest()
              and report.get('contract_sha256')==contract_digest(contract),'核验报告与当前候选或事实契约不匹配')
     report=audit_evidence.resolve_report(report,body,evidence_unit_names(contract))
     categories=HARD+(('repetition',) if phase=='expression' else ())
     required=[k for k in categories if k!='resources' or contract.get('resource_ledgers')]
-    if phase=='expression':categories+=('convenient_dialogue',)
+    if phase=='expression':categories+=tuple(expression_rules.GUARD_ISSUE_DIMENSIONS)
     _require(isinstance(report.get('checks'),dict) and all(report['checks'].get(k) is True for k in required),'核验报告未检查全部必需维度')
     semantic=report.get('issues');_require(isinstance(semantic,list),'语义问题须明确提供数组')
     for row in semantic:
@@ -369,11 +397,24 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None):
         return actual
     events=_rows(contract['events'],'事件');event_obs=observations('event_observations',events);positions={}
     for key,obs in event_obs.items():
-        if obs.get('quote') is None:issue('handoff','缺少约定履行事件 '+key,[])
-        else:positions[key]=located(obs['quote'],body)
+        expected=events[key].get('expected_state')
+        observed,quote=obs.get('observed_state'),obs.get('quote')
+        if expected is not None:
+            _require('observed_state' in obs,f'事件 {key} 须核对 observed_state')
+        if 'observed_state' in obs:
+            _require(observed is None or observed in EVENT_STATES,f'事件 {key} 的 observed_state 无效')
+            _require((observed is None)==(quote is None),f'事件 {key} 的实际状态须有当前正文引文，只有未出现时两项同为 null')
+        if quote is None:
+            issue('handoff',f'缺少约定事件 {key}'+(f'（{expected}）' if expected else ''),[])
+            continue
+        position=located(quote,body)
+        if expected is not None and observed!=expected:
+            issue('handoff',f'事件 {key} 的约定状态是 {expected}，正文实际状态是 {observed}',[quote['text']])
+            continue
+        positions[key]=position
     edges = [(dep, key) for key, row in events.items() for dep in row['after'] if key in positions and dep in positions]
     if phase == 'expression':
-        _narrow_verified_events(event_obs, positions, edges, body, contract, facts_audit)
+        _narrow_verified_events(event_obs, positions, edges, body, contract, facts_audit, narrative_pov)
     for dep, key in edges:
         if _report_of_completed_event(body, positions[dep], positions[key]):
             continue
@@ -443,9 +484,17 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None):
         if observed!=transfers[obs['after']]['balance']:
             issue('money','正文余额与已履行的钱款不闭合',[obs['quote']['text']])
     facts=_rows(contract['facts'],'事实');facts_obs=observations('fact_observations',facts)
+    narrator = first_person_narrator(contract, narrative_pov)
     for key,row in facts.items():
         occurrences=facts_obs[key].get('occurrences');_require(isinstance(occurrences,list),'事实观察须为数组')
-        if row['required'] and not occurrences:issue('facts','缺少约定共享事实 '+key,[])
+        if row['required'] and not occurrences:
+            if key != narrator:
+                issue('facts','缺少约定共享事实 '+key,[])
+            elif not any(item['category'] == 'pov' or
+                         (item['category'] == 'facts' and key in item['reason']) for item in semantic):
+                raise ValueError('第一人称叙述者 '+key+' 缺少指代证据。请引用实际叙述者的当前原文，'
+                                 '用实际代词及同一所指作证；缺少专名不算身份缺失。'
+                                 '若叙述者确实不一致，用带原文的 pov 或 facts 问题说明。')
         observed_same = any(isinstance(obs, dict) and obs.get('same_referent') is True for obs in occurrences)
         for obs in occurrences:
             located(obs.get('quote'),body);value=obs.get('value');_require(isinstance(value,str) and value.strip() and value in obs['quote']['text'],'标准值不能冒充实际引文中的名称')

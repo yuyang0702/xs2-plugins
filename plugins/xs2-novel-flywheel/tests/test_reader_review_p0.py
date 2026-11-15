@@ -37,7 +37,10 @@ def blind():
         'decisions': [{'id': 'd1', 'actor': '陆', 'choice': '同意分付',
                        'known_before': '买方可以直接付陆', 'leverage': '没有写出拒绝损失',
                        'alternatives': '拒绝分付', 'consequence': '同意分付',
-                       'assessment': 'gap', 'excerpts': ['买方说不同意就付给陆。', '陆同意分付。']}], 'expression_checks': expression_checks()}
+                       'assessment': 'gap', 'excerpts': ['买方说不同意就付给陆。', '陆同意分付。'],
+                       'causal_evidence': {'order': 'continuous',
+                           'knowledge': {'text': '买方说不同意就付给陆。', 'occurrence': 1},
+                           'reaction': {'text': '陆同意分付。', 'occurrence': 1}}}], 'expression_checks': expression_checks()}
 
 
 def expression_checks():
@@ -96,6 +99,20 @@ def test_causal_gaps_cannot_disappear_into_a_pass_or_empty_issue_list():
     r = review(); data = blind(); data.update(verdict='pass', issues=[])
     with pytest.raises(ValueError, match='因果|问题'):
         r.validate_blind(data, BODY)
+
+
+def test_continuous_scene_cannot_use_later_dialogue_as_previous_knowledge():
+    body = '“退潮。你先走。”\n\n“我这边井水在涨。”'
+    old = blind()['decisions'][0]
+    decision = {**old, 'actor': '老唐', 'choice': '催林荷走', 'known_before': '井水上涨',
+                'assessment': 'supported', 'excerpts': ['你先走。', '我这边井水在涨。'],
+                'causal_evidence': {'order': 'continuous',
+                                    'knowledge': {'text': '我这边井水在涨。', 'occurrence': 1},
+                                    'reaction': {'text': '你先走。', 'occurrence': 1}}}
+    report = {'verdict': 'pass', 'summary': '现场因果成立', 'issues': [], 'decisions': [decision]}
+    with pytest.raises(ValueError, match='知情顺序'):
+        review().validate_blind(report, body)
+    assert review().validate_blind(report, '“我这边井水在涨。”\n\n“你先走。”')['verdict']=='pass'
 
 
 def test_quiet_scene_can_pass_without_manufactured_decisions():

@@ -11,53 +11,59 @@ from test_local_revision import setup,patch,approved
 def planned(root):
     adopt(root)
     put(root,'.novel-project.json',{'mode':'short','values':{'chapter_number':'0001','target_word_count':'100-200'}})
-    m=composition();r=m.prepare(root,'0001','reading-plan','100-200')
+    m=composition();r=m.prepare(root,'0001','reading-plan','100-200',ownership='author')
     assert r['enabled']
     p={'request_digest':r['request_digest'],'status':'ready','reason':'安静的开篇也可承载期待。','minimum':100,'maximum':200,
        'segments':[{'id':'s1','purpose':'形成期待','development':'观察与选择','minimum':100,'maximum':200}]}
     return m,r,p
 
 
-def test_adopted_goals_enable_existing_planner_and_require_coverage(tmp_path):
+def test_reference_alone_does_not_enable_length_planner(tmp_path):
+    adopt(tmp_path)
+    assert composition().prepare(tmp_path,'0001','reading-plan','100-200')=={'enabled':False}
+
+
+def test_independently_enabled_planner_can_skip_reference_goals(tmp_path):
     m,r,p=planned(tmp_path)
     assert r['author_range']==[100,200]
-    with pytest.raises(ValueError,match='阅读目标'):m.validate_plan(r,p)
+    m.validate_plan(r,p)
     goal=r['book_contract']['reading_contract']['objectives'][0]
     p['goal_plans']=[{'goal_id':goal['id'],'status':'planned','segment_ids':['s1'],'reader_start':'有一个疑问',
         'reader_end':'新的理解','basis':'当前本书允许安静开篇，以选择承载变化。'}]
     m.validate_plan(r,p)
     v={'request_digest':r['request_digest'],'plan_digest':m.identity(p),'verdict':'approve','scope_preserved':True,
        'length_feasible':True,'reason':'作者范围不变。','checks':[{'segment_id':'s1','develops_function':True,'style_basis':'安静开篇','reason':'产生期待'}]}
-    with pytest.raises(ValueError,match='阅读目标'):m.accept(tmp_path,'reading-plan',p,v)
-    v['goal_checks']=[{'goal_id':goal['id'],'supported':True,'reason':'有具体规划','style_basis':'本书开篇允许安静'}]
+    m.accept(tmp_path,'reading-plan',p,v)
+    v['goal_checks']=[{'goal_id':goal['id'],'supported':False,'reason':'本场可略过范文做法','style_basis':'本书开篇允许安静'}]
     m.accept(tmp_path,'reading-plan',p,v)
     assert m.current(tmp_path,'0001')['plan']['goal_plans']==p['goal_plans']
     from test_reading_contract import definition
     d=definition();d['intent']='改用其他阅读目的。';adopt(tmp_path,[d])
-    with pytest.raises(ValueError,match='阅读目标'):m.current(tmp_path,'0001')
+    current=m.current(tmp_path,'0001')
+    assert current['minimum']==100 and 'goal_plans' not in current['plan']
 
 
-def test_contextual_and_blind_reading_checks_block_independently():
+def test_blind_reading_reference_does_not_block():
     m=reader();contract={'objectives':[{'id':'r1','dimension':'opening_promise','intent':'阅读期待'}]}
     base={'verdict':'pass','summary':'安静。','issues':[],'decisions':[]}
-    with pytest.raises(ValueError,match='阅读目标'):m.validate_blind(base,'风停了。',contract)
+    assert m.validate_blind(base,'风停了。',contract)==base
     base['reading_checks']=checks(contract,'revise')
     result=m.validate_blind(base,'风停了。',contract)
-    assert result['verdict']=='revise' and result['issues'][0]['source']=='reading_contract'
+    assert result['verdict']=='pass' and result['issues'][0]['source']=='reading_contract'
     assert m.validate_blind(result,'风停了。',contract)==result
 
 
-def test_local_review_cannot_pass_selected_goals_by_omitting_them(tmp_path):
+def test_local_review_can_pass_without_applying_selected_reference(tmp_path):
     adopt(tmp_path);m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
     report=json.loads(approved(m,out,tmp_path))
     context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf8'))
-    with pytest.raises(ValueError,match='阅读目标'):m.review_decision(report,context)
+    assert m.review_decision(report,context)==[]
     report['reading_checks']=checks(context['book_contract']['reading_contract'],'revise')
     report['reading_checks'][0]['excerpts']=['第一段保留。']
-    assert m.review_decision(report,context)
+    assert m.review_decision(report,context)==[]
 
 
-def test_blind_goal_failure_survives_contextual_pass_and_reread():
+def test_blind_reference_comment_remains_advisory_on_contextual_reread():
     from test_reader_review_p0 import final
     m=reader();contract={'objectives':[{'id':'r1','dimension':'opening_promise','intent':'阅读期待'}]}
     body='风停了。'
@@ -71,7 +77,7 @@ def test_blind_goal_failure_survives_contextual_pass_and_reread():
     contextual.pop('expression_checks',None)
     contextual['reading_checks']=checks(contract,'pass')
     merged=m.merge_review(contextual,blind,body,contract)
-    assert merged['verdict']=='revise' and merged['issues'][0]['source']=='blind_review'
+    assert merged['verdict']=='pass' and merged['issues'][0]['source']=='blind_review'
     assert m.gate_review(merged,body)==merged
 
 
@@ -87,17 +93,31 @@ def test_workflow_exposes_safe_focus_and_all_gate_schemas():
     for name,ids in [('polish',['agent_local_review']),('reader-sim',['agent_blind_reader','agent_reader','agent_context_reader']),('mvp',['agent_guard_expression_audit'])]:
         wf=json.loads((PLUGIN/f'resources/workflows/{name}/definition.json').read_text(encoding='utf8'))
         for id in ids:
-            schema=next(n for n in wf['nodes'] if n['id']==id)['node_params']['json_output_schema']
+            node=next(n for n in wf['nodes'] if n['id']==id)
+            schema=node['node_params']['json_output_schema']
             assert all('reading_checks' in arm['properties'] for arm in schema.get('anyOf',[schema]))
+            assert 'reading_checks 可省略' in node['first_message']
 
 
-def test_custom_goal_stays_private_but_contextual_acceptance_is_required():
+def test_custom_goal_stays_private_and_contextual_comment_is_optional():
     m=reader();contract={'objectives':[{'id':'r1','dimension':'custom','intent':'私有答案不会告知盲读。'}]}
     public=m.book_contract.reading().public(contract)
     assert public['objectives']==[]
     base={'verdict':'pass','summary':'风停了。','issues':[],'decisions':[]}
     m.validate_blind(base,'风停了。',public)
-    with pytest.raises(ValueError,match='阅读目标'):m.book_contract.reading().validate_checks(base,'风停了。',contract)
+    assert m.book_contract.reading().validate_checks(base,'风停了。',contract)==[]
+
+
+def test_saved_reference_only_rejection_no_longer_blocks_but_fact_issue_does():
+    m=reader();contract={'objectives':[{'id':'r1','dimension':'opening_promise','intent':'阅读期待'}]}
+    report=m.validate_blind({'verdict':'pass','summary':'安静。','issues':[],'decisions':[],
+        'reading_checks':checks(contract,'revise')},'风停了。',contract)
+    report['issues'][0]['priority']='medium'
+    report['verdict']='revise'
+    assert m.validate_blind(report,'风停了。',contract)['verdict']=='pass'
+    report['issues'].append({'id':'fact-1','kind':'fact','priority':'high','excerpts':['风停了。'],
+        'location':'开头','impact':'与叙事已知天气事实冲突。','goal':'保留天气事实。'})
+    assert m.validate_blind(report,'风停了。',contract)['verdict']=='revise'
 
 
 def test_author_envelope_and_internal_budgets_are_distinct_without_relaxing_either(tmp_path):

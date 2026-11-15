@@ -40,6 +40,20 @@ def test_quota_audit_distinguishes_a_ban_from_an_instruction_rejecting_quotas():
     assert not MECHANICAL.search("写法不是每段必须执行的清单。")
 
 
+def test_scene_opening_guidance_keeps_setup_separate_from_later_progress():
+    targets = {
+        'mvp': ('agent_sw', 'agent_guard_expression_audit'),
+        'polish': ('agent_sc', 'agent_pl', 'agent_local_review'),
+        'reader-sim': ('agent_blind_reader', 'agent_context_reader'),
+    }
+    for workflow, ids in targets.items():
+        definition = json.loads((RESOURCES / f'workflows/{workflow}/definition.json').read_text(encoding='utf-8'))
+        nodes = {node['id']: node for node in definition['nodes']}
+        for identity in ids:
+            message = nodes[identity]['first_message']
+            assert '交锋开场' in message and '后半段' in message and '自报姓名' in message, (workflow, identity)
+
+
 @pytest.fixture
 def prompt_manager(tmp_path):
     from src.prompts.manager import PromptManager
@@ -89,6 +103,26 @@ def test_runtime_roles_receive_attention_and_detail_selection_guidance(prompt_ma
     assert '读者能从动作或对白推知' in prompt
     assert '先遮住精确值再读' in prompt
     assert '第一次出现也要核对' in prompt
+
+
+@pytest.mark.parametrize('agent', (
+    'novel-single-writer', 'novel-multi-scene-writer', 'xs2-local-revision-critic',
+    'xs2-local-revision-writer', 'xs2-local-revision-reviewer', 'xs2-reader-sim', 'xs2-blind-reader',
+))
+def test_scene_narration_judges_the_sequence_beyond_individually_useful_actions(prompt_manager, agent):
+    prompt = prompt_manager.get_prompt_text(agent)
+    assert '逐步登记动作' in prompt
+    if agent in {'xs2-local-revision-critic', 'xs2-local-revision-reviewer', 'xs2-reader-sim', 'xs2-blind-reader'}:
+        assert '即使中间夹有对白' in prompt and 'action_dilation' in prompt
+
+
+@pytest.mark.parametrize('agent', ('novel-director', 'novel-story-planner', 'novel-outliner',
+                                   'novel-multi-scene-planner', 'novel-multi-scene-writer', 'novel-single-writer',
+                                   'xs2-local-revision-critic', 'xs2-local-revision-writer', 'xs2-local-revision-reviewer'))
+def test_story_causality_is_grounded_in_existing_world_and_character_state(prompt_manager, agent):
+    prompt = prompt_manager.get_prompt_text(agent)
+    assert '主角不在场' in prompt and '已确认' in prompt
+    assert '所知' in prompt and '独立行动' in prompt
 
 
 def test_character_voice_examples_are_not_frequency_or_catchphrase_quotas(prompt_manager):

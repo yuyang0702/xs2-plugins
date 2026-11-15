@@ -4,6 +4,9 @@ import json
 import re
 
 
+PROSE_CONTROL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
+
+
 def digest(text):return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -48,6 +51,58 @@ def exact_evidence(source,quotes):
     return result
 
 
+PRESERVATION_GUIDANCE=(
+    '逐组对读冻结原文和应用全部补丁后的候选稿。先说这组改动改善什么，再核对该组是否伤到已有的接话、'
+    '人物声音、动作因果、有效意象或收束。change_reviews 每项按所属组判断 preservation。'
+    'preserved 或 lost 须用 source_excerpt 逐字引冻结原文中有效的部分，并用 candidate_excerpt 引候选中'
+    '同一作用的位置。完全删失且无承接才可留空。改写或迁移后的同一作用可以保留。'
+    '只有本组没有触及原有有效表达时才填 not_applicable，两个引文字段留空并说明原因。'
+    '一组补丁即使解决了原问题，只要损失已有作用，仍须在 preservation 标 lost。'
+)
+
+
+def _preservation_lost(review, source, candidate):
+    if not isinstance(review,dict):
+        raise ValueError('改动复核缺少有效表达的保留判断')
+    status=review.get('status')
+    before,after,reason=(review.get(key) for key in ('source_excerpt','candidate_excerpt','reason'))
+    if (status not in ('preserved','lost','not_applicable')
+            or not isinstance(reason,str) or not reason.strip()
+            or not isinstance(before,str) or not isinstance(after,str)
+            or (status=='not_applicable' and (before or after))
+            or (status!='not_applicable' and (not before.strip() or before not in source))
+            or (status=='preserved' and not after.strip())
+            or (after and (not after.strip() or after not in candidate))):
+        raise ValueError('改动复核缺少冻稿与当前候选中的有效表达保留依据')
+    return status=='lost'
+
+
+def review_changes(edits, changes, *, source=None, candidate=None):
+    if not isinstance(changes,list) or len(changes)!=len(edits):
+        raise ValueError('每项局部改动都须独立核对净效果')
+    seen=set();issues=[]
+    for row in changes:
+        index=row.get('edit_index') if isinstance(row,dict) else None
+        if type(index) is not int or not 0<=index<len(edits) or index in seen:
+            raise ValueError('改动复核编号缺失或重复')
+        seen.add(index)
+        edit=edits[index]
+        before,after=row.get('before_excerpt'),row.get('after_excerpt')
+        if (row.get('effect') not in ('improved','equivalent','regressed')
+                or not isinstance(row.get('reason'),str) or not row['reason'].strip()
+                or not isinstance(before,str) or not before or before not in edit['old']
+                or not isinstance(after,str)
+                or (edit['replacement'] and (not after or after not in edit['replacement']))
+                or (not edit['replacement'] and after)):
+            raise ValueError('改动净效果缺少原句与替换文本依据')
+        if source is not None and 'preservation' in row and _preservation_lost(row['preservation'],source,candidate):
+            review=row['preservation']
+            issues.append({**row,'reason':review['reason'],'before_excerpt':review['source_excerpt']})
+        elif row['effect']!='improved':
+            issues.append(row)
+    return issues
+
+
 def apply_patches(source,payload,*,protected_phrases=()):
     if not isinstance(payload,dict) or set(payload)!={'source_sha256','edits'} or payload['source_sha256']!=digest(source):
         raise ValueError('局部修订来源哈希不匹配，只能修改当前冻结原文')
@@ -59,10 +114,15 @@ def apply_patches(source,payload,*,protected_phrases=()):
             or set(edit)-{'paragraph_id','old','occurrence','replacement','group_id','independent'}
             or ('group_id' in edit and (not isinstance(edit['group_id'],str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',edit['group_id'])))
             or ('independent' in edit and type(edit['independent']) is not bool)
-            or (edit.get('group_id') and edit.get('independent') is True)
             or edit['paragraph_id'] not in rows or not isinstance(edit['old'],str) or not edit['old'].strip()
             or not isinstance(edit['replacement'],str) or type(edit['occurrence']) is not int or not 1<=edit['occurrence']<=1000):
             raise ValueError(f'edits[{index}]的段落、原句、出现序号或替代文字无效')
+        invalid = PROSE_CONTROL.search(edit['replacement'])
+        if invalid:
+            raise ValueError(f'edits[{index}]替代文字含不可打印控制字符 U+{ord(invalid[0]):04X}。'
+                             '请使用真实标点，例如中文引号；需要换段时使用换行。')
+        if edit.get('group_id') and edit.get('independent') is True:
+            raise ValueError(f'edits[{index}]同时设置了group_id和independent:true。单独生效的改动只写independent:true；依赖其他补丁的改动只写group_id，或把independent设为false。')
         row=rows[edit['paragraph_id']];start=-1
         for _ in range(edit['occurrence']):
             start=row['text'].find(edit['old'],start+1)

@@ -212,6 +212,17 @@ def build_manuscript(output: str, manifest: str, *, mode='book', binding='', tas
         project = _project(root)
         include_lead = _lead_mode(project, mode) == 'include'
         chapters = sorted((root / "story").glob("*/chapter.md"), key=chapter_key)
+        references = _execution_guard().load('export_reference_choices',
+            Path(__file__).resolve().parents[1] / 'reference_distill/reference_choices.py')
+        reference_entry, blueprint = references.active_blueprint(root)
+        selected = set(blueprint.get('selected_candidate_ids', []))
+        layout_rules = [item for item in blueprint.get('mechanisms', [])
+                        if item.get('dimension') == 'layout' and item['candidate_id'] in selected
+                        and 'export' in references.mechanism_scopes(item)]
+        layout = next((item for item in reversed(layout_rules) if item.get('export_layout')), {})
+        body_only = (layout.get('export_layout') == 'short_body_only'
+                     and project.get('mode') == 'short' and len(chapters) == 1)
+        omitted_synthetic_heading = False
         if any(not path.resolve().is_relative_to(root) for path in chapters):
             raise ValueError('章节来源不能离开当前作品工作区')
         if any(path.resolve() in (target,manifest_path) for path in chapters):
@@ -266,11 +277,21 @@ def build_manuscript(output: str, manifest: str, *, mode='book', binding='', tas
             heading = re.sub(r'^#{1,6}\s*', '', first)
             has_title = bool(re.match(r'^第[一二三四五六七八九十百千零〇两0-9]+[章回节卷](?:\s|[·：:、.]|$)', heading))
             if has_title:sections.append(content if first.startswith('#') else '# ' + content)
+            elif body_only:
+                sections.append(content)
+                omitted_synthetic_heading = True
             elif lead and len(chapters) == 1 and project.get('mode') == 'short':sections.append(content)
             else:sections.append(f"# 第{chapter}章\n\n{content}")
             exported.append({"chapter": chapter, "path": path.relative_to(root).as_posix(), "characters": len(content)})
         report = {"generated_at": datetime.now(timezone.utc).isoformat(),
                   "output": target.relative_to(root).as_posix(),"chapter_count": len(exported),"chapters": exported}
+        if layout_rules:
+            report['layout_reference'] = {
+                'blueprint_version': reference_entry.get('version'),
+                'candidate_ids': [item['candidate_id'] for item in layout_rules],
+                'applied_candidate_id': layout['candidate_id'] if omitted_synthetic_heading else None,
+                'preserved_chapter_markdown': True,
+            }
         if proof:report['execution_fence']=proof
         if lead:
             report['opening_lead'] = {'characters': len(lead), 'source_sha256': context['source_sha256']}
@@ -285,6 +306,8 @@ def build_manuscript(output: str, manifest: str, *, mode='book', binding='', tas
                 raise ValueError('导语生成资料已有变化，未发布')
         if _lead_mode(_project(root), mode) != ('include' if include_lead else 'omit'):
             raise ValueError('导语设置已有变化，未发布')
+        if references.active_blueprint(root)[0] != reference_entry or (body_only and _project(root).get('mode') != 'short'):
+            raise ValueError('导出期间排版采用依据已有变化，未发布')
         if (sorted((root/'story').glob('*/chapter.md'),key=chapter_key)!=chapters
                 or any(path.read_bytes()!=raw for path,raw in sources.items())):
             raise ValueError('导出期间章节来源已有变化，未发布')

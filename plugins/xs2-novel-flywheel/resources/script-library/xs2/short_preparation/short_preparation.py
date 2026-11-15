@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import importlib.util
 import json
 import os
@@ -228,7 +229,173 @@ def render_characters(root, data):
                     'cache/character/voice.json': _json({'characters': voice_records})})
 
 
-def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
+@lru_cache(maxsize=None)
+def _library(relative):
+    entry = Path(__file__).resolve().parents[1] / relative
+    spec = importlib.util.spec_from_file_location(f'short_writer_{entry.stem}', entry)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _select_headings(text, omit):
+    """Drop complete Markdown sections, including their descendants."""
+    hidden_level = 7
+    fence = ''
+    kept = []
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line.rstrip('\n'))
+        if marker:
+            token, rest = marker.groups()
+            if not fence:
+                fence = token
+            elif token.startswith(fence) and not rest.strip():
+                fence = ''
+        elif not fence:
+            heading = re.match(r'^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*$', line.rstrip('\n'))
+            if heading and len(heading[1]) <= hidden_level:
+                hidden_level = len(heading[1]) if omit(len(heading[1]), heading[2]) else 7
+        if hidden_level == 7:
+            kept.append(line)
+    return ''.join(kept).strip()
+
+
+def _outline_for_chapter(text, chapter, *, adopted=False):
+    if adopted:
+        text = re.sub(rf'<!-- adopted-plan:{chapter} -->[\s\S]*?<!-- /adopted-plan:{chapter} -->', '', text)
+
+    def other_chapter(_level, title):
+        match = re.match(r'第\s*(\d+)\s*章', title)
+        return match and int(match[1]) != int(chapter)
+
+    return _select_headings(text, other_chapter)
+
+
+def _limit_writer_source(relative, text):
+    if len(text) > 24000:
+        raise ValueError(f'SHORT_CONTEXT_OVERFLOW: {relative} 超出轻量完整上下文范围，请选择完整准备；未截断')
+    return text
+
+
+def _short_reference(text):
+    if not text.lstrip().startswith('# 用户已选写法'):
+        return text
+    text = _select_headings(text, lambda level, title: level == 1 and title == '小说顾问建议')
+    if '本阶段没有已选参考写法' in text and not re.search(r'^##? (?!用户已选写法)', text, re.M):
+        return ''
+    return text
+
+
+def _composition_intent(root, chapter):
+    if not _path(root, f'planning/length/{chapter}.json').is_file():
+        return ''
+    quota = _library('composition_plan/composition_plan.py').current(root, chapter)
+    if not quota:
+        return ''
+    composition = quota['plan']
+    unsupported = {check['goal_id'] for check in quota['review'].get('goal_checks', []) if not check['supported']}
+    segments = {row['id']: {'阅读作用': row['purpose'], '发展': row['development']} for row in composition['segments']}
+    for goal in composition.get('goal_plans', []):
+        if goal['status'] == 'planned' and goal['goal_id'] not in unsupported:
+            progress = {'参考目标': goal['goal_id'], '读者起点': goal['reader_start'], '读者变化': goal['reader_end']}
+            for segment in goal['segment_ids']:
+                segments[segment].setdefault('采用的参考', []).append(progress)
+    return _json(list(segments.values()))
+
+
+def single_writer_brief(root, chapter, effective, task_id, overrides, author):
+    sections = []
+    seen = {re.sub(r'\s+', ' ', str(author.get('human_intent', '')).strip())}
+
+    def include(title, text):
+        text = text.strip()
+        key = re.sub(r'\s+', ' ', text)
+        if key and key not in seen:
+            sections.append(f'## {title}\n\n{text}')
+            seen.add(key)
+
+    for name in dict.fromkeys(overrides):
+        path = _path(root, name)
+        if path.is_file():
+            include(f'作者指定资料 · {name}', _limit_writer_source(name, path.read_text(encoding='utf-8-sig')))
+
+    adopted = _path(root, f'planning/chapters/{chapter}.json')
+    plan = ''
+    if adopted.is_file():
+        story = _library('story_support/story_support.py')
+        data = json.loads(adopted.read_text(encoding='utf-8-sig'))
+        story.verify(root, data['source_hashes'])
+        plan = story.render_plan(data)
+        include('已采用的本章计划', plan)
+    outline = _outline_for_chapter(effective['outline/near_term_outline.md'], chapter, adopted=bool(plan))
+    if plan:
+        outline = outline.replace(plan, '', 1)
+    include('本章大纲', outline)
+    include('已核准的阅读发展', _composition_intent(root, chapter))
+
+    voice = _library('voice_support/voice_support.py')
+    profile = effective['meta/character_profiles.md']
+    names = {voice._name(card['title']) for card in voice._sections(profile)} - {''}
+    scene_scope = '\n'.join([*sections, str(author.get('human_intent', '')), str(author.get('premise', ''))])
+    cast = {name for name in names if name in scene_scope}
+    offstage = names - cast if cast else set()
+
+    def other_character(level, title):
+        name = voice._name(title)
+        return level == 2 and name in offstage
+
+    for name, title in (('meta/current_characters.md', '人物当前状态'),
+                        ('meta/character_profiles.md', '人物事实与行动动机'),
+                        ('meta/character_voice.md', '人物声线'),
+                        ('meta/character_voice_adaptations.md', '本书对白适配')):
+        include(title, _select_headings(effective.get(name, ''), other_character))
+
+    def world_context(text):
+        if not text.lstrip().startswith('# 短篇世界基础'):
+            return text
+
+        def omit(level, title):
+            return level >= 3 and (title in {'叙事规则', '表达限制'} or title.removesuffix('可知') in offstage)
+
+        return _select_headings(text, omit)
+
+    include('当前世界事实', effective.get('meta/current_world.md', ''))
+    include('本章世界条件与所知', world_context(effective.get('meta/world_foundation.md', '')))
+    for name, title in (('meta/conflict_ledger.md', '冲突与伏笔'), ('meta/hooks.md', '已登记的伏笔'),
+                        ('meta/debts.md', '已登记的承诺')):
+        ledger = effective.get(name, '')
+        details = '\n'.join(line.strip() for line in ledger.splitlines() if not line.lstrip().startswith('#')).strip()
+        if details != '（无）':
+            include(title, ledger)
+
+    include('文风', effective.get('meta/style_profile.md', ''))
+    reference = _short_reference(effective.get('learning/context/mvp.md', ''))
+    include('本章已选写法', reference)
+    contract_path = _path(root, f'cache/book-contract/{task_id}/contract.json') if task_id else None
+    if contract_path and contract_path.is_file():
+        contract = json.loads(contract_path.read_text(encoding='utf-8-sig'))
+        fields = ('genre', 'narrator_scope', 'style_intent', 'intentional_devices', 'protected_phrases',
+                  'allow_repeated_passages')
+        scoped = {key: contract[key] for key in fields if contract.get(key)}
+        if scoped.get('style_intent') == effective['meta/style_profile.md'].strip():
+            scoped.pop('style_intent')
+        if '## 范文阅读效果参考' not in reference:
+            goals = [goal for goal in (contract.get('reading_contract') or {}).get('objectives', [])
+                     if not goal.get('source_dimension')]
+            if goals:
+                scoped['reading_objectives'] = [{key: goal[key] for key in ('id', 'intent', 'application_scope', 'limits')
+                                                if goal.get(key)} for goal in goals]
+        if scoped:
+            include('本书叙述与表达约定', _json(scoped))
+    for field in ('premise', 'source_idea', 'advisor_guidance', 'world_intent'):
+        value = str(author.get(field) or '').strip()
+        if value and not any(value in part for part in sections):
+            include('作者确认要求', value)
+    return '\n\n'.join(sections)
+
+
+def prepare_context(root, chapter, *, policy_runtime="", task_id=None, single_writer=False,
+                    writer_overrides=(), writer_sources=None):
     if chapter != '0001':
         raise ValueError('轻量正文准备仅支持独立短篇首章；请使用完整流程')
     if _path(root, f'story/{chapter}/chapter.md').exists():
@@ -242,6 +409,8 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
         spec.loader.exec_module(policy)
     sources, effective, aliases = {}, {}, {}
     for relative in (*REQUIRED, *OPTIONAL):
+        if single_writer and relative == 'cache/story-support/context.md':
+            continue
         if relative == 'cache/story-support/context.md' and policy:
             # The shared context is already rendered from the task's effective
             # sources. Reading its legacy alias here would reintroduce old rules.
@@ -262,13 +431,21 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None):
         alias = policy.runtime_alias(root, policy_runtime, relative, task_id=task_id) if policy else relative
         aliases[relative] = alias
         effective[relative] = value if alias == relative else _path(root, alias).read_text(encoding="utf-8")
-    context = '\n\n'.join(f'## {name}\n\n{text}' for name, text in effective.items())
     project_path = _path(root, '.novel-project.json')
-    if project_path.is_file():
-        project = json.loads(project_path.read_text(encoding='utf-8-sig'))
-        values = project.get('values', {})
-        context += '\n\n## 作者确认要求\n' + '\n'.join(
-            str(values.get(key) or '') for key in ('premise', 'source_idea', 'advisor_guidance', 'human_intent', 'world_intent'))
+    project = json.loads(project_path.read_text(encoding='utf-8-sig')) if project_path.is_file() else {}
+    values = project.get('values', {})
+    if single_writer:
+        for canonical, relative in (writer_sources or {}).items():
+            if relative and relative != canonical and _path(root, relative).is_file():
+                alias = policy.runtime_alias(root, policy_runtime, relative, task_id=task_id) if policy else relative
+                effective[canonical] = _limit_writer_source(relative, _path(root, alias).read_text(encoding='utf-8-sig'))
+        context = single_writer_brief(root, chapter, effective, task_id, writer_overrides, values)
+    else:
+        context = '\n\n'.join(f'## {name}\n\n{text}' for name, text in effective.items())
+    if not single_writer and project_path.is_file():
+        fields = ('premise', 'source_idea', 'advisor_guidance', 'world_intent', 'human_intent')
+        context += '\n\n## 作者确认要求\n' + '\n'.join(dict.fromkeys(
+            str(values[key]) for key in fields if values.get(key)))
     if len(context) > 80000:
         raise ValueError('SHORT_CONTEXT_OVERFLOW: 资料总量超过轻量完整上下文范围，请使用完整准备；未截断任何证据')
     guide = sources['outline/near_term_outline.md']
@@ -311,18 +488,36 @@ def main():
     parser.add_argument('--guide-file', default='')
     parser.add_argument('--character-minor-file', default='')
     parser.add_argument('--character-state-file', default='')
+    parser.add_argument('--learning-file', default='')
+    parser.add_argument('--style-file', default='')
+    parser.add_argument('--voice-file', default='')
+    parser.add_argument('--voice-adaptations-file', default='')
+    parser.add_argument('--conflict-ledger-file', default='')
+    parser.add_argument('--writer-type', default='')
     args = parser.parse_args()
     root = Path.cwd().resolve()
     if args.action == 'context':
-        context_path, aliases = prepare_context(root, args.chapter, policy_runtime=args.policy_runtime,
-                                               task_id=os.environ.get("TASK_ID"))
-        print(f'<WF_VAR>short_context_file:{context_path}</WF_VAR>')
+        single_writer = args.writer_type == 'single'
         state_path = f"story/{args.chapter}/character_state_long.md"
-        for key, actual, expected, source in (
+        paths = (
             ("pp_guide_file", args.guide_file, f"story/{args.chapter}/single_chapter_guide.md", "outline/near_term_outline.md"),
             ("pp_character_minor_file", args.character_minor_file, f"story/{args.chapter}/character_minor.md", "meta/character_profiles.md"),
             ("pp_character_state_long_file", args.character_state_file, state_path, state_path),
-        ):
+            ("pp_learning_context", args.learning_file, "learning/context/mvp.md", "learning/context/mvp.md"),
+        )
+        overrides = [actual for _, actual, expected, _ in paths[:3] if actual and actual != expected]
+        writer_sources = {'learning/context/mvp.md': args.learning_file}
+        writer_sources.update({'meta/style_profile.md': args.style_file, 'meta/character_voice.md': args.voice_file,
+                               'meta/character_voice_adaptations.md': args.voice_adaptations_file,
+                               'meta/conflict_ledger.md': args.conflict_ledger_file})
+        context_path, aliases = prepare_context(root, args.chapter, policy_runtime=args.policy_runtime,
+                                               task_id=os.environ.get("TASK_ID"), single_writer=single_writer,
+                                               writer_overrides=overrides, writer_sources=writer_sources)
+        print(f'<WF_VAR>short_context_file:{context_path}</WF_VAR>')
+        if single_writer:
+            print('<WF_VAR>single_writer_context:{{short_context_file}}</WF_VAR>')
+            print('<WF_VAR>single_writer_plan: </WF_VAR>')
+        for key, actual, expected, source in paths[:3]:
             if actual == expected and aliases.get(source, source) != source:
                 print(f"<WF_VAR>{key}:{aliases[source]}</WF_VAR>")
     else:

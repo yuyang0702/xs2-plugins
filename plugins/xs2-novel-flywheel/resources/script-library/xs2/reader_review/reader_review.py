@@ -72,7 +72,7 @@ def _quotes(data, body):
         raise ValueError('审稿引用须为当前原文中连续存在的原句')
 
 
-def revision_context(root):
+def revision_context(root, chapter=None, contract=None):
     state_path=_path(root,'.novel-project.json');state=_load(state_path) if state_path.is_file() else {}
     values=state.get('values',{});feedback=str(values.get('author_feedback_file') or '').strip()
     author=advice='';sources={}
@@ -83,9 +83,18 @@ def revision_context(root):
         author,advice,sources=module.feedback_layers(root,feedback)
         origin=(Path(feedback).parent/'automatic-origin.json').as_posix();origin_file=_path(root,origin)
         sources={**sources,origin:_digest(origin_file.read_bytes()) if origin_file.is_file() else None}
-    return {'author_feedback':author,'human_intent':str(values.get('human_intent') or ''),
+    result = {'author_feedback':author,'human_intent':str(values.get('human_intent') or ''),
         'automatic_revision_advice':advice,'source_hashes':sources,
         'scope_policy':'只有真实作者要求可以限定本次局部修改权限；自动建议、旧报告和旧段落锚点不能创建禁改范围。没有作者局部限制时按整章处理，但始终保留本书风格、世界规则及既定事实。'}
+    if chapter is not None:
+        reading = book_contract.reading()
+        contract = (contract if contract is not None else book_contract.resolve(root)).get('reading_contract', {})
+        delivered = set(reading.delivered_candidates(root, chapter, contract))
+        goals = [goal for goal in contract.get('objectives', []) if goal.get('source_dimension')
+                 and goal['source_candidate_id'] in delivered]
+        if goals:
+            result['applied_reference_review'] = {'objectives': goals, 'guidance': reading.GUIDANCE}
+    return result
 
 
 def validate_revision_scope(root,report):
@@ -141,7 +150,7 @@ def prepare(root, chapter, task_id,parallel=False):
                'genre': values.get('genre', ''), 'language': values.get('language', '中文'),
                'narrative_pov': values.get('narrative_pov', 'third_person'),
                'story_scope': 'short_full' if state.get('mode') == 'short' else values.get('conflict_plan_mode', 'serial_chapter')}
-    context=revision_context(root)
+    context=revision_context(root,chapter,frozen_contract)
     binding = {'schema': 1, 'task_id': task_id, 'chapter_number': chapter,
                'body_sha256': _digest(raw), 'scope_source': _scope_source(root,frozen_contract,chapter), 'outputs': outputs,
                'input_sha256': _digest((json.dumps(payload, ensure_ascii=False, indent=2) + '\n').encode('utf-8')),
@@ -175,7 +184,7 @@ def _bound(root, binding_path, expected_sha,*,allow_unfrozen=False):
     verify_parallel(root,binding,allow_unfrozen=allow_unfrozen)
     chapter = quality().chapter_number(binding['chapter_number'])
     raw = _path(root, f'story/{chapter}/chapter.md').read_bytes()
-    context=revision_context(root)
+    context=revision_context(root,chapter)
     if binding['outputs'].get('reader_blind_model'):
         packet.verify(_load(_path(root,binding['outputs']['reader_blind_model'])),
             _load(_path(root,binding['outputs']['reader_blind_input'])),'blind-reader')
@@ -274,8 +283,32 @@ def join(root,binding_path,expected_sha,blind_sha,context_sha):
     return {'reader_reconcile_required':'yes' if required else 'no'}
 
 
+def validate_decision_evidence(decision,body):
+    # Historical reports only carry free-text excerpts. New model output
+    # supplies independent anchors for the trigger and the response.
+    if 'causal_evidence' not in decision:
+        return
+    proof=decision['causal_evidence']
+    if not isinstance(proof,dict) or proof.get('order') not in {'continuous','nonlinear','missing'}:
+        raise ValueError('关键决定缺少有效知情顺序凭据')
+    reaction,_=evidence.position(body,proof.get('reaction'))
+    knowledge=proof.get('knowledge')
+    if proof['order']=='missing':
+        if knowledge is not None or decision['assessment']=='supported':
+            raise ValueError('知情顺序缺少触发依据时不能判定成立')
+        return
+    _,knowledge_end=evidence.position(body,knowledge)
+    if proof['order']=='continuous' and knowledge_end>reaction:
+        raise ValueError('知情顺序无效：同一连续场景中先定位人物实际获知的最小分句，再定位其反应。若没有先行依据，按影响报告缺口或存疑。')
+    if proof['order']=='nonlinear':
+        _text(proof,['reason'])
+
+
 def validate_blind(report, body,reading_contract=None):
+    if reading_contract is not None:
+        report=book_contract.reading().without_unrequested_checks(report,reading_contract)
     report=evidence.resolve_report(report,body)
+    report=book_contract.reading().advisory_report(report)
     report=book_contract.reading().apply(report,body,reading_contract)
     if (not isinstance(report, dict) or report.get('verdict') not in {'pass', 'revise', 'reject'}
             or not isinstance(report.get('issues'), list) or not isinstance(report.get('decisions'), list)):
@@ -295,6 +328,7 @@ def validate_blind(report, body,reading_contract=None):
         if decision['id'] in decisions or decision.get('assessment') not in {'supported', 'gap', 'uncertain'}:
             raise ValueError('因果检查编号或结论无效')
         _quotes(decision, body)
+        validate_decision_evidence(decision,body)
         decisions[decision['id']] = decision
     ids = set()
     for index, issue in enumerate(result['issues'], 1):
@@ -345,6 +379,7 @@ def _issue_id(issue):
 def gate_review(report, body,reading_contract=None):
     if 'reader_review_version' not in report:
         return copy.deepcopy(report)
+    report=book_contract.reading().advisory_report(report)
     result = book_contract.reading().apply(report,body,reading_contract)
     if result['reader_review_version'] != 1 or result.get('assessment_scope') != 'whole_chapter':
         raise ValueError('整篇独立审稿版本或范围无效')
@@ -438,6 +473,8 @@ def verify_report_scope(root, report):
 
 
 def merge_review(final, blind, body,reading_contract=None):
+    if reading_contract is not None:
+        final=book_contract.reading().without_unrequested_checks(final,reading_contract)
     result = evidence.resolve_report(final,body)
     result.update(reader_review_version=1, assessment_scope='whole_chapter', blind_review=validate_blind(blind, body))
     return gate_review(result, body,reading_contract)
@@ -459,7 +496,11 @@ def commit(root, binding_path, expected_sha, blind_sha,context_sha=''):
     try:
         contextual=_load(_path(root, binding['outputs']['reader_context_report_path']))
         validate_revision_scope(root,contextual)
-        report = merge_review(contextual, _load(blind_path), body,book_contract.resolve(root).get('reading_contract',{}))
+        contract = book_contract.resolve(root).get('reading_contract', {})
+        report = merge_review(contextual, _load(blind_path), body, contract)
+        usage = book_contract.reading().application_receipt(root, binding['chapter_number'], body, report, contract)
+        if usage:
+            report['reference_application'] = usage
     except (ValueError,TypeError,KeyError) as exc:
         raise InvalidReviewReport(str(exc)) from exc
     report.update(chapter_number=binding['chapter_number'], body_sha256=binding['body_sha256'])

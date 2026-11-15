@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import unicodedata
 from xml.sax.saxutils import escape
 
 HERE=Path(__file__).resolve().parents[1]
@@ -209,7 +210,7 @@ def bound(root,folder,accepted_sha=None):
 
 def goals(source,critique):
     rows=[]
-    for row in (source.get('reader_report') or {}).get('issues',[]):
+    for row in book.reading().advisory_report(source.get('reader_report') or {}).get('issues',[]):
         if row.get('priority') in ('medium','high'):
             rows.append({'id':'reader-'+str(row.get('id') or len(rows)),'goal':row.get('goal',''),'excerpts':row.get('excerpts',[])})
     indices=set(critique.get('blocking_issues',[]))
@@ -285,29 +286,78 @@ def dialogue_goals(source, checks):
     new_checks={'checklist_exchange','scripted_delivery'}
     if version>=4:new_checks.add('voice_contrast')
     if version>=3:required.update(new_checks)
+    paragraphs=source['paragraphs']
+    exchange_checks = version >= 6
+    turns_by_id, exchanges = packet.dialogue_exchanges(paragraphs) if exchange_checks else ({}, {})
+    if exchange_checks:
+        required.remove('checklist_exchange')
+        if len(exchanges) == 1:
+            # With only one frozen exchange the older single verdict is unambiguous.
+            only = next(iter(exchanges))
+            checks = [row | {'exchange_id': only} if row.get('focus') == 'checklist_exchange'
+                      and 'exchange_id' not in row and row.get('status') in {'pass', 'revise'} else row for row in checks]
+        coverage = [row.get('exchange_id') for row in checks if row.get('focus') == 'checklist_exchange']
+        expected = list(exchanges) or [None]
+        if len(coverage) != len(expected) or any(coverage.count(key) != 1 for key in expected):
+            raise ValueError('连续对白须按 dialogue_exchanges 逐段验收：'+', '.join(exchanges))
     if focused:
         labels=[row.get('focus') for row in checks]
-        if (any(label not in (*required,'other') for label in labels)
+        if (any(label not in (*required,'other','checklist_exchange') for label in labels)
                 or any(labels.count(label)!=1 for label in required)):
             raise ValueError('须逐项提交对白验收：'+', '.join(sorted(required)))
-    paragraphs=source['paragraphs']
     indices={row['id']:index for index,row in enumerate(paragraphs)}
     targets=[]
     seen=set()
     for number,check in enumerate(checks,1):
         status,reason,goal,turns=(check.get(key) for key in ('status','reason','goal','turns'))
         focus=check.get('focus')
+        exchange = exchanges.get(check.get('exchange_id')) if exchange_checks and focus == 'checklist_exchange' else None
         if (status not in ('pass','revise','not_applicable') or not isinstance(reason,str) or not reason.strip()
                 or not isinstance(goal,str) or not isinstance(turns,list) or (status=='revise')!=bool(goal.strip())):
             raise ValueError('对白验收须有判断与具体理由，返修项须给出可执行目标')
+        if exchange_checks and focus == 'checklist_exchange' and bool(exchange) == (status == 'not_applicable'):
+            raise ValueError('连续对白存在时必须给出 pass 或 revise；无连续对白时填 not_applicable')
+        if exchange and version >= 8:
+            opening_status = check.get('opening_status')
+            opening_reason = check.get('opening_reason')
+            if opening_status not in ('pass', 'revise') or not isinstance(opening_reason, str) or not opening_reason.strip():
+                raise ValueError('交锋开场须独立给出 opening_status 和 opening_reason 结论。')
+            if opening_status == 'revise' and status != 'revise':
+                raise ValueError('交锋开场需要返修，整段须填 revise 并给开场返修目标。')
+            if (opening_status == 'revise' or status == 'pass') and [
+                item.get('turn_id') for item in turns[:2] if isinstance(item, dict)
+            ] != exchange['turn_ids'][:2]:
+                raise ValueError('交锋开场的结论须引用该段开头两个连续对白编号。')
         if status=='not_applicable':
             if turns or (not focused and len(checks)!=1):raise ValueError('不适用仅用于当前范围没有可核对的对白')
             continue
         minimum=1 if version>=3 and focus=='scripted_delivery' else 2
-        if not minimum<=len(turns)<=3 or any(not isinstance(turn,dict) for turn in turns):
+        maximum = len(exchange['turn_ids']) if exchange else len(turns_by_id) if version >= 7 else 3
+        if not minimum<=len(turns)<=maximum or any(not isinstance(turn,dict) for turn in turns):
             raise ValueError('须引用当前对白；单向讲话可引用一段原话，其余须对照两到三处。')
         offsets=[];quotes=[];scope=[]
+        resolved_turns = []
+        exchange_indices = []
         for turn in turns:
+            if exchange_checks and 'turn_id' in turn:
+                turn_id = turn['turn_id']
+                resolved = turns_by_id.get(turn_id)
+                if not resolved or (exchange and turn_id not in exchange['turn_ids']):
+                    raise ValueError('对白编号必须来自当前冻结正文及指定连续对白段')
+                if exchange:
+                    exchange_indices.append(exchange['turn_ids'].index(turn_id))
+                turn = {key: resolved[key] for key in ('paragraph_id', 'quote')}
+                row = paragraphs[resolved['paragraph_index']]
+                start = row['start'] + resolved['offset']
+                if offsets and start < offsets[-1]:
+                    raise ValueError('对白编号须按正文顺序，且不可重复')
+                offsets.append(start + len(turn['quote']))
+                quotes.append(turn['quote'])
+                scope.append(resolved['paragraph_index'])
+                resolved_turns.append(turn)
+                continue
+            if exchange:
+                raise ValueError('连续对白证据只用 turn_id 引用，保留真实台词及顺序')
             key,quote=turn.get('paragraph_id'),turn.get('quote')
             if not isinstance(key,str) or key not in indices or not isinstance(quote,str) or not quote.strip():
                 raise ValueError('对白引文须绑定冻结原文段落')
@@ -318,6 +368,19 @@ def dialogue_goals(source, checks):
             if not positions:raise ValueError('对白引文须逐字出自指定段落的台词')
             if start is None:raise ValueError('对白引文须按正文顺序，且不可重叠')
             offsets.append(start+len(quote));quotes.append(quote);scope.append(index)
+            resolved_turns.append(turn)
+        if exchange and exchange_indices != list(range(exchange_indices[0], exchange_indices[0] + len(turns))):
+            valid = ', '.join(exchange['turn_ids'])
+            if version < 7:
+                raise ValueError(f'连续对白 {check["exchange_id"]} 须引用至少两处紧接的话轮，收到的索引为 {exchange_indices}。可用编号按序为 {valid}。')
+            # In v7 these ordinal references bound a continuous source range.
+            # Fill gaps with the exact intervening lines while retaining the model's target index.
+            requested = resolved_turns
+            resolved_turns = [{k: turns_by_id[turn_id][k] for k in ('paragraph_id','quote')}
+                              for turn_id in exchange['turn_ids'][exchange_indices[0]:exchange_indices[-1]+1]]
+            quotes = [turn['quote'] for turn in resolved_turns]
+        else:
+            requested = resolved_turns
         identity=(focus,tuple(offsets)) if version>=3 else tuple(offsets)
         # Identical language in different turns is evidence of a shared
         # template. The ordered offsets above still reject reusing one span.
@@ -325,12 +388,15 @@ def dialogue_goals(source, checks):
             raise ValueError('对白验收须引用不同的原文位置，同一组只提交一次')
         seen.add(identity)
         if status=='revise':
+            anchors = exchange['paragraph_ids'] if exchange else [row['id'] for row in paragraphs[scope[0]:scope[-1]+1]]
             target={'id':f'dialogue-{number}','goal':goal,'excerpts':quotes,
-                    'paragraph_ids':[row['id'] for row in paragraphs[scope[0]:scope[-1]+1]],'turns':turns}
+                    'paragraph_ids':anchors,'turns':resolved_turns}
+            if exchange:
+                target['exchange_id'] = check['exchange_id']
             if focused:
                 index=check.get('target_turn')
                 if type(index) is not int or not 0<=index<len(turns):raise ValueError('对白返修须标明要改的目标原话')
-                target.update(focus=focus,target=turns[index])
+                target.update(focus=focus,target=requested[index])
             if version>=3 and focus in new_checks:
                 preserve=check.get('preserve')
                 if not isinstance(preserve,list) or not preserve or any(not isinstance(s,str) or not s.strip() for s in preserve):
@@ -340,10 +406,28 @@ def dialogue_goals(source, checks):
     return targets
 
 
+def spoken_text(text):
+    return ''.join(char for char in text if not char.isspace() and not unicodedata.category(char).startswith('P'))
+
+
 def check_dialogue_goals(edits, goals, source):
     paragraphs={row['id']:row['text'] for row in source['paragraphs']}
     for goal in goals:
         if not goal['id'].startswith('dialogue-'):continue
+        if 'exchange_id' in goal:
+            anchors = goal['paragraph_ids']
+            original = '\n\n'.join(paragraphs[key] for key in anchors)
+            remap = dict(zip(anchors, (row['id'] for row in patches.paragraphs(original))))
+            scoped = [{**edit, 'paragraph_id': remap[edit['paragraph_id']]} for edit in edits
+                      if edit['paragraph_id'] in remap]
+            revised = patches.apply_patches(original, {'source_sha256': sha(original.encode()), 'edits': scoped})
+            old_speech, _ = packet.dialogue_exchanges(patches.paragraphs(original))
+            new_speech, _ = packet.dialogue_exchanges(patches.paragraphs(revised))
+            old_sequence = spoken_text(''.join(turn['quote'] for turn in old_speech.values()))
+            new_sequence = spoken_text(''.join(turn['quote'] for turn in new_speech.values()))
+            if old_sequence == new_sequence or spoken_text(original) == spoken_text(revised):
+                raise ValueError('整段对白 '+goal['exchange_id']+' 仍是原来的接话顺序和内容：'+goal['goal'])
+            continue
         if 'target' in goal:
             key,quote=(goal['target'][name] for name in ('paragraph_id','quote'))
             original=paragraphs[key]
@@ -354,11 +438,84 @@ def check_dialogue_goals(edits, goals, source):
                 revised=''
             else:
                 revised=patches.apply_patches(original,{'source_sha256':sha(original.encode()),'edits':scoped})
+            if goal.get('focus')=='checklist_exchange':
+                # 段落重排或换标点会打断逐字匹配，但并未改变这轮说了什么。
+                quote, original, revised = map(spoken_text, (quote, original, revised))
             if revised.count(quote)>=original.count(quote):
                 raise ValueError('对白返修目标 '+goal['id']+' 仍保留目标原话：'+quote+'。'+goal['goal'])
             continue
         if not any(edit['paragraph_id'] in goal['paragraph_ids'] and edit['old']!=edit['replacement'] for edit in edits):
             raise ValueError('对白返修目标 '+goal['id']+' 尚未修改原对话：'+goal['goal'])
+
+
+def scene_goals(source, checks):
+    if not isinstance(checks, list) or not checks:
+        raise ValueError('须提交场景因果检查。')
+    paragraphs = source['paragraphs']
+    narration_review = source.get('dialogue_check_version', 1) >= 7
+    if narration_review and (any(not isinstance(row, dict) for row in checks)
+            or not any(row.get('focus') in ('narration', 'both') for row in checks)):
+        raise ValueError('整段叙述须在 scene_checks 给出 focus=narration 或 both 的结论。')
+    indices = {row['id']: index for index, row in enumerate(paragraphs)}
+    targets = []
+    seen = set()
+    for number, row in enumerate(checks, 1):
+        status, reason, goal, anchors = (row.get(key) for key in ('status', 'reason', 'goal', 'anchors'))
+        preserve = row.get('preserve', [])
+        focus = row.get('focus', 'causality')
+        if narration_review and focus not in ('narration', 'causality', 'both'):
+            raise ValueError('场景检查的 focus 必须对应叙述或因果。')
+        if (status not in ('pass', 'revise', 'not_applicable') or not isinstance(reason, str) or not reason.strip()
+                or not isinstance(goal, str) or not isinstance(anchors, list) or not isinstance(preserve, list)
+                or any(not isinstance(value, str) or not value.strip() for value in preserve)
+                or (status == 'revise') != bool(goal.strip() and preserve)):
+            raise ValueError('场景检查须说明判断；返修须给目标与须保留的事实或结局。')
+        if status == 'not_applicable':
+            if len(checks) != 1 or anchors or goal or preserve:
+                raise ValueError('没有可核对的场景时，单独说明不适用。')
+            continue
+        if len(anchors) != 3:
+            raise ValueError('场景检查须引用起因、中间反应和后果三处原文。')
+        scope, excerpts = [], []
+        resolved = []
+        for anchor in anchors:
+            key, quote = anchor.get('paragraph_id'), anchor.get('quote')
+            if (set(anchor)=={'paragraph_id'} or narration_review) and isinstance(key, str) and key in indices:
+                quote = paragraphs[indices[key]]['text']
+            if (not isinstance(key, str) or key not in indices or not isinstance(quote, str)
+                    or not quote.strip() or quote not in paragraphs[indices[key]]['text']):
+                raise ValueError('场景证据须逐字出自冻结原文的指定段落。')
+            scope.append(indices[key])
+            excerpts.append(quote)
+            resolved.append({'paragraph_id': key, 'quote': quote})
+        if scope != sorted(set(scope)) or (scope[0], scope[-1]) in seen:
+            raise ValueError('场景证据须按正文顺序来自不同段落，同一范围只提交一次。')
+        seen.add((scope[0], scope[-1]))
+        if status == 'revise':
+            targets.append({'id': f'scene-{number}', 'goal': goal, 'excerpts': excerpts, 'anchors': resolved,
+                            **({'focus': focus} if narration_review else {}),
+                            'paragraph_ids': [p['id'] for p in paragraphs[scope[0]:scope[-1] + 1]],
+                            'preserve': preserve})
+    return targets
+
+
+def check_scene_goals(edits, goals, source):
+    paragraphs = {row['id']: row['text'] for row in source['paragraphs']}
+    for goal in goals:
+        if not goal['id'].startswith('scene-'):
+            continue
+        group = [edit for edit in edits if edit.get('group_id') == goal['id']]
+        if (not any(edit['old'] != edit['replacement'] for edit in group)
+                or any(edit['paragraph_id'] not in goal['paragraph_ids'] for edit in group)):
+            raise ValueError(f"场景返修目标 {goal['id']} 须在定位范围内交付同组补丁：{goal['goal']}")
+        if goal.get('focus') in ('narration', 'both'):
+            ids = goal['paragraph_ids']
+            original = '\n\n'.join(paragraphs[key] for key in ids)
+            remap = dict(zip(ids, (row['id'] for row in patches.paragraphs(original))))
+            scoped = [{**edit, 'paragraph_id': remap[edit['paragraph_id']]} for edit in group]
+            revised = patches.apply_patches(original, {'source_sha256': sha(original.encode()), 'edits': scoped})
+            if spoken_text(original) == spoken_text(revised):
+                raise ValueError(f"场景返修 {goal['id']} 只有表面格式变化：{goal['goal']}")
 
 
 def writer_input(root,folder,critique_path):
@@ -374,6 +531,13 @@ def writer_input(root,folder,critique_path):
         try:targets+=dialogue_goals(source,critique.get('dialogue_checks'))
         except ValueError as exc:
             reason='dialogue_review_format: '+str(exc)
+            guard.retry(root,'local-revision/'+b['task_id'],'agent_sc',reason)
+            raise Retry('agent_sc',reason) from exc
+    if source.get('dialogue_check_version', 1) >= 5:
+        try:
+            targets += scene_goals(source, critique.get('scene_checks'))
+        except (AttributeError, ValueError) as exc:
+            reason = 'scene_review_format: ' + str(exc)
             guard.retry(root,'local-revision/'+b['task_id'],'agent_sc',reason)
             raise Retry('agent_sc',reason) from exc
     data={**source,'critique':critique,'goals':targets,
@@ -427,6 +591,7 @@ def compose(root,b,source):
     candidate=patches.apply_patches(source['source_body'],{'source_sha256':payload['source_sha256'],'edits':merged},protected_phrases=source['book_contract']['protected_phrases'])
     if any(row['id'].startswith('precision-') for row in data['goals']):check_precision_goals(source,merged,data['goals'])
     check_dialogue_goals(merged,data['goals'],source)
+    check_scene_goals(merged,data['goals'],source)
     if source.get('fixed_edit') and sha(candidate.encode())!=source['fixed_edit']['candidate_sha256']:
         raise ValueError('候选超出作者指定的单句删除范围')
     measured=quality.measurement(candidate.encode(),b['chapter_number'],b['bounds'])
@@ -483,14 +648,15 @@ def save_repair(root,b,context,repair):
 
 
 def review_decision(report,context):
-    report=wire.expand(report,context)
+    reading=book.reading()
+    reading_contract=context['book_contract'].get('reading_contract',{})
+    report=wire.expand(reading.without_unrequested_checks(report,reading_contract),context)
     for key in ('candidate_sha256','book_contract_sha256','review_input_sha256'):
         if report.get(key)!=context[key]:raise ValueError('独立复查与当前候选或本书规则不匹配：'+key)
     report=evidence.resolve_report(report,context['candidate'])
     if type(report.get('compatible')) is not bool or not isinstance(report.get('issues'),list):raise ValueError('独立复查缺少事实结论')
     reasons=[];source=context['source_body']+'\n'+context['confirmed_context']+'\n'+context['author_feedback']+'\n'+book.prompt(context['book_contract'])
-    reading_issues=book.reading().validate_checks(report,context['candidate'],context['book_contract'].get('reading_contract',{}))
-    reasons += [r['impact']+'；'+r['goal'] for r in reading_issues if r['priority'] in ('medium','high')]
+    reading.validate_checks(report,context['candidate'],reading_contract)
     for issue in report['issues']:
         if (not isinstance(issue,dict) or any(not isinstance(issue.get(k),str) or not issue[k].strip() for k in ('id','candidate_quote','source_quote','reason'))
                 or issue['candidate_quote'] not in context['candidate'] or issue['source_quote'] not in source):raise ValueError('事实复查缺少候选与冻结来源的逐字依据')
@@ -499,19 +665,9 @@ def review_decision(report,context):
     temp={'verdict':'pass','issues':[],'fact_review':{'verdict':'pass','summary':'独立事实复查'},'expression_review':copy.deepcopy(report.get('expression_review'))}
     quality.expression_gate(temp,context['candidate']);expression.validate_checks(report,context['candidate'],required=True)
     reasons += [r['impact']+'；'+r['goal'] for r in temp['issues'] if r['priority'] in ('medium','high')]
-    changes=report.get('change_reviews')
-    if not isinstance(changes,list) or len(changes)!=len(context['edits']):raise ValueError('每项局部改动都须独立核对净效果')
-    seen=set()
-    for row in changes:
-        index=row.get('edit_index')
-        if type(index) is not int or not 0<=index<len(context['edits']) or index in seen:raise ValueError('改动复核编号缺失或重复')
-        seen.add(index);edit=context['edits'][index]
-        if (row.get('effect') not in ('improved','equivalent','regressed') or not isinstance(row.get('reason'),str) or not row['reason'].strip()
-                or not isinstance(row.get('before_excerpt'),str) or not row['before_excerpt'] or row['before_excerpt'] not in edit['old']
-                or not isinstance(row.get('after_excerpt'),str) or (edit['replacement'] and (not row['after_excerpt'] or row['after_excerpt'] not in edit['replacement']))
-                or (not edit['replacement'] and row['after_excerpt'])):raise ValueError('改动净效果缺少原句与替换文本依据')
-        if row['effect']!='improved':reasons.append('改动未改善或损害原表达：'+row['reason'])
-    outcomes=report.get('issue_outcomes');expected={r['id'] for r in context['goals']}
+    for row in patches.review_changes(context['edits'],report.get('change_reviews')):
+        reasons.append('改动未改善或损害原表达：'+row['reason'])
+    outcomes=report.get('issue_outcomes');goals_by_id={r['id']:r for r in context['goals']};expected=set(goals_by_id)
     if not isinstance(outcomes,list) or {r.get('id') for r in outcomes}!=expected or len(outcomes)!=len(expected):raise ValueError('原有实质问题未逐项复核')
     for row in outcomes:
         if (row.get('status') not in ('resolved','remaining','not_applicable') or not isinstance(row.get('reason'),str) or not row['reason'].strip()
@@ -520,6 +676,18 @@ def review_decision(report,context):
         if row['status']=='remaining':reasons.append('原有问题仍未解决：'+row['reason'])
         if row['id'].startswith('dialogue-') and row['status']=='not_applicable':
             reasons.append('已定位的对白目标须用候选原文说明解决效果：'+row['reason'])
+        goal = goals_by_id[row['id']]
+        if goal.get('exchange_id') and row['status'] == 'resolved':
+            quotes = row['excerpts']
+            if len(quotes) < 2 or not expression._distinct_quotes(quotes) or not expression._ordered_quotes(context['candidate'], quotes):
+                raise ValueError('整段对白返修须按顺序引两处候选原文，证明反应改变了接下来的话或动作。')
+        if row['id'].startswith('scene-'):
+            if row['status']=='not_applicable':
+                reasons.append('已定位的场景目标须用候选原文复核：'+row['reason'])
+            elif row['status']=='resolved':
+                quotes = row['excerpts']
+                if len(quotes) < 2 or not expression._distinct_quotes(quotes) or not expression._ordered_quotes(context['candidate'], quotes):
+                    raise ValueError('场景返修须按顺序引两处不同的候选原文，证明反应和下一步行动。')
     return reasons
 
 
@@ -799,7 +967,7 @@ def main():
     parser.add_argument('--learning-context',default='learning/context/polish.md')
     parser.add_argument('--feedback',default=None)
     parser.add_argument('--dialogue-check',action='store_true')
-    parser.add_argument('--dialogue-check-version',type=int,choices=(1,2,3,4),default=1)
+    parser.add_argument('--dialogue-check-version',type=int,choices=(1,2,3,4,5,6,7,8),default=1)
     parser.add_argument('--critique',default='cache/sc/critique.json');parser.add_argument('--review-stdin',action='store_true')
     args=parser.parse_args();root=Path.cwd()
     try:

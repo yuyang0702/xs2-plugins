@@ -13,6 +13,11 @@ SCRIPTS={'script_guard_prepare':'draft_guard','script_guard_facts_candidate':'dr
 AGENTS={'agent_guard_facts_repair':'xs2-draft-repairer','agent_guard_facts_audit':'xs2-draft-auditor',
     'agent_guard_expression_repair':'xs2-draft-repairer','agent_guard_expression_audit':'xs2-draft-auditor'}
 SELECTED=list(SCRIPTS)+list(AGENTS)
+PHASES=('facts','expression')
+PRECHECK_SCRIPTS={f'script_guard_{phase}_{step}':'draft_guard'
+                  for phase in PHASES for step in ('precheck','accept')}
+PRECHECK_AGENTS={f'agent_guard_{phase}_inspect':'xs2-draft-auditor' for phase in PHASES}
+INSPECT_SELECTED=[*SELECTED,*PRECHECK_SCRIPTS,*PRECHECK_AGENTS]
 EXPRESSION_COMMIT=['script_guard_prepare','script_guard_expression_commit','script_guard_finish',
                    'script_si_post','script_render_si','sync_up_si','script_check_originality']
 EXPRESSION_FILES=('facts-approved.json','facts-audit.json','expression-input.json',
@@ -63,10 +68,13 @@ def prepare(root,state,task,chapter):
     failed={key for key,node in nodes.items() if node.get('status')=='failed'}
     facts_retry=bool(failed) and failed<={'agent_guard_facts_audit','script_guard_facts_commit'}
     expression_retry=bool(failed) and failed<={'agent_guard_expression_repair','agent_guard_expression_audit',
-            'script_guard_expression_candidate','script_guard_expression_commit'}
-    required=('agent_guard_facts_repair','script_guard_facts_candidate') if facts_retry else ('script_guard_facts_commit',)
-    if not (facts_retry or expression_retry) or not all(nodes.get(key,{}).get('status')=='completed'
-            for key in ('script_multi_plan','script_guard_prepare',*required)):
+            'script_guard_expression_candidate','script_guard_expression_commit','agent_guard_expression_inspect',
+            'script_guard_expression_precheck'}
+    def completed(key):return nodes.get(key,{}).get('status')=='completed'
+    facts_ready=(all(completed(key) for key in ('agent_guard_facts_repair','script_guard_facts_candidate'))
+                 if facts_retry else any(completed(key) for key in ('script_guard_facts_commit','script_guard_facts_accept')))
+    if not (facts_retry or expression_retry) or not facts_ready or not all(
+            completed(key) for key in ('script_multi_plan','script_guard_prepare')):
         raise ValueError('该失败范围缺少可继续审核的候选或事实稿')
     directory='cache/draft-guard/'+task['task_id'];multi=task['parameter_values'].get('multi_dir','')
     if not multi:raise ValueError('审稿恢复缺少原计划目录')
@@ -122,7 +130,9 @@ def prepare(root,state,task,chapter):
     identity=[task['task_id'],g.body_digest(body),book_sha]
     seed_data={'body':body}
     resume=_resume_expression_commit(g,common._path(root,directory),task,body,source,binding,contract,failed)
+    selected=INSPECT_SELECTED if binding.get('inspect_first') else SELECTED
     if resume:
+        selected=EXPRESSION_COMMIT
         identity.append('expression-commit')
         seed_data['resume_expression_commit']=task['task_id']
         inputs.extend(f'{directory}/{name}' for name in EXPRESSION_FILES if f'{directory}/{name}' not in inputs)
@@ -133,7 +143,7 @@ def prepare(root,state,task,chapter):
     return {'kind':'draft_review','stage':'mvp','chapter':number,'source_task_id':task['task_id'],
         'effective_target':expected_target,
         'source_task_sha256':common._value_digest(task),'source_file':seed,'multi_dir':multi,
-        'selected_node_ids':EXPRESSION_COMMIT if resume else SELECTED,
+        'selected_node_ids':selected,
         'files':{p:common._digest(common._path(root,p)) for p in [*inputs,seed]},
         'book_contract_sha256':book_sha,'values_sha256':common._value_digest(state.get('values',{})),
         'models':common._profile(state)}
@@ -145,7 +155,7 @@ def validate(root,state,checkpoint):
             or checkpoint.get('chapter')!=str(state.get('values',{}).get('chapter_number','0001')).zfill(4)
             or checkpoint.get('values_sha256')!=common._value_digest(state.get('values',{}))
             or checkpoint.get('models')!=common._profile(state)
-            or set(checkpoint.get('selected_node_ids',[])) not in (set(SELECTED),set(EXPRESSION_COMMIT))
+            or set(checkpoint.get('selected_node_ids',[])) not in (set(SELECTED),set(INSPECT_SELECTED),set(EXPRESSION_COMMIT))
             or not checkpoint.get('files') or checkpoint.get('source_file') not in checkpoint['files']):
         raise ValueError('审稿恢复范围、模型或来源配置已变化')
     if guard().book_policy.digest(guard().book_policy.resolve(root))!=checkpoint['book_contract_sha256']:
@@ -172,15 +182,16 @@ def options(root,state,definition,source):
     workflow_id=definition.get('workflow_id','')
     prefix=workflow_id[:-len('mvp')] if workflow_id.endswith('-mvp') else ''
     selected=checkpoint['selected_node_ids']
-    for key in (key for key in selected if key in SCRIPTS):
-        name=SCRIPTS[key]
+    scripts={**SCRIPTS,**PRECHECK_SCRIPTS};agents={**AGENTS,**PRECHECK_AGENTS}
+    for key in (key for key in selected if key in scripts):
+        name=scripts[key]
         node=nodes.get(key,{});params=node.get('node_params',{})
         if (node.get('node_type')!='script' or params.get('script_source')!='library'
                 or params.get('script_type')!='python' or params.get('script_name')!=name
                 or params.get('script_group')!=prefix+('nvl' if key in ('script_si_post','script_render_si','sync_up_si') else 'xs2')):
             raise ValueError('审稿恢复必须使用已声明的插件脚本，不能执行替代生成步骤')
-    for key in (key for key in selected if key in AGENTS):
-        name=AGENTS[key]
+    for key in (key for key in selected if key in agents):
+        name=agents[key]
         if nodes.get(key,{}).get('node_type')!='agent' or nodes[key].get('agent_type')!=prefix+name:
             raise ValueError('审稿恢复核验者定义无效')
     if '{{guard_source_file}}' not in nodes['script_guard_prepare']['node_params'].get('script_argv',[]):
@@ -194,8 +205,18 @@ def options(root,state,definition,source):
 def verify(root,state,task,require_tail=True):
     checkpoint=state['automaticCheckpoint'];validate(root,state,checkpoint);g=guard();common=shared()
     selected=checkpoint['selected_node_ids']
-    required=selected if require_tail else [key for key in selected if key not in ('sync_up_si','script_check_originality')]
-    if any(task.get('node_states',{}).get(key,{}).get('status')!='completed' for key in required):
+    required=set(selected)
+    if not require_tail:required.difference_update(('sync_up_si','script_check_originality'))
+    def completed(key):return task.get('node_states',{}).get(key,{}).get('status')=='completed'
+    if required.intersection(PRECHECK_AGENTS):
+        for phase in PHASES:
+            accept=f'script_guard_{phase}_accept'
+            if completed(accept):
+                required.difference_update((f'agent_guard_{phase}_repair',f'script_guard_{phase}_candidate',
+                                            f'agent_guard_{phase}_audit',f'script_guard_{phase}_commit'))
+            else:
+                required.discard(accept)
+    if not all(completed(key) for key in required):
         raise ValueError('审稿恢复的全部事实、表达与发布门禁尚未完成')
     directory='cache/draft-guard/'+task['task_id'];receipt=read(root,directory+'/final-receipt.json')
     binding=read(root,directory+'/binding.json');contract=read(root,directory+'/contract.json')

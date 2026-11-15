@@ -62,6 +62,96 @@ def test_book_defined_units_and_ledger_close_without_float_rounding():
     body,report=evidence();assert m.audit_issues(report,body,c,'facts')==[]
 
 
+@pytest.mark.parametrize(('expected', 'observed', 'line'), [
+    ('asked', 'conditional', '买方说：“要是我分两次付，你可以验货。”'),
+    ('conditional', 'committed', '买方说：“我会分两次付。”'),
+    ('committed', 'asked', '买方问：“我可以分两次付吗？”'),
+    ('acted', 'committed', '买方说：“我会把钱送到。”'),
+])
+def test_event_checks_quoted_state_against_the_frozen_plan(expected, observed, line):
+    m = module()
+    c = contract()
+    c['events'][0]['expected_state'] = expected
+    original, _ = evidence()
+    body, report = evidence(original.replace('买方同意。', line))
+    report['contract_sha256'] = m.contract_digest(c)
+    report['event_observations'][0] = {'id': 'agree', 'observed_state': observed, 'quote': span(line)}
+    issue, = m.audit_issues(report, body, c, 'facts')
+    assert issue['category'] == 'handoff'
+    assert issue['excerpts'] == [line]
+    assert all(term in issue['reason'] for term in ('agree', expected, observed))
+
+
+def test_typed_event_cannot_pass_without_an_observed_state_or_exact_quote():
+    m = module()
+    c = contract()
+    c['events'][0]['expected_state'] = 'committed'
+    body, report = evidence()
+    report['contract_sha256'] = m.contract_digest(c)
+    event = report['event_observations'][0]
+    with pytest.raises(ValueError, match='observed_state'):
+        m.audit_issues(report, body, c, 'facts')
+
+    event.update(observed_state='committed', quote=None)
+    with pytest.raises(ValueError, match='引文'):
+        m.audit_issues(report, body, c, 'facts')
+    event.update(observed_state=None, quote=span('买方同意'))
+    with pytest.raises(ValueError, match='引文'):
+        m.audit_issues(report, body, c, 'facts')
+
+    event.update(observed_state=None, quote=None)
+    issue, = m.audit_issues(report, body, c, 'facts')
+    assert issue['category'] == 'handoff' and 'agree' in issue['reason']
+
+    event.update(observed_state='committed', quote=span('买方一口答应'))
+    with pytest.raises(ValueError, match='当前正文'):
+        m.audit_issues(report, body, c, 'facts')
+    event['quote'] = span('买方同意')
+    assert m.audit_issues(report, body, c, 'facts') == []
+
+
+def test_transfer_cannot_be_planned_as_a_future_commitment():
+    m = module()
+    c = contract()
+    c['events'][2]['expected_state'] = 'committed'
+    with pytest.raises(ValueError, match='acted'):
+        m.validate_contract(c, SOURCES, 2)
+    c['events'][2]['expected_state'] = 'acted'
+    assert m.validate_contract(c, SOURCES, 2) == c
+    c['events'][0]['expected_state'] = 'possible'
+    with pytest.raises(ValueError, match='expected_state'):
+        m.validate_contract(c, SOURCES, 2)
+
+
+def test_first_person_identity_missing_from_report_goes_back_to_auditor():
+    m = module()
+    body, report = evidence()
+    body += '我把灯罩擦净。'
+    c = contract()
+    c['focus'] = '白榆的第一人称叙述。'
+    c['facts'].append({'id': 'narrator', 'value': '白榆', 'aliases': [],
+                       'required': True, 'source_quote': '店主白榆'})
+    report.update(candidate_sha256=hashlib.sha256(body.encode()).hexdigest(), contract_sha256=m.contract_digest(c))
+    report['fact_observations'].append({'id': 'narrator', 'occurrences': []})
+
+    with pytest.raises(ValueError, match='叙述者.*原文'):
+        m.audit_issues(report, body, c, 'facts', narrative_pov='first_person')
+    assert any('narrator' in issue['reason'] for issue in m.audit_issues(report, body, c, 'facts'))
+
+    report['fact_observations'][1]['occurrences'] = [
+        {'value': '我', 'quote': span('我把灯罩擦净'), 'is_name': False, 'same_referent': True},
+    ]
+    assert m.audit_issues(report, body, c, 'facts', narrative_pov='first_person') == []
+    report['fact_observations'][1]['occurrences'][0]['same_referent'] = False
+    assert any('narrator' in issue['reason'] for issue in
+               m.audit_issues(report, body, c, 'facts', narrative_pov='first_person'))
+
+    report['fact_observations'][1]['occurrences'] = []
+    report['issues'] = [{'category': 'pov', 'reason': '正文一度换成了外部叙述位置。',
+                         'excerpts': ['她点收六两'], 'goal': '保持叙述位置一致。'}]
+    assert report['issues'][0] in m.audit_issues(report, body, c, 'facts', narrative_pov='first_person')
+
+
 def test_scene_quote_labels_bind_frozen_evidence_without_relaxing_arithmetic():
     m = module()
     source = '铺名青石铺，店主白榆。\n买方同意后验收，再点付六两。\n' + SOURCES

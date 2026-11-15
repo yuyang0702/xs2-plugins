@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import html
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -20,7 +21,9 @@ from functools import lru_cache
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import writing_dna
-from dialogue_learning import normalize_dialogue_samples, combine_samples, render_adaptations
+from dialogue_learning import dialogue_context, normalize_dialogue_samples, combine_samples, render_adaptations
+from distill_schema import DIMENSIONS, EXPORT_LAYOUTS, LAYERS, POV_COMPATIBILITY
+from reference_choices import DIMENSION_NAMES, mechanism_scopes
 @lru_cache(maxsize=1)
 def reading():
     spec=importlib.util.spec_from_file_location('reference_reading_goals',Path(__file__).resolve().parents[1]/'prose_policy/reading_contract.py')
@@ -29,10 +32,12 @@ def reading():
 MANIFEST = "learning/cache/windows.json"
 CANDIDATES = "learning/candidates.json"
 ACTIVE = "learning/active.json"
-SCOPES = {"build", "character", "story-plan", "outline", "mvp", "polish", "post-hoc"}
-LAYERS = {"language", "structure", "narrative_lens", "dialogue", "imagery", "theme", "character"}
-POV_COMPATIBILITY = {"direct", "adaptable", "risky"}
+SCOPES = {"build", "character", "novel-advisor", "story-plan", "outline", "mvp", "polish", "post-hoc", "export"}
 APPLICATION_SCOPES = {"short_full", "serial_opening", "serial_chapter", "serial_arc", "general"}
+OPENING_HEADING = re.compile(
+    r"^(?:#{1,6}\s|<h[1-6]\b|第[\s零一二三四五六七八九十百千两〇\d]+[章节卷回部篇]|"
+    r"(?:序章|楔子|引子|正文|上篇|上卷)(?:\s|[：:]|$)|chapter\s|prologue\b)", re.I
+)
 
 # Workflow captures subprocess stdout as UTF-8.  Windows may otherwise select
 # the active console code page (for example GBK), which turns Chinese status
@@ -136,6 +141,7 @@ def split(args):
         window_id = f"window-{len(windows) + 1:04d}"
         packet = {"window_id": window_id, "source_start": start, "source_end": end,
                   "text": raw[start:end], "source_sha256": source_hash}
+        packet["dialogue_context"] = dialogue_context(raw, start, end)
         # IDs let a model select exact evidence without retyping font-obfuscated
         # characters. Positions and excerpts are generated from the real source.
         catalog = []
@@ -167,15 +173,25 @@ def evidence_position(proof, window, raw):
         raise ValueError("证据必须是对象")
     if proof.get("window_id") != window["window_id"]:
         raise ValueError("证据窗口身份不一致")
+    if "end_evidence_id" in proof and not proof.get("evidence_id"):
+        raise ValueError("连续证据需要起始证据编号")
     if proof.get("evidence_id"):
-        selected = next((item for item in window.get("evidence_catalog", [])
-                         if item["evidence_id"] == proof["evidence_id"]), None)
-        if selected is None:
-            raise ValueError("证据编号不属于当前窗口")
-        start, end, excerpt = selected["source_start"], selected["source_end"], selected["excerpt"]
-        if not window["source_start"] <= start < end <= window["source_end"] or raw[start:end] != excerpt:
-            raise ValueError("证据目录与来源快照不一致")
-        return start, end, excerpt, False
+        def catalog_row(identifier):
+            selected = next((item for item in window.get("evidence_catalog", [])
+                             if item["evidence_id"] == identifier), None)
+            if selected is None:
+                raise ValueError("证据编号不属于当前窗口")
+            start, end = selected["source_start"], selected["source_end"]
+            if not window["source_start"] <= start < end <= window["source_end"] or raw[start:end] != selected["excerpt"]:
+                raise ValueError("证据目录与来源快照不一致")
+            return start, end
+
+        start, end = catalog_row(proof["evidence_id"])
+        if "end_evidence_id" in proof:
+            last_start, end = catalog_row(proof["end_evidence_id"])
+            if last_start < start or end - start > 600:
+                raise ValueError("连续证据编号须按原文顺序且跨度不超过 600 字符")
+        return start, end, raw[start:end], False
     excerpt = proof.get("excerpt")
     if not isinstance(excerpt, str) or not excerpt.strip() or len(excerpt) > 300:
         raise ValueError("excerpt 必须是非空字符串，且不超过 300 字符")
@@ -194,6 +210,27 @@ def evidence_position(proof, window, raw):
         raise ValueError("证据摘录在当前窗口有多处匹配，请提供更完整摘录或准确位置")
     start = window["source_start"] + offset
     return start, start + len(excerpt), excerpt, True
+
+
+def checked_export_layout(item, evidence, raw, source_sha256):
+    layout = item["export_layout"]
+    if item.get("dimension") != "layout" or layout not in EXPORT_LAYOUTS:
+        raise ValueError("export_layout 仅可用于 layout，值须为 preserve 或 short_body_only")
+    if layout == "short_body_only":
+        metadata = load("learning/dna/metadata.json")
+        if metadata.get("source", {}).get("text_sha256") != source_sha256:
+            raise ValueError("export_layout 的语料元数据与当前来源不一致")
+        units = metadata["source_units"]
+        if metadata["source_mode"] != "short_full" or len(units) != 1:
+            raise ValueError("export_layout 的 short_body_only 需要单篇短篇全文")
+        unit = units[0]
+        body = raw[unit["source_start"]:unit["source_end"]]
+        opening = body.lstrip()
+        start = unit["source_start"] + len(body) - len(opening)
+        if (not opening or OPENING_HEADING.match(opening)
+                or not any(proof["source_start"] <= start < proof["source_end"] for proof in evidence)):
+            raise ValueError("export_layout 的 short_body_only 需要短篇正文开头的实际证据，且开头无章节标题")
+    return layout
 
 
 def normalize(args):
@@ -224,10 +261,14 @@ def normalize(args):
         mechanism = text_field(item, "mechanism", 100)
         guidance = text_field(item, "transfer_guidance")
         constraints = strings(item, "constraints")
-        scopes = strings(item, "scopes", False)
+        dimension = item.get('dimension')
+        if 'dimension' in item and dimension not in DIMENSIONS:
+            raise ValueError('dimension 不是支持的参考维度')
+        scopes = (strings(item, 'scopes', False) if not dimension
+                  else optional_strings(item, 'scopes', 16))
         misplaced = set(scopes) & APPLICATION_SCOPES
         scopes = [scope for scope in scopes if scope not in misplaced]
-        if not scopes or not set(scopes) <= SCOPES:
+        if (not dimension and not scopes) or not set(scopes) <= SCOPES:
             raise ValueError("候选包含未知流程范围")
         confidence = item.get("confidence")
         if confidence not in {"high", "medium", "low"}:
@@ -269,6 +310,13 @@ def normalize(args):
                     "pov_compatibility": pov_compatibility,
                     "adaptation_guidance": adaptation_guidance, "risk_flags": risk_flags,
                     "application_scope": application_scope}
+        if "dimension" in item:
+            semantic["dimension"] = item["dimension"]
+            semantic["scopes"] = list(mechanism_scopes(semantic))
+        if "export_layout" in item:
+            layout = checked_export_layout(item, checked, raw, source_sha256)
+            if layout != "preserve":
+                semantic["export_layout"] = layout
         objectives=reading().abstract_definitions(item['reading_objectives'],[raw]) if item.get('reading_objectives',[])!=[] else []
         if objectives:semantic['reading_objectives']=objectives
         candidates.append({"candidate_id": "mechanism-" + digest(semantic)[:20],
@@ -291,6 +339,8 @@ def validate_window(args):
         if window is None or not re.fullmatch(r'window-\d{4}',args.window_id):raise ValueError('未知窗口')
         start,end=window['source_start'],window['source_end']
         if window['text']!=raw[start:end]:raise ValueError('窗口与参考资料快照不一致')
+        if 'dialogue_context' in window and window['dialogue_context'] != dialogue_context(raw, start, end):
+            raise ValueError('对白窗口语境与参考资料快照不一致')
         for row in window.get('evidence_catalog',[]):
             a,z=row['source_start'],row['source_end']
             if not start<=a<z<=end or raw[a:z]!=row['excerpt']:raise ValueError('证据目录与参考资料快照不一致')
@@ -312,7 +362,7 @@ def validate_window(args):
         relative=f"learning/cache/rejected/{args.window_id}-{digest(receipt)[:20]}.json"
         if not path(relative).exists():save(relative,receipt)
         feedback=('当前窗口分析未通过：'+message+'\n逐项核对所有数组字段（source_pov、target_pov、application_scope等）及证据编号。'
-            '只能复制当前evidence_catalog中的真实evidence_id，不猜编号、不改来源、不编造引文，也不能为了过检悄悄丢掉仍有依据的分析。'
+            '证据编号须来自当前evidence_catalog，或引用准确摘录。对白可引用当前附加语境。不猜编号、不改来源、不编造引文，也不能为了过检悄悄丢掉仍有依据的分析。'
             '若分析确实不成立，按原文重新判断。未通过回复已归档：'+relative)
         save(f'learning/cache/{args.window_id}.feedback.md',feedback)
         print('<WF_REJECT_UPSTREAM target="agent_distill_window">'+html.escape(feedback)+'</WF_REJECT_UPSTREAM>')
@@ -325,7 +375,7 @@ def _candidate_similarity(left, right):
     paraphrases after evidence validation and keeps all evidence/constraints.
     """
     if left.get('reading_objectives',[])!=right.get('reading_objectives',[]):return 0
-    if left.get("layer") != right.get("layer"):
+    if any(left.get(key) != right.get(key) for key in ("dimension", "layer", "export_layout")):
         return 0.0
     left_text = re.sub(r"[\s，。；、：:（）()]+", "", left.get("mechanism", ""))
     right_text = re.sub(r"[\s，。；、：:（）()]+", "", right.get("mechanism", ""))
@@ -420,10 +470,15 @@ def review_page(data):
     # All source fields are escaped before embedding in a local, script-free form.
     cards = []
     for candidate in data["candidates"]:
-        proofs = "".join(f"<p>{html.escape(proof['excerpt'])}（位置 {proof['source_start']}～{proof['source_end']}）</p>" for proof in candidate["evidence"])
+        proofs = "".join(f"<blockquote style='white-space:pre-wrap'>{html.escape(proof['excerpt'])}</blockquote>"
+                         f"<p>{html.escape(proof['reason'])}（位置 {proof['source_start']}～{proof['source_end']}）</p>"
+                         for proof in candidate["evidence"])
+        dimension = DIMENSION_NAMES.get(candidate.get("dimension"))
+        dimension_label = f"<p>参考维度：{dimension}</p>" if dimension else ""
         goals=''.join('<p>阅读目标：'+html.escape(g['intent'])+'；验收：'+html.escape(g['acceptance_question'])+'；边界：'+html.escape('；'.join(g.get('limits',[])))+'</p>' for g in candidate.get('reading_objectives',[]))
         cards.append(f"<article><label><input type='checkbox' value='{candidate['candidate_id']}'>"
                      f" {html.escape(candidate['mechanism'])}</label><p>{html.escape(candidate['transfer_guidance'])}</p>"
+                     f"{dimension_label}"
                      f"<p>层次：{html.escape(candidate.get('layer', 'narrative_lens'))}；适用流程：{html.escape(', '.join(candidate['scopes']))}；置信度：{candidate['confidence']}；支持窗口：{candidate.get('support_count', 1)}</p>"
                      f"<p>视角兼容：{html.escape(candidate.get('pov_compatibility', 'adaptable'))}</p>"
                      f"<p>边界：{html.escape('；'.join(candidate['constraints']))}</p>{goals}"
@@ -442,7 +497,7 @@ const a=document.createElement('a');a.href=url;a.download='selection.json';a.cli
 
 
 def adopt(args):
-    from reference_choices import with_reference_choices, text
+    from reference_choices import DIMENSION_NAMES, active_blueprint, with_reference_choices, text
     data = load(CANDIDATES)
     if data.get("candidates_sha256") != digest(data["candidates"]):
         raise ValueError("候选文件被修改，请重新蒸馏")
@@ -455,12 +510,8 @@ def adopt(args):
     if not isinstance(ids, list) or any(not isinstance(item, str) for item in ids) or len(set(ids)) != len(ids):
         raise ValueError("必须显式提供不重复的候选 ID 数组")
     by_id = {item["candidate_id"]: item for item in data["candidates"]}
-    previous = {}
-    active = load(ACTIVE) if path(ACTIVE).exists() else {}
+    active, previous = active_blueprint(Path.cwd())
     if active:
-        previous = load(active["blueprint_path"])
-        if digest(previous) != active["blueprint_sha256"]:
-            raise ValueError("已采用蓝图校验失败，不能覆盖已有写法")
         if previous.get("selected_candidate_ids") != [item["candidate_id"] for item in previous["mechanisms"]]:
             raise ValueError("已采用蓝图的机制与选择记录不一致")
     retained = previous.get("selected_candidate_ids", [])
@@ -493,7 +544,7 @@ def adopt(args):
                 "application_scope": choice.get("application_scope", ["general"]),
                 "limits": choice.get("limits", []), "adaptation_status": "confirmed"})
     if active and not additions and not any(reference_additions.values()):
-        render("all")
+        render_adopted_contexts()
         print(f"<script_out>已保留 {len(retained)} 条写法，本次没有新增，无需重复采用。</script_out>")
         return
     version = active.get("version", 0) + 1
@@ -505,6 +556,23 @@ def adopt(args):
             "application_scope", "support_count", "variants")}
         if by_id[item].get('reading_objectives'):
             mechanism['reading_objectives']=reading().definitions(by_id[item]['reading_objectives'])
+        dimension = by_id[item].get('dimension')
+        if dimension:
+            if dimension not in DIMENSION_NAMES:
+                raise ValueError('蒸馏写法维度无效')
+            mechanism.update(dimension=dimension, evidence=by_id[item]['evidence'])
+            if dimension == 'voice' and by_id[item].get('dialogue_samples'):
+                mechanism['layer'] = 'dialogue'
+            if dimension == 'layout' and by_id[item].get('export_layout'):
+                mechanism['export_layout'] = by_id[item]['export_layout']
+            if dimension != 'topic' and not mechanism.get('reading_objectives'):
+                mechanism['reading_objectives'] = [{
+                    'dimension': 'voice' if dimension == 'voice' else 'custom',
+                    'intent': mechanism['transfer_guidance'],
+                    'planning_question': '本书哪一场的实际处境适合借鉴这条方法？',
+                    'acceptance_question': '当前正文哪里体现了这条写法？如果没有相符的用法，可以跳过。',
+                    'limits': mechanism.get('constraints') or [],
+                }]
         mechanism["source"] = by_id[item].get("source") or data["source"]
         mechanisms.append(mechanism)
     sources = list(previous.get("sources") or ([previous["source"]] if previous.get("source") else []))
@@ -526,7 +594,7 @@ def adopt(args):
         raise ValueError("蓝图版本已存在，不允许覆盖")
     save(target, blueprint)
     save(ACTIVE, {"version": version, "blueprint_path": target, "blueprint_sha256": digest(blueprint)})
-    render("all")
+    render_adopted_contexts()
     print(f"<script_out>已保留 {len(retained)} 条写法；本次新增 {len(additions)} 条写法、{len(reference_additions['style'])} 条风格、{len(reference_additions['conflict'])} 条冲突。创作蓝图版本 v{version:04d}</script_out>")
 
 
@@ -653,22 +721,43 @@ def check_originality(args):
     print(f"<script_out>原创性检测完成：{status}。最高相似度 {max_sim:.1%}。报告已保存至 learning/originality_report.md</script_out>")
 
 
+def render_adopted_contexts():
+    render('all')
+    for scope in ('novel-advisor', 'character', 'story-plan', 'outline', 'export'):
+        render(scope)
+    for scope in ('mvp', 'polish'):
+        if not path(f'learning/receipts/{scope}.json').is_file():
+            render(scope)
+
+
 def render(scope, chapter=None):
-    lines = ["# 用户已选写法", ""]
+    from reference_choices import DIMENSION_NAMES, active_blueprint, mechanism_scopes, text
+    lines = ["# 用户已选写法（创作参考）", "",
+             "本页的蒸馏写法、风格、对白和冲突方法均按场景自选，可改用或略过。以作者明确要求、人物此刻的处境和声音、以及本书事实为准。", ""]
     version = 0
     has_reference = False
     dialogue_receipt = {'applied':0, 'pending':0, 'skipped':0}
-    if path(ACTIVE).exists():
-        active = load(ACTIVE)
-        blueprint = load(active["blueprint_path"])
-        if digest(blueprint) != active["blueprint_sha256"]:
-            raise ValueError("创作蓝图被修改，请重新确认")
+    candidate_ids = []
+    shown_guidance = {}
+    active, blueprint = active_blueprint(Path.cwd())
+    if active:
         version = active["version"]
-        lines.extend([f"蓝图版本：v{version:04d}。只将已选机制用于当前阶段；与作者当前创意冲突时说明冲突，禁止强行套用。", ""])
+        lines.extend([f"蓝图版本：v{version:04d}。以下是适合当前阶段的参考。", ""])
         for item in blueprint["mechanisms"]:
-            if scope != "all" and scope not in item["scopes"]:
+            dimension = item.get('dimension')
+            if scope == 'all' and dimension or scope != 'all' and scope not in mechanism_scopes(item):
                 continue
+            if dimension == 'voice' and item.get('layer') == 'dialogue' and scope in ('mvp', 'polish'):
+                continue  # Dialogue guidance is injected by the verified scene adaptation below.
             has_reference = True
+            if item.get('candidate_id'):
+                candidate_ids.append(item['candidate_id'])
+            if dimension:
+                shown_guidance[item['candidate_id']] = item['transfer_guidance']
+                lines.extend([f"## {DIMENSION_NAMES[dimension]}", item['transfer_guidance']])
+                limits = text(item.get('constraints'))
+                lines.extend(['使用边界：' + limits, ''] if limits else [''])
+                continue
             lines.extend([f"## {item['mechanism']}", item["transfer_guidance"],
                           "分析层次：" + str(item.get("layer") or "narrative_lens"),
                           "使用边界：" + "；".join(item.get("constraints") or []),
@@ -676,8 +765,7 @@ def render(scope, chapter=None):
                           "视角适配：" + str(item.get("adaptation_guidance") or "无"),
                           "篇幅适用：" + "、".join(item.get("application_scope") or ["general"]),
                           "风险提示：" + ("；".join(item.get("risk_flags") or []) or "无"), ""])
-        from reference_choices import text
-        for kind, label in (("styles", "本书已确认的风格原则"), ("conflicts", "本书已确认的冲突推进参考")):
+        for kind, label in (("styles", "本书已选风格参考"), ("conflicts", "本书已选冲突推进参考")):
             values = blueprint.get(kind, [])
             if not values:
                 continue
@@ -688,17 +776,32 @@ def render(scope, chapter=None):
                 lines.extend([f"## {index}. 已确认适配", item["guidance"], "使用边界：" + text(item.get("limits")), ""])
         lines.extend(["参考风格与本书基线共同使用：已有正文的统一风格、事实、人物声音和作者意图优先。发现冲突时提出适配建议，不自动替换基线，不清除旧规则。",
                       "风格是表达倾向，不是句长或标点配额；根据场景允许变化，避免每段机械执行全部规则。",
-                      "冲突参考须落实成本书的目标、前置伏笔、阻碍、行动、代价和回收，写入现有大纲与冲突/伏笔账本。短篇回收核心问题，长篇普通章保留主线压力；无前置依据不得突发新危机。", ""])
-        dialogue_lines, dialogue_receipt = render_adaptations(Path.cwd(), blueprint, scope, chapter)
+                      "使用冲突参考时，可借鉴它怎样改变人物的选择、代价或关系，按本书情节取舍。", ""])
+        excluded = {item['candidate_id'] for item in blueprint['mechanisms']
+                    if item.get('dimension') and scope not in mechanism_scopes(item)}
+        eligible = [identifier for identifier in blueprint.get('selected_candidate_ids', [])
+                    if identifier not in excluded]
+        dialogue_lines, dialogue_receipt = render_adaptations(
+            Path.cwd(), {**blueprint, 'selected_candidate_ids': eligible}, scope, chapter)
         lines.extend(dialogue_lines)
+        has_reference = has_reference or bool(dialogue_receipt['applied'])
     if not has_reference:
         lines.append("本阶段没有已选参考写法，按作者原创设定正常创作。")
-    objectives=reading().for_book(Path.cwd()) if path(ACTIVE).exists() and any(r.get('reading_objectives') for r in blueprint.get('mechanisms',[])) else None
+    objectives=reading().for_book(Path.cwd()) if active and any(r.get('reading_objectives') for r in blueprint.get('mechanisms',[])) else None
     if objectives:
-        lines.extend(['','## 本书已采用阅读目标',json.dumps(objectives,ensure_ascii=False,indent=2),
-            '以上是本书自选目标；规划说明如何落实，写作体现其作用，验收引用当前正文逐项核对。与本书风格、世界和作者范围冲突时先说明，不强行套用。'])
+        adapted = {match['reference_id'] for match in dialogue_receipt.get('matches', [])}
+        objectives['objectives'] = [goal for goal in objectives['objectives']
+                                    if goal['source_candidate_id'] in candidate_ids
+                                    or goal['source_candidate_id'] in adapted]
+        for goal in objectives['objectives']:
+            if goal['intent'] == shown_guidance.get(goal['source_candidate_id']):
+                goal.pop('intent')
+        objectives = objectives if objectives['objectives'] else None
+    if objectives:
+        lines.extend(['','## 范文阅读效果参考',json.dumps(objectives,ensure_ascii=False,indent=2),
+            '按当前场景需要借鉴阅读效果，审核可给建议，采用与否由人物和场景决定。'])
     advisor_file = path("learning/advisor_report.json")
-    if advisor_file.exists():
+    if advisor_file.exists() and scope not in {'novel-advisor', 'export'}:
         try:
             advisor = load("learning/advisor_report.json")
             lines.extend(["", "# 小说顾问建议", "以下建议用于辅助创作决策；如果与作者明确要求冲突，以作者要求为准。", json.dumps(advisor, ensure_ascii=False, indent=2)])
@@ -709,7 +812,9 @@ def render(scope, chapter=None):
     save(target, "\n".join(lines))
     # Per-stage receipt makes the consumed version inspectable without inserting provenance in prompts.
     save(f"learning/receipts/{scope}.json", {"blueprint_version": version, "context_path": target,
-                                            "dialogue":dialogue_receipt, "chapter":chapter,
+                                            "blueprint_sha256": active.get('blueprint_sha256'),
+                                            "dialogue":dialogue_receipt, "chapter":chapter, "candidate_ids":candidate_ids,
+                                            "task_id": os.environ.get('TASK_ID', ''),
                                             "context_sha256": digest("\n".join(lines) + "\n")})
 
 

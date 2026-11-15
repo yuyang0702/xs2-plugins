@@ -238,7 +238,6 @@ def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedba
             support.archive_store().publish_views(root,lambda write:write(root,'meta/length_policy.json',selected),
                 check_policy)
     chapter=quality.chapter_number(chapter);config=policy(root)
-    if config is None and book.resolve(root).get('reading_contract'):config={'schema':1,'ownership':'author','origin':'adopted_reading_goals'}
     if config is None:return {'enabled':False}
     values=support.load(root,'.novel-project.json',{}).get('values',{})
     hashes=sources(root,chapter);feedback=values.get('author_feedback_file') or ''
@@ -257,7 +256,7 @@ def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedba
         'intent':intent(root),
         'nominal_target':target,'author_range':list(quality.target_range(target)) if target and
             (config['ownership']=='author' or target!=values.get('target_word_count','')) else None,
-        'book_contract':frozen['contract'],'source_hashes':hashes,
+        'book_contract':book.reading().legacy_book_view(frozen['contract']),'source_hashes':hashes,
         'body':body,'reader_report':support.load(root,f'story/{chapter}/reader_report.json'),
         'chapter_plan':support.load(root,f'planning/chapters/{chapter}.json'),
         'author_feedback':author,'automatic_revision_advice':advice,'authored_selection':selected,
@@ -347,7 +346,8 @@ def validate_plan(request,plan):
     elif total_min!=lo or total_max!=hi:raise ValueError('分段篇幅总和与章节配额不一致')
     expected={g['id'] for g in request['book_contract'].get('reading_contract',{}).get('objectives',[])}
     goals=plan.get('goal_plans',[])
-    if (not isinstance(goals,list) or len(goals)!=len(expected) or {r.get('goal_id') for r in goals}!=expected):raise ValueError('规划须逐项覆盖本书已采用阅读目标')
+    if (not isinstance(goals,list) or len({r.get('goal_id') for r in goals})!=len(goals)
+            or not {r.get('goal_id') for r in goals}<=expected):raise ValueError('参考写法规划编号无效或重复')
     for row in goals:
         if (row.get('status') not in ('planned','not_applicable') or not isinstance(row.get('basis'),str) or not row['basis'].strip()
                 or not isinstance(row.get('segment_ids'),list) or len(set(row['segment_ids']))!=len(row['segment_ids'])
@@ -393,8 +393,8 @@ def accept(root,task,plan,review):
     if book.resolve(root)!=request['book_contract']:raise ValueError('本书规则在规划时变化')
     expected={g['id'] for g in request['book_contract'].get('reading_contract',{}).get('objectives',[])}
     goals=review.get('goal_checks',[])
-    if (not isinstance(goals,list) or len(goals)!=len(expected) or {r.get('goal_id') for r in goals}!=expected
-            or any(r.get('supported') is not True or not isinstance(r.get('reason'),str) or not r['reason'].strip()
+    if (not isinstance(goals,list) or len({r.get('goal_id') for r in goals})!=len(goals) or not {r.get('goal_id') for r in goals}<=expected
+            or any(type(r.get('supported')) is not bool or not isinstance(r.get('reason'),str) or not r['reason'].strip()
                 or not isinstance(r.get('style_basis'),str) or not r['style_basis'].strip() for r in goals)):raise ValueError('阅读目标规划缺少独立复查的本书风格与依据')
     number=request['chapter'];path=f'planning/length/{number}.json'
     stable={p:h for p,h in request['source_hashes'].items() if p in support.CHECKPOINT_FILES or p in (
@@ -414,17 +414,19 @@ def accept(root,task,plan,review):
 
 
 def current(root,chapter):
+    if policy(root) is None:return None
     reading=book.resolve(root).get('reading_contract')
-    if policy(root) is None and not reading:return None
     path=f'planning/length/{chapter}.json'
     if not support.safe(root,path).is_file():return None
     quota=support.serial()._signed_output(root,path)
-    if quota.get('reading_contract_sha256')!=(identity(reading) if reading else None):raise ValueError('本书阅读目标变化，已批准规划须重新审查')
     support.verify(root,quota['stable_sources'])
     current_intent={k:v for k,v in intent(root).items() if k in ('target_word_count','human_intent','world_intent')}
     if quota['author_intent']!=current_intent or quota['authored_selection']!=feedback_layers(root)[2]:
         raise ValueError('作者篇幅或原意见选择变化，旧章节预算不再生效')
     if quota['book_contract_sha256']!=support.archive_store().contract(root,persistent=True):raise ValueError('本书规则契约变化，篇幅预算须重排')
+    if quota.get('reading_contract_sha256')!=(identity(reading) if reading else None):
+        quota={**quota,'plan':{k:v for k,v in quota['plan'].items() if k!='goal_plans'},
+               'review':{k:v for k,v in quota['review'].items() if k!='goal_checks'}}
     return quota
 
 

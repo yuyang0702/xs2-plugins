@@ -72,7 +72,10 @@ def candidate(directory,phase):
     binding=read(directory/'binding.json')
     if phase=='expression' and binding.get('expression_format')=='patches':
         source=read(directory/'expression-input.json')
-        return revision.apply_patches(source['source_body'],value,protected_phrases=source['book_contract']['protected_phrases']).strip()
+        revised=revision.apply_patches(source['source_body'],value,protected_phrases=source['book_contract']['protected_phrases']).strip()
+        if binding.get('inspect_first') and value['edits'] and revised==source['source_body']:
+            raise ValueError('这组补丁应用后正文未变，请撤回无实际作用的补丁。')
+        return revised
     if not isinstance(value,dict) or set(value)!={'body'} or not isinstance(value['body'],str) or not value['body'].strip():
         raise ValueError('修稿必须交付仅含body的完整正文对象')
     return value['body'].strip()
@@ -94,17 +97,34 @@ QUESTION_CHECK = (
 
 def audit_value(directory,phase,body,contract,binding):
     source=read(directory/f'{phase}-input.json')
+    compare=phase=='expression' and binding.get('inspect_first') and body!=source['source_body']
+    edits=read(directory/'expression-draft.json')['edits'] if compare else []
+    narrator=policy.first_person_narrator(contract,binding['pov'])
+    event_guidance=''
+    if any('expected_state' in row for row in contract['events']):
+        event_guidance=(
+            policy.EVENT_STATE_GUIDANCE+'event_observations.observed_state 填正文实际状态。'
+            '正文写成其他状态时仍引用这一步的当前原文。只有未出现才把 observed_state 和 quote 都填 null。'
+        )
     return {'schema':1,'phase':phase,'candidate_sha256':body_digest(body),'contract_sha256':policy.contract_digest(contract),
         'book_contract_sha256':binding['book_contract_sha256'],
         'candidate_body':body,'continuity_contract':contract,'source_body':source['source_body'],
+        **({'edits':edits,'edits_sha256':packet.digest(edits)} if edits else {}),
+        **({'facts_from_confirmed_sources':True} if phase=='facts' and binding.get('facts_from_confirmed_sources') else {}),
         'source_constraints':source['source_constraints'],'book_contract':source['book_contract'],
         'narrative_pov':binding['pov'],'target_word_count':binding['target'],'actual_word_count':length.count_prose(body),
+        **({'first_person_narrator_fact_id':narrator} if narrator else {}),
         'evidence_guidance':('核对先发生的动作与后来告知的区别。正文明确写“告诉我……已经做完”时，分别引告知动作和已完成的分句。'
             '非货币物品先在同一交付场面明确数量、随后由人物接过时，取从数量到交付的连续原文。'
             '数量引文须包含明确数字及单位，并位于对应事件引文内；两个引文可使用同一段足够短的连续原文。'
             'fact_observations 记录指向该共享事实的称名或替换。容器、部件、同场另一物件只作上下文。'
             '存在真实的指代替换时，在 issues 的 facts 中同时给出事实 ID、当前原文及实际替换关系。'
-            + COMMITMENT_CHECK + (QUESTION_CHECK if phase == 'expression' else '')),
+            + ('first_person_narrator_fact_id 是冻结计划中的第一人称叙述者。正文未自称姓名时，'
+               '核对叙述中的第一人称指代，用实际代词作为 value，引用当前叙述原文，填写 is_name=false 及真实 same_referent。'
+               '区分旁白与对话中别人的自称。读者能跟住「我」时不要求正文补名；视角或身份确实变化再举证。' if narrator else '')
+            + COMMITMENT_CHECK + event_guidance
+            + (QUESTION_CHECK + policy.expression_rules.GUARD_GUIDANCE if phase == 'expression' else '')
+            + (revision.PRESERVATION_GUIDANCE if compare else '')),
         'evidence_catalog':[{k:r[k] for k in ('id','kind','text')} for r in policy.audit_evidence.catalog(body,policy.audit_evidence.unit_names(contract))]}
 
 
@@ -119,15 +139,44 @@ def patch_length_budget(source,target):
     return revision.length_edit_budget(length.count_prose(source),length.target_range(target))
 
 
+def bind_audit_contract_echo(report, context):
+    """Repair a one-digit echo only after both independent bindings match."""
+    echoed = report.get('contract_sha256') if isinstance(report, dict) else None
+    expected = context['contract_sha256']
+    if (isinstance(echoed, str) and re.fullmatch(r'[0-9a-f]{64}', echoed)
+            and all(report.get(key) == context[key] for key in ('candidate_sha256', 'book_contract_sha256'))
+            and sum(a != b for a, b in zip(echoed, expected)) == 1):
+        return {**report, 'contract_sha256': expected}
+    return report
+
+
 def audit_candidate(directory, report, body, contract, phase, *, arithmetic=None):
+    source = read(directory/'facts-input.json')
     facts = read(directory/'facts-audit.json') if phase == 'expression' else None
-    issues = policy.audit_issues(report, body, contract, phase, arithmetic=arithmetic, facts_audit=facts)
+    binding = read(directory/'binding.json')
+    context = {'candidate_sha256': body_digest(body), 'contract_sha256': policy.contract_digest(contract),
+               'book_contract_sha256': binding['book_contract_sha256']}
+    report = bind_audit_contract_echo(report, context)
+    facts = bind_audit_contract_echo(facts, context)
+    if phase == 'expression':
+        goals = source['book_contract'].get('reading_contract', {})
+        reading = book_policy.reading()
+        report = reading.without_unrequested_checks(report, goals)
+    issues = policy.audit_issues(report, body, contract, phase, arithmetic=arithmetic,
+                                facts_audit=facts, narrative_pov=source.get('narrative_pov'))
     if phase == 'expression':
         resolved = policy.audit_evidence.resolve_report(report, body, policy.evidence_unit_names(contract))
-        goals = read(directory/'facts-input.json')['book_contract'].get('reading_contract', {})
-        reading_issues = book_policy.reading().validate_checks(resolved, body, goals)
-        issues.extend({'category': 'reading_goal', 'reason': i['impact'], 'goal': i['goal']}
-                      for i in reading_issues if i['priority'] in ('medium', 'high'))
+        reading.validate_checks(resolved, body, goals)
+        policy.expression_rules.validate_guard_checks(resolved,body,source['source_constraints'])
+        expression_source=read(directory/'expression-input.json')['source_body']
+        if binding.get('inspect_first') and body!=expression_source:
+            edits=read(directory/'expression-draft.json')['edits']
+            if report.get('edits_sha256')!=packet.digest(edits):
+                raise ValueError('核验报告未绑定当前补丁及分组，请从最新输入复制 edits_sha256 并重新对读。')
+            for row in revision.review_changes(edits,resolved.get('change_reviews'),source=expression_source,candidate=body):
+                issues.append({'category':'expression_regression','reason':row['reason'],
+                               'excerpts':[row['before_excerpt']],
+                               'goal':'结合整场恢复这组补丁损失的作用，撤回无净改善的独立改动。'})
     return issues
 
 
@@ -172,7 +221,7 @@ def arithmetic_for(root, binding, phase, approved=None):
     return policy.Arithmetic(policy.amount, verified), journal, scope
 
 
-def reject_candidate(directory,phase,binding,body,issues):
+def reject_candidate(directory,phase,binding,body,issues,*,retry=True):
     text=('按本书文风与世界规则修正有据的问题，保留其他已成立内容。\n'
           f'程序实测当前候选{length.count_prose(body)}实字，目标{binding["target"]}。\n'+json.dumps(issues,ensure_ascii=False,indent=2))
     if phase=='expression' and binding.get('expression_format')=='patches' and (directory/'expression-input.json').is_file():
@@ -194,18 +243,20 @@ def reject_candidate(directory,phase,binding,body,issues):
                        'old仍须取冻结原文，完整重交整组补丁并保留其他已成立修改，不把候选新增句当作old。\n'+
                        json.dumps(retained,ensure_ascii=False,indent=2))
     length.atomic_text(directory/f'{phase}-feedback.md',text)
-    reject('agent_guard_'+phase+'_repair',text.replace('\n',' '))
+    if retry:
+        reject('agent_guard_'+phase+'_repair',text.replace('\n',' '))
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('prepare','candidate','commit','finish','unprepared'))
+    parser.add_argument('action',choices=('prepare','precheck','approved','candidate','commit','finish','unprepared'))
     parser.add_argument('--phase',choices=('facts','expression'),default='facts')
     parser.add_argument('--multi-dir',required=True)
     parser.add_argument('--target',required=True)
     parser.add_argument('--pov',choices=('first_person','third_person'),required=True)
     parser.add_argument('--expression-format',choices=('body','patches'),default='body')
     parser.add_argument('--source-file',default='cache/si/chapter.json')
+    parser.add_argument('--inspect-first',action='store_true')
     args=parser.parse_args();root=Path.cwd();task=os.environ.get('TASK_ID','')
     if args.action=='unprepared':raise ValueError('未准备事实核验，不能跳过检查发布正文')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',task):raise ValueError('修稿需要有效任务标识')
@@ -226,21 +277,27 @@ def main():
         assembled=read(source_path)
         if not isinstance(assembled,dict) or not isinstance(assembled.get('body'),str) or not assembled['body'].strip():raise ValueError('缺少待核验完整初稿')
         source_body=assembled['body'].strip()
+        file=directory/'binding.json'
+        existing=read(file) if file.is_file() else None
         binding={'schema':1,'task_id':task,'plan_sha256':plan_sha,'sources_sha256':source_sha,
                  'composition_quota_sha256':quota_sha,
                  'expression_format':args.expression_format,
+                 **({'facts_from_confirmed_sources':True} if existing is None or existing.get('facts_from_confirmed_sources') else {}),
                  'model_view':packet.PROTOCOL,
                  'book_contract_sha256':book_policy.digest(current_book),
                  'contract_sha256':policy.contract_digest(contract),'source_sha256':body_digest(source_body),
                  'target':args.target,'pov':args.pov}
-        file=directory/'binding.json'
-        if file.exists() and read(file)!=binding:raise ValueError('修稿来源或契约已有变化，请创建新任务')
+        if args.inspect_first:
+            binding['inspect_first']=True
+        if existing is not None and existing!=binding:raise ValueError('修稿来源或契约已有变化，请创建新任务')
         save(file,binding);save(directory/'contract.json',contract)
         save(directory/'facts-input.json',{'phase':'facts','source_body':source_body,'continuity_contract':contract,
              'book_contract':current_book,
              'source_constraints':(multi/'planning-sources.md').read_text(encoding='utf-8-sig'),
              'narrative_pov':args.pov,'target_word_count':args.target})
         save(directory/'facts-model.json',packet.local(read(directory/'facts-input.json'),'draft-writer'))
+        if binding.get('inspect_first'):
+            audit_context(directory,'facts',source_body,contract,binding)
         if assembled.get('resume_expression_commit'):
             restore_expression_commit(root,project,number,assembled,source_path,directory,contract,binding)
         for phase in ('facts','expression'):
@@ -265,9 +322,29 @@ def main():
             or book_policy.digest(facts_source.get('book_contract'))!=binding['book_contract_sha256']
             or facts_source.get('source_constraints')!=(multi/'planning-sources.md').read_text(encoding='utf-8-sig')):
         raise ValueError('修稿原文或事实输入已有变化，不能沿用绑定')
-    phase=args.phase;repair='agent_guard_'+phase+'_repair';auditor='agent_guard_'+phase+'_audit'
+    phase=args.phase;repair='agent_guard_'+phase+'_repair';precheck=args.action=='precheck'
+    auditor='agent_guard_'+phase+('_inspect' if precheck else '_audit')
+    if precheck and not binding.get('inspect_first'):
+        raise ValueError('初稿预审缺少冻结的工作流绑定')
+    if args.action=='approved':
+        source=read(directory/f'{phase}-input.json')['source_body']
+        approved=read(directory/f'{phase}-approved.json')
+        report_path=directory/f'{phase}-audit.json'
+        if (approved['body']!=source or approved['body_sha256']!=body_digest(source)
+                or approved['contract_sha256']!=binding['contract_sha256']
+                or approved['audit_sha256']!=digest(report_path)
+                or read(report_path)['candidate_sha256']!=approved['body_sha256']):
+            raise ValueError('原样通过的稿件与核验凭据已有变化')
+        return
     if binding.get('model_view'):
         packet.verify(read(directory/f'{phase}-model.json'),read(directory/f'{phase}-input.json'),'draft-writer')
+    if args.action=='finish':
+        receipt=read(directory/'final-receipt.json');current=read(length.safe_path(root,'cache/si/chapter.json'))
+        if (receipt['body_sha256']!=body_digest(current['body']) or receipt['body_sha256']!=body_digest(receipt['body'])
+                or receipt['contract_sha256']!=binding['contract_sha256'] or receipt['audit_sha256']!=digest(directory/'expression-audit.json')
+                or receipt['body_sha256']!=read(directory/'expression-audit.json')['candidate_sha256']):
+            raise ValueError('最终采用稿与核验凭据已有变化，不能发布')
+        return
     if phase=='expression':
         approved=read(directory/'facts-approved.json');expression=read(directory/'expression-input.json')
         if (approved['body_sha256']!=body_digest(approved['body']) or approved['contract_sha256']!=binding['contract_sha256']
@@ -277,22 +354,16 @@ def main():
                 or approved['audit_sha256']!=digest(directory/'facts-audit.json')
                 or read(directory/'facts-audit.json')['candidate_sha256']!=approved['body_sha256']):
             raise ValueError('已通过的硬事实原文或表达修订输入已有变化')
-        payload=read(directory/'expression-draft.json')
+        payload={} if precheck else read(directory/'expression-draft.json')
         if payload.get('status')=='needs_replan':
             if set(payload)!={'status','source_sha256','edits','reason','evidence'} or payload['edits']!=[]:raise ValueError('初稿冲突不能夹带正文修改')
             save(directory/'composition-conflict.json',draft_conflict(root,directory,binding,payload,payload.get('reason'),payload.get('evidence')))
             raise ValueError('CONTENT_LENGTH_CONFLICT：初稿表达须重排分场或篇幅，未发布。')
-    if args.action=='finish':
-        receipt=read(directory/'final-receipt.json');current=read(length.safe_path(root,'cache/si/chapter.json'))
-        if (receipt['body_sha256']!=body_digest(current['body']) or receipt['body_sha256']!=body_digest(receipt['body'])
-                or receipt['contract_sha256']!=binding['contract_sha256'] or receipt['audit_sha256']!=digest(directory/'expression-audit.json')
-                or receipt['body_sha256']!=read(directory/'expression-audit.json')['candidate_sha256']):
-            raise ValueError('最终采用稿与核验凭据已有变化，不能发布')
-        return
-    try:body=candidate(directory,phase)
+    try:
+        body=read(directory/f'{phase}-input.json')['source_body'] if precheck else candidate(directory,phase)
     except (ValueError,FileNotFoundError) as exc:
         reject(repair,str(exc));return
-    if phase=='expression':
+    if phase=='expression' and not precheck:
         lower,upper=length.target_range(args.target);actual=length.count_prose(body)
         if not lower<=actual<=upper:
             path=directory/'length-candidates.json';history=read(path) if path.is_file() else []
@@ -319,7 +390,14 @@ def main():
     context=read(context_path) if context_path.exists() else None
     if context is None or context!=audit_value(directory,phase,body,contract,binding):
         audit_context(directory,phase,body,contract,binding)
-        reject(auditor,'候选已更新，读取最新核验输入重新审查，旧核验不可复用');return
+        reject(auditor,'draft_audit_refresh: 候选已更新，读取最新核验输入重新审查，旧核验不可复用');return
+    if report_path.is_file():
+        try:
+            prior = read(report_path)
+        except ValueError:
+            prior = None
+        if isinstance(prior, dict) and prior.get('candidate_sha256') != context['candidate_sha256']:
+            reject(auditor,'draft_audit_refresh: 报告未绑定当前候选；直接从最新输入复制 candidate_sha256、contract_sha256 和 book_contract_sha256，并重做实际核验。');return
     try:
         report=read(report_path)
         if binding['expression_format']=='patches' and report.get('book_contract_sha256')!=binding['book_contract_sha256']:
@@ -337,11 +415,16 @@ def main():
             issues=[{'category':'length','reason':f'最终正文实测{actual}，目标{lower}—{upper}，按实字复核后交付',
                      'goal':'先保留已通过的事实与顺序，压缩重复后将有效交涉和选择后果写足；不添新事实或用同义解释凑字'}]
     if issues:
-        reject_candidate(directory,phase,binding,body,issues);return
+        reject_candidate(directory,phase,binding,body,issues,retry=not precheck)
+        if precheck:
+            print(f'<WF_VAR>guard_{phase}_needs_repair:yes</WF_VAR>')
+        return
     receipt={'body':body,'body_sha256':body_digest(body),'contract_sha256':binding['contract_sha256'],
              'book_contract_sha256':binding['book_contract_sha256'],
              'source_sha256':body_digest(read(directory/f'{phase}-input.json')['source_body']),
              'audit_sha256':digest(report_path),'phase':phase}
+    if bind_audit_contract_echo(report, context) is not report:
+        receipt['audit_contract_echo_corrected'] = True
     if journal is not None and arithmetic.values:
         details = {'task_id': task, 'scope': arithmetic_scope, 'phase': phase,
                    'body_sha256': receipt['body_sha256'], 'audit_sha256': receipt['audit_sha256'],
@@ -359,9 +442,13 @@ def main():
              'source_constraints':facts_source['source_constraints'],
              'narrative_pov':args.pov,'target_word_count':args.target})
         save(directory/'expression-model.json',packet.local(read(directory/'expression-input.json'),'draft-writer'))
+        if binding.get('inspect_first'):
+            audit_context(directory,'expression',body,contract,binding)
     else:
         save(directory/'final-receipt.json',receipt)
         save(length.safe_path(root,'cache/si/chapter.json'),{'body':body})
+    if precheck:
+        print(f'<WF_VAR>guard_{phase}_needs_repair:no</WF_VAR>')
 
 
 if __name__=='__main__':main()

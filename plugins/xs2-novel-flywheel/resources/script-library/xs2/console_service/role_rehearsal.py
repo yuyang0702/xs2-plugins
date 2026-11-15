@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 from random import SystemRandom
+import re
 from time import perf_counter
 
 
@@ -23,15 +24,23 @@ BLIND = '''你是本次独立盲读者，只读两段匿名小说正文。只依
 两个标签都要填写，每组引文至多两条，找不到可给空数组。引文保留原字、标点和空格，不添引号或省略号。'''
 
 
-def _object(reply, keys):
+def _object(reply, keys, *, optional=()):
     def unique(pairs):
         obj = dict(pairs)
         if len(obj) != len(pairs):
             raise ValueError('结果有重复字段。')
         return obj
 
-    value = json.loads(reply, object_pairs_hook=unique) if isinstance(reply, str) else reply
-    if not isinstance(value, dict) or set(value) != set(keys):
+    if isinstance(reply, str):
+        reply = reply.strip()
+        fence = re.fullmatch(r'```(?:json)?[ \t]*\r?\n(.*?)\r?\n```', reply, re.DOTALL | re.IGNORECASE)
+        if fence:
+            reply = fence.group(1)
+        value = json.loads(reply, object_pairs_hook=unique)
+    else:
+        value = reply
+    required = set(keys)
+    if not isinstance(value, dict) or not required <= value.keys() <= required.union(optional):
         raise ValueError('结果字段不完整。')
     return value
 

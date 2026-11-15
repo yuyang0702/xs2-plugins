@@ -4,7 +4,7 @@ import copy
 
 def fields(reason):
     text=str(reason)
-    if any(token in text for token in ('已采用阅读目标未逐项验收','阅读目标编号未知或重复','阅读目标缺少真实判断','阅读目标验收引文不在当前正文','阅读目标派生问题与实际判断不符','阅读目标问题编号与模型问题冲突')):return ['reading_checks']
+    if any(token in text for token in ('阅读参考意见须为数组','阅读目标编号未知或重复','阅读目标缺少真实判断','阅读目标验收引文不在当前正文','阅读目标派生问题与实际判断不符','阅读目标问题编号与模型问题冲突')):return ['reading_checks']
     if '原有实质问题未逐项复核' in text or '问题解决情况缺少' in text:return ['issue_outcomes']
     if '表达验收' in text or '本书声线核对' in text:return ['expression_checks']
     if '改动复核' in text or '局部改动都须独立核对' in text or '改动净效果缺少' in text:return ['change_reviews']
