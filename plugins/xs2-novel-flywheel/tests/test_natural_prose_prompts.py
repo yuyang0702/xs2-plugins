@@ -40,18 +40,43 @@ def test_quota_audit_distinguishes_a_ban_from_an_instruction_rejecting_quotas():
     assert not MECHANICAL.search("写法不是每段必须执行的清单。")
 
 
+def test_single_writer_only_receives_each_static_paragraph_once(prompt_manager):
+    prompt = prompt_manager.get_prompt_text('novel-single-writer')
+    paragraphs = [part.strip() for part in prompt.split('\n\n') if len(part.strip()) >= 80]
+    assert len(paragraphs) == len(set(paragraphs))
+
+
+def test_scene_writer_does_not_override_the_books_narration_scope():
+    workflow = json.loads((RESOURCES / 'workflows/mvp/definition.json').read_text(encoding='utf8'))
+    scenes = [node for node in workflow['nodes'] if node.get('agent_type') == 'novel-multi-scene-writer'
+              and '{{multi_brief_' in node.get('first_message', '')]
+    assert len(scenes) == 6
+    for node in scenes:
+        message = node['first_message']
+        assert '{{book_contract_file}}' in message
+        assert '只写既定焦点人物所见' not in message
+        assert '不叙述旁人内心' not in message
+
+
 def test_scene_opening_guidance_keeps_setup_separate_from_later_progress():
     targets = {
-        'mvp': ('agent_sw', 'agent_guard_expression_audit'),
-        'polish': ('agent_sc', 'agent_pl', 'agent_local_review'),
-        'reader-sim': ('agent_blind_reader', 'agent_context_reader'),
+        'mvp': ('agent_sw',),
+        'reader-sim': ('agent_blind_reader',),
     }
     for workflow, ids in targets.items():
         definition = json.loads((RESOURCES / f'workflows/{workflow}/definition.json').read_text(encoding='utf-8'))
         nodes = {node['id']: node for node in definition['nodes']}
         for identity in ids:
             message = nodes[identity]['first_message']
-            assert '交锋开场' in message and '后半段' in message and '自报姓名' in message, (workflow, identity)
+            assert '交锋开场' in message and '后半段' in message, (workflow, identity)
+            if workflow == 'reader-sim':
+                assert '首次有实质往来的互动' in message and '听话人刚知道什么' in message
+            else:
+                assert '自报姓名' in message
+    polish = json.loads((RESOURCES / 'workflows/polish/definition.json').read_text(encoding='utf-8'))
+    prompts = {node['id']: node['first_message'] for node in polish['nodes']}
+    assert '留白、同句新增作用和符合人物的简短回应可以保留' in prompts['agent_sc']
+    assert '原措辞、对白、指令和事实可以原样保留' in prompts['agent_local_review']
 
 
 @pytest.fixture
@@ -97,6 +122,11 @@ def test_workflow_messages_do_not_restore_removed_expression_quotas(prompt_manag
 ))
 def test_runtime_roles_receive_attention_and_detail_selection_guidance(prompt_manager, agent):
     prompt = prompt_manager.get_prompt_text(agent)
+    if agent in {'novel-single-writer', 'novel-multi-scene-writer'}:
+        assert prompt.count('【人物当下的声音与注意】') == 1
+        assert '遮住解释再读' in prompt and '操作清单' in prompt
+        assert '第一次出现也要核对' not in prompt
+        return
     assert prompt.count('【人物注意力与留白】') == 1
     assert '此刻会注意什么' in prompt
     assert '数字会改变选择' in prompt
@@ -287,8 +317,8 @@ def test_scene_voice_checks_reach_the_workflow_roles(monkeypatch, stage, node_id
 
 @pytest.mark.parametrize(('stage','node_ids'),[
     ('mvp',('agent_sw','agent_dw','agent_aw','agent_iw','agent_dsw','agent_tw','agent_si',
-            'agent_guard_expression_repair','agent_guard_expression_audit')),
-    ('reader-sim',('agent_blind_reader','agent_context_reader','agent_reader')),
+            'agent_guard_expression_repair')),
+    ('reader-sim',('agent_blind_reader',)),
     ('polish',('agent_pp','agent_fragment_review')),
 ])
 def test_dialogue_criteria_reach_initial_writers_and_independent_readers(stage,node_ids):
@@ -302,3 +332,5 @@ def test_dialogue_criteria_reach_initial_writers_and_independent_readers(stage,n
         schema=nodes['agent_guard_expression_audit']['node_params']['json_output_schema']
         categories=schema['properties']['issues']['items']['properties']['category']['enum']
         assert 'convenient_dialogue' in categories
+        audit=nodes['agent_guard_expression_audit']['first_message']
+        assert '人物先知道什么再行动' in audit and '动作、停顿' in audit

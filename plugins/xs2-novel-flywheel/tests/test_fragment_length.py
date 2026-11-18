@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 
 import pytest
-from test_length_quality import PLUGIN, policy, quality, write
+from test_length_quality import PLUGIN, policy, quality, write, install_legacy_length_feedback
 from test_focused_length import definition
 
 
@@ -17,7 +17,7 @@ def setup(root, raw=None):
     path.write_bytes(raw)
     write(root, 'quality/author.md', '保持已确定事实与结局')
     state = {'values': {'chapter_number': '0001', 'target_word_count': '130-160', 'author_feedback_file': 'quality/author.md'}}
-    state.update(policy().next_action(root, state, 'polish')['updates'])
+    install_legacy_length_feedback(root, state)
     write(root, '.novel-project.json', json.dumps(state, ensure_ascii=False))
     outputs = quality().prepare_execution(root, '0001', '130-160', 'length_only')
     return state, outputs, raw
@@ -74,7 +74,7 @@ def test_rejected_fragment_is_real_completed_attempt_without_touching_body(tmp_p
             'node_states': {'script_focused_commit': {'status': 'completed', 'outputs': variables}}}
     policy().verify_completion(tmp_path, state, 'polish', task)
     followup = policy().next_action(tmp_path, state, 'polish')
-    assert followup['action'] == 'advance' and followup['updates']['lengthRepairCount'] == 2
+    assert followup['stage'] == 'post-hoc' and followup['updates']['lengthRepairFeedback'] == {}
     with pytest.raises(ValueError): policy().verify_completion(tmp_path, state, 'polish', {**task, 'task_id': 'wrong-task'})
 
 
@@ -85,7 +85,7 @@ def test_partial_fragment_progress_and_author_edit_protection(tmp_path):
     _, receipt = commit(tmp_path, outputs, old+'丁'*10)
     assert receipt['accepted'] and receipt['actual'] == 115 and receipt['status'] == 'accepted_partial'
     assert quality().count_prose((tmp_path / 'story/0001/chapter.md').read_text(encoding='utf-8-sig')) == 115
-    state.update(policy().next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     write(tmp_path, '.novel-project.json', json.dumps(state, ensure_ascii=False))
     outputs = quality().prepare_execution(tmp_path, '0001', '130-160', 'length_only')
     write(tmp_path, 'story/0001/chapter.md', 'AUTHOR NEW BODY')
@@ -103,18 +103,6 @@ def test_fragment_system_contract_is_empty_for_content_and_local_for_focused(tmp
     assert '片段' in asyncio.run(resolve_placeholders(pp['system_prompt_template'], values, wf.variables, str(tmp_path)))
     normal = quality().prepare_execution(tmp_path, '0001', '130-160', 'content'); values.update(normal)
     assert asyncio.run(resolve_placeholders(pp['system_prompt_template'], values, wf.variables, str(tmp_path))) == ''
-
-
-def test_fragment_strategy_reinitializes_v1_budget_once_without_losing_total(tmp_path):
-    write(tmp_path, 'story/0001/chapter.md', '衣'*4360)
-    state = {'readerRepairCount': 2, 'lengthRepairCycle': 2, 'lengthRepairCount': 3, 'lengthRepairTotal': 9,
-             'lengthRepairStrategy': 'focused-v1', 'autoLengthRepairLimit': 3,
-             'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    state.update(policy().next_action(tmp_path, state, 'polish')['updates'])
-    assert state['lengthRepairStrategy'] == quality().LENGTH_REPAIR_STRATEGY and state['lengthRepairTotal'] == 10
-    for _ in range(2): state.update(policy().next_action(tmp_path, state, 'polish')['updates'])
-    assert policy().next_action(tmp_path, state, 'polish')['action'] == 'pause'
-    assert state['lengthRepairTotal'] == 12
 
 
 def test_whole_chapter_echo_is_rejected_and_candidate_retained(tmp_path):
@@ -194,7 +182,10 @@ def test_real_engine_with_actual_fragment_cli_invokes_one_pp_and_commits(tmp_pat
             return NodeResult(status='completed' if run.returncode == 0 else 'failed',
                 outputs=_parse_wf_vars(run.stdout.decode('utf-8')), error=run.stderr.decode('utf-8', errors='replace'))
     monkeypatch.setitem(registry._plugins, 'agent', Agent); monkeypatch.setitem(registry._plugins, 'script', Script)
-    raw = definition(); wf = WorkflowDef.from_dict(raw); assert not wf.validate()
+    raw = definition()
+    guidance = next(node for node in raw['nodes'] if node['id'] == 'script_length_context')
+    guidance['node_params']['script_argv'].remove('--advisory-length')
+    wf = WorkflowDef.from_dict(raw); assert not wf.validate()
     class Manager:
         sessions = {}
         main_session_id = ''
@@ -209,6 +200,7 @@ def test_real_engine_with_actual_fragment_cli_invokes_one_pp_and_commits(tmp_pat
     monkeypatch.setattr(engine, '_save_task_state', no_save)
     monkeypatch.setattr(engine, '_push_wf_task_update', lambda *args: None)
     values = {v['key']: v.get('default', '') for v in raw['variables']}; values.update(policy().parameters(state, raw))
+    values['polish_pass'] = 'length_only'
     task = WorkflowTask(task_id='task-engine-fragment', workflow_id=wf.workflow_id, status='running', snapshot_definition=wf.to_dict(), parameter_values=values)
     async def run():
         return await engine._execute_plan_segment(definition=wf, task=task, execution_plan=wf.get_execution_plan(), disabled_ids=set(), shared_ws=tmp_path,

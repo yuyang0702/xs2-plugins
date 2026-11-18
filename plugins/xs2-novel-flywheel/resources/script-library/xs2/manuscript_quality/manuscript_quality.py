@@ -29,12 +29,13 @@ def main():
     parser.add_argument('--policy-runtime', default='')
     parser.add_argument('--candidate', default='')
     parser.add_argument('--feedback', default=None)
+    parser.add_argument('--advisory-length', action='store_true')
     args = parser.parse_args()
     root = Path.cwd().resolve();q = quality()
     chapter = q.chapter_number(args.chapter)
     if args.action in {'guidance', 'draft-guidance', 'focused-ready', 'focused-commit', 'prepare-fragment-review'}:
         if args.action == 'draft-guidance':
-            outputs = {'pp_length_context_file': q.prepare_draft_guidance(root, chapter, args.target, args.candidate)}
+            outputs = {'pp_length_context_file': q.prepare_draft_guidance(root, chapter, args.target, args.candidate, advisory=args.advisory_length)}
         elif args.action == 'focused-commit':
             outputs = q.focused_commit(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha, os.environ.get('TASK_ID', ''), args.review_binding, args.review_binding_sha, args.review_result)
         elif args.action == 'prepare-fragment-review':
@@ -43,7 +44,8 @@ def main():
             outputs = q.confirm_execution(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha)
         else:
             outputs = q.prepare_execution(root, chapter, args.target, args.scope,
-                                          policy_runtime=args.policy_runtime.strip(), task_id=os.environ.get('TASK_ID'),feedback_path=args.feedback)
+                                          policy_runtime=args.policy_runtime.strip(), task_id=os.environ.get('TASK_ID'),
+                                          feedback_path=args.feedback, advisory=args.advisory_length)
         for key, value in outputs.items():
             # The host's WF_VAR parser accepts a whitespace payload for empty values.
             print('<WF_VAR>' + key + ':' + (value or ' ') + '</WF_VAR>')

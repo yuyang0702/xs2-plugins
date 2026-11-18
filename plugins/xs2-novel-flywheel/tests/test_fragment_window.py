@@ -1,5 +1,5 @@
 import json
-from test_length_quality import quality,policy,write
+from test_length_quality import quality,policy,write, install_legacy_length_feedback
 
 def test_large_gap_has_portable_multparagraph_source_and_small_gap_stays_local():
     q=quality();raw=('\n\n'.join('“'+chr(0x4e00+i)*50+'”' for i in range(60))).encode('utf-8')
@@ -22,23 +22,13 @@ def test_scene_and_previous_range_bound_small_window_with_partial_request():
     assert '***' not in raw[following['start']:following['end']].decode('utf-8')
 
 
-def test_v5_contract_migrates_once_preserving_total_and_hard_limit(tmp_path):
-    write(tmp_path,'story/0001/chapter.md','衣'*3188)
-    state={'readerRepairCount':0,'lengthRepairCycle':0,'lengthRepairCount':3,'lengthRepairTotal':3,'lengthRepairStrategy':'fragment-v5','autoLengthRepairLimit':3,'values':{'chapter_number':'0001','target_word_count':'4800-5200'}}
-    state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert state['lengthRepairStrategy']==quality().LENGTH_REPAIR_STRATEGY=='fragment-v6'
-    assert state['lengthRepairTotal']==4 and state['lengthRepairMigration']['from']=='fragment-v5'
-    for _ in range(2):state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim' and state['lengthRepairTotal']==6
-
-
 def test_large_window_partial_commit_preserves_every_outside_raw_byte(tmp_path):
     from test_fragment_length import commit
     q=quality();raw=b'\xef\xbb\xbf'+('\r\n\r\n'.join('“'+chr(0x4e00+i)*50+'”' for i in range(60))).encode('utf-8')
     path=write(tmp_path,'story/0001/chapter.md','');path.write_bytes(raw)
     write(tmp_path,'quality/author.md','保留原有交涉事实和结果')
     state={'values':{'chapter_number':'0001','target_word_count':'4800-5200','author_feedback_file':'quality/author.md'}}
-    state.update(policy().next_action(tmp_path,state,'polish')['updates']);write(tmp_path,'.novel-project.json',json.dumps(state,ensure_ascii=False))
+    install_legacy_length_feedback(tmp_path, state);write(tmp_path,'.novel-project.json',json.dumps(state,ensure_ascii=False))
     outputs=q.prepare_execution(tmp_path,'0001','4800-5200','length_only')
     guard=json.loads((tmp_path/outputs['length_commit_guard']).read_text(encoding='utf-8'));spec=guard['fragment']
     candidate=raw[spec['start']:spec['end']].decode('utf-8')+'丁'*200

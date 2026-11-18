@@ -247,6 +247,22 @@ def test_short_single_writer_projects_current_chapter_and_character_knowledge(tm
         assert phrase not in brief
 
 
+def test_short_writer_world_keeps_story_constraints_without_numeric_audit_instructions(tmp_path):
+    ready(tmp_path)
+    world = ('# 短篇世界基础\n\n## 信息与认知边界\n\n### 叙事限制\n\n'
+             '- 第一人称只能依据现场所见和可查的记录。\n'
+             '- 冲印的照相纸最多两张，最后一张要留在店里。\n'
+             '- 若引用现场话语中的字数或数量，必须以紧邻且唯一的纯汉字原话为依据；含标点、外文、嵌套引语或远距指代时，计数保持未知。\n')
+    write(tmp_path, 'meta/world_foundation.md', world)
+    write(tmp_path, 'meta/style_profile.md', '用照相馆的口吻说出选择。')
+    path, _ = helper().prepare_context(tmp_path, '0001', single_writer=True)
+    brief = (tmp_path / path).read_text(encoding='utf-8')
+    assert '紧邻且唯一' not in brief
+    for fact in ('第一人称只能依据现场所见', '照相纸最多两张', '用照相馆的口吻说出选择。'):
+        assert fact in brief
+    assert (tmp_path / 'meta/world_foundation.md').read_text(encoding='utf-8') == world
+
+
 def test_short_writer_keeps_approved_composition_intent_without_planner_budgets(tmp_path):
     from test_composition_plan import module as composition
 

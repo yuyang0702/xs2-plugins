@@ -47,6 +47,8 @@ def append(node,text):
 
 for path in sorted((RES/'workflows').glob('*/definition.json')):
     data=json.loads(path.read_text(encoding='utf-8-sig'));changed=False
+    if path.parent.name == 'reader-sim' and data.get('version', 0) >= 24:
+        continue  # Only the v24 blind branch applies optional reading objectives.
     for node in data['nodes']:
         node['first_message']=node.get('first_message','').replace(LEGACY_WRITER,WRITER)
         id=node['id'];schema=node.get('node_params',{}).get('json_output_schema')

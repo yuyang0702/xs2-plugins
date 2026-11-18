@@ -43,6 +43,18 @@ def test_legacy_literal_quotes_remain_compatible():
     assert helper().resolve_report({'quote':{'text':'她点收六两','occurrence':1}},BODY,UNITS)=={'quote':{'text':'她点收六两','occurrence':1}}
 
 
+def test_reader_excerpts_restore_only_unique_contiguous_paragraph_breaks():
+    m=helper()
+    original='她点收六两。\r\n\r\n他合上册子。'
+    flattened='她点收六两。\n他合上册子。'
+    report={'issues':[{'excerpts':[flattened]}]}
+    assert m.resolve_report(report,original,reader_excerpts=True)['issues'][0]['excerpts']==[original]
+    assert m.resolve_report(report,original)==report
+    for invalid in (original.replace('六两','七两'), original.replace('\r\n\r\n','\n\n有人敲门。\n\n'), original+'\n\n'+original):
+        with pytest.raises(ValueError,match=r'issues\[0\].excerpts\[0\]'):
+            m.resolve_report(report,invalid,reader_excerpts=True)
+
+
 def test_references_still_require_matching_candidate_hash():
     from test_continuity_contract import contract,evidence,module
     body,report=evidence();report['event_observations'][0]['quote']={'ref_id':'c0001'}

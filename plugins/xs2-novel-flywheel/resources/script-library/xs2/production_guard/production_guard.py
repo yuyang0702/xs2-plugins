@@ -438,9 +438,12 @@ def _manifest(root,stage,chapter,task,workflow,native):
     snapshot=_definition(native);parameters=native.get('parameter_values',{})
     capabilities=_capabilities(root)
     manifest=check_definition(snapshot,_input_parameters(root,snapshot,parameters),capabilities,stage=stage)
+    review=next((node for node in snapshot['nodes'] if node['id']=='agent_local_review'),{})
+    review_schema=review.get('node_params',{}).get('json_output_schema') or {}
+    protocol=review_schema.get('properties',{}).get('protocol',{}).get('const','local-review-v2')
     manifest.update(stage=stage,chapter=chapter,task_id=task,workflow_id=workflow,task_created_at=native['created_at'],
                     resources=profile(names=('prompts.json','agents.json','skills.json',f'workflows/{stage}/definition.json')),
-                    capability_sha256=digest(capabilities),report_protocol='local-review-v2',
+                    capability_sha256=digest(capabilities),report_protocol=protocol,
                     models={n['id']:n.get('model_override') for n in snapshot['nodes'] if n.get('node_type')=='agent'},
                     transport_observation='first-token/compression metrics unavailable at plugin script boundary')
     return manifest

@@ -32,6 +32,16 @@ def write(root, name, content):
     return path
 
 
+def install_legacy_length_feedback(root, state):
+    q = quality()
+    values = state['values']
+    result = q.assess(root, str(values['chapter_number']).zfill(4), values['target_word_count'])
+    receipt = q.correction_feedback(root, state, result)
+    state['lengthRepairFeedback'] = receipt
+    state['lengthRepairCount'] = (state.get('lengthRepairCount') or 0) + 1
+    values['author_feedback_file'] = receipt['path']
+
+
 def test_count_prose_excludes_titles_punctuation_and_formatting():
     q = quality()
     assert q.count_prose('# 第0001章\n\n第1章 · 补经痕迹\n\n“还我衣裳。”\nShe said, "Not today!"') == 8
@@ -80,60 +90,87 @@ def test_polish_gets_budget_and_reader_cannot_pass_short_body(tmp_path):
     assert report['verdict'] == 'pass'  # no surprise mutation of caller data
 
 
-def test_length_retry_is_bounded_and_keeps_body_and_feedback(tmp_path):
+def test_planner_target_deviation_is_recorded_without_retry_or_delaying_archive(tmp_path):
     q = quality()
-    p = policy()
-    body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3400)
-    original = write(tmp_path, 'quality/author.md', '保留阿福救人的事实，勿替他免除伪证责任。')
-    state = {'mode': 'short', 'values': {'chapter_number': '0001', 'target_word_count': '4800-5200', 'author_feedback_file': 'quality/author.md'}}
-    action = p.next_action(tmp_path, state, 'polish')
-    assert action['action'] == 'advance' and action['stage'] == 'polish'
-    assert action['updates']['lengthRepairCount'] == 1
-    feedback = tmp_path / action['updates']['values']['author_feedback_file']
-    assert original.read_text(encoding='utf-8') in feedback.read_text(encoding='utf-8')
-    assert body.read_text(encoding='utf-8') == '衣' * 3400
-    state.update(action['updates']);state['lengthRepairCount'] = 2
-    stopped = p.next_action(tmp_path, state, 'polish')
-    assert stopped['action'] == 'advance' and stopped['stage'] == 'reader-sim'
-    assert stopped['updates']['lengthRepairCount'] == 2
-    assert list((tmp_path / 'quality/length-repairs/0001').rglob('before.md'))
+    state = {'values': {'chapter_number': '0001', 'target_word_count': '1250-1500'}}
+    write(tmp_path, '.novel-project.json', json.dumps(state))
+    write(tmp_path, 'meta/length_policy.json', '{"schema": 1, "ownership": "planner"}')
+    write(tmp_path, 'story/0001/chapter.md', '字' * 1235)
+    action = policy().next_action(tmp_path, state, 'polish')
+    assert action['stage'] == 'post-hoc'
+    policy().launch_check(tmp_path,state,'post-hoc')
+    assert action['updates']['lengthRepairFeedback'] == {}
+    result = action['updates']['lengthCheck']
+    assert (result['actual'], result['lower'], result['status']) == (1235, 1250, 'short')
+    assert not q.is_blocking(result)
+    assert json.loads((tmp_path/'quality/length/0001.json').read_text(encoding='utf-8')) == result
+    report = q.gate_report(tmp_path, '0001', '1250-1500', {'verdict': 'pass', 'issues': []})
+    assert report['length_check'] == result
+    assert report['verdict'] == 'pass' and report['issues'] == []
 
 
-def test_length_gate_runs_before_posthoc_and_export_even_for_legacy_pass(tmp_path):
-    p = policy()
-    body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3400)
-    write(tmp_path, 'story/0001/reader_report.json', json.dumps({'verdict': 'pass', 'body_sha256': hashlib.sha256(body.read_bytes()).hexdigest()}))
-    state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    for stage in ['post-hoc', 'export']:
-        with pytest.raises(ValueError):
-            p.launch_check(tmp_path, state, stage)
+def test_planner_target_keeps_explicit_hard_envelope(tmp_path):
+    q = quality()
+    write(tmp_path, '.novel-project.json', '{"values": {"target_word_count": "1300-1500"}}')
+    write(tmp_path, 'meta/length_policy.json', '{"schema": 1, "ownership": "planner", "minimum": 1250}')
+    write(tmp_path, 'story/0001/chapter.md', '字' * 1235)
+    report = q.gate_report(tmp_path, '0001', '1300-1500', {'verdict': 'pass', 'issues': []})
+    assert report['verdict'] == 'revise'
+    assert '1250' in report['issues'][0]['impact'] and '1300' not in report['issues'][0]['impact']
+    write(tmp_path, 'story/0001/chapter.md', '字' * 1250)
+    report = q.gate_report(tmp_path, '0001', '1300-1500', {'verdict': 'pass', 'issues': []})
+    assert report['verdict'] == 'pass' and report['length_check']['status'] == 'short'
 
 
-@pytest.mark.parametrize('count', [4500, 6200])
-def test_multi_writer_draft_budget_does_not_relax_final_export_gate(tmp_path, count):
-    p = policy()
-    body = write(tmp_path, 'story/0001/chapter.md', '衣' * count)
+def test_planner_advisory_recheck_clears_a_previous_length_only_downgrade(tmp_path):
+    q = quality()
+    target = '1250-1500'
+    write(tmp_path, '.novel-project.json', json.dumps({'values': {'target_word_count': target}}))
+    write(tmp_path, 'story/0001/chapter.md', '字' * 1235)
+    original = {'verdict': 'pass', 'issues': [],
+        'expression_review': {'verdict': 'pass', 'summary': '表达通过。', 'issues': []},
+        'fact_review': {'verdict': 'pass', 'summary': '事实通过。'}}
+    previous = q.gate_report(tmp_path, '0001', target, original)
+    assert previous['verdict'] == 'revise' and previous['issues'][0]['code'] == 'length_out_of_range'
+    write(tmp_path, 'meta/length_policy.json', '{"schema": 1, "ownership": "planner"}')
+    current = q.gate_report(tmp_path, '0001', target, previous)
+    assert current['verdict'] == 'pass' and current['issues'] == []
+    assert current['length_check']['actual'] == 1235
+
+
+def test_author_expansion_uses_bound_missing_consequence_away_from_central_dialogue(tmp_path):
+    q = quality()
+    state = {'values': {'chapter_number': '0001', 'target_word_count': '100-140'}}
+    write(tmp_path, '.novel-project.json', json.dumps(state))
+    write(tmp_path, 'meta/length_policy.json', '{"schema": 1, "ownership": "author"}')
+    target = '她把水递过去，后来两个人各自解决了。'
+    body = target + '\n\n' + '甲'*30 + '\n\n“' + '乙'*30 + '”\n\n' + '丙'*10
+    source = write(tmp_path, 'story/0001/chapter.md', body)
     write(tmp_path, 'story/0001/reader_report.json', json.dumps({
-        'verdict': 'pass', 'body_sha256': hashlib.sha256(body.read_bytes()).hexdigest()}))
-    state = {'mode': 'short', 'values': {'chapter_number': '0001', 'target_word_count': '5000-5300', 'writer_type': 'muti'}}
-    for stage in ['post-hoc', 'export']:
-        with pytest.raises(ValueError):
-            p.launch_check(tmp_path, state, stage)
+        'body_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+        'expression_review': {'issues': [{'category': 'turning_point_summary', 'priority': 'high',
+            'excerpts': [target], 'goal': '写清递水后对方如何接下这次分配。'}]},
+    }, ensure_ascii=False))
+    install_legacy_length_feedback(tmp_path, state)
+    write(tmp_path, '.novel-project.json', json.dumps(state))
+    outputs = q.prepare_execution(tmp_path, '0001', '100-140', 'length_only')
+    guard = json.loads((tmp_path / outputs['length_commit_guard']).read_text(encoding='utf-8'))
+    fragment = guard['fragment']
+    assert source.read_bytes()[fragment['start']:fragment['end']].decode() == target
+    assert '写清递水后对方如何接下这次分配。' in (tmp_path/outputs['length_execution_context']).read_text(encoding='utf-8')
 
 
 def test_repeated_length_repairs_replace_old_budget_but_keep_original_author_feedback(tmp_path):
-    p = policy()
     body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3400)
     original = write(tmp_path, 'quality/author.md', '保留师徒的迟疑，不替阿福免除责任。')
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200',
                         'author_feedback_file': 'quality/author.md'}}
-    first = p.next_action(tmp_path, state, 'polish')
-    state.update(first['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     first_feedback = tmp_path / state['values']['author_feedback_file']
     first_bytes = first_feedback.read_bytes()
     body.write_text('衣' * 4676, encoding='utf-8')
-    second = p.next_action(tmp_path, state, 'polish')
-    text = (tmp_path / second['updates']['values']['author_feedback_file']).read_text(encoding='utf-8')
+    install_legacy_length_feedback(tmp_path, state)
+    text = (tmp_path / state['values']['author_feedback_file']).read_text(encoding='utf-8')
     assert '至少净增加 124 实字' in text
     assert '至少净增加 1400 实字' not in text
     assert text.count('# 本章字数实测与改写预算') == 1
@@ -147,7 +184,7 @@ def test_new_author_feedback_replaces_managed_length_feedback_source(tmp_path):
     write(tmp_path, 'quality/author.md', '旧作者意见')
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200',
                         'author_feedback_file': 'quality/author.md'}}
-    state.update(p.next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     write(tmp_path, 'quality/new-author.md', '新批准的返修方案，保留店铺交割。')
     state['values']['author_feedback_file'] = 'quality/new-author.md'
     action = p.next_action(tmp_path, state, 'polish')
@@ -160,32 +197,12 @@ def test_author_edit_to_managed_feedback_is_not_silently_discarded(tmp_path):
     p = policy()
     write(tmp_path, 'story/0001/chapter.md', '衣' * 3400)
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    state.update(p.next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     feedback = tmp_path / state['values']['author_feedback_file']
     feedback.write_text(feedback.read_text(encoding='utf-8') + '\n作者新增：不改变旧徒年龄。', encoding='utf-8')
     action = p.next_action(tmp_path, state, 'polish')
     text = (tmp_path / action['updates']['values']['author_feedback_file']).read_text(encoding='utf-8')
     assert '作者新增：不改变旧徒年龄。' in text
-
-
-def test_reader_repair_has_fresh_bounded_length_budget_without_erasing_history(tmp_path):
-    p = policy()
-    write(tmp_path, 'story/0001/chapter.md', '衣' * 4708)
-    write(tmp_path, 'quality/reader-repair.md', '落实前夫当场同意交易的动作。')
-    state = {'autoLengthRepairLimit': 3, 'lengthRepairCount': 3, 'readerRepairCount': 1,
-             'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    state.update(p.repair_ready(state, 'quality/reader-repair.md')['updates'])
-    assert state['lengthRepairCount'] == 0
-    assert state['lengthRepairTotal'] == 3
-    assert state['readerRepairCount'] == 2
-    action = p.next_action(tmp_path, state, 'polish')
-    assert action['action'] == 'advance' and action['stage'] == 'polish'
-    assert action['updates']['lengthRepairCount'] == 1
-    assert action['updates']['lengthRepairTotal'] == 4
-    state.update(action['updates'])
-    for _ in range(2):
-        state.update(p.next_action(tmp_path, state, 'polish')['updates'])
-    assert p.next_action(tmp_path, state, 'polish')['action'] == 'pause'
 
 
 def test_length_budget_reset_does_not_reset_reader_repair_limit(tmp_path):
@@ -200,34 +217,6 @@ def test_length_budget_reset_does_not_reset_reader_repair_limit(tmp_path):
     assert p.next_action(tmp_path, state, 'reader-sim')['action'] == 'pause'
 
 
-def test_legacy_in_progress_content_repair_gets_one_tracked_cycle_not_unbounded_resets(tmp_path):
-    p = policy()
-    write(tmp_path, 'story/0001/chapter.md', '衣' * 4708)
-    state = {'autoLengthRepairLimit': 3, 'lengthRepairCount': 3, 'readerRepairCount': 2,
-             'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    first = p.next_action(tmp_path, state, 'polish')
-    assert first['action'] == 'advance'
-    assert first['updates']['lengthRepairCycle'] == 2
-    assert first['updates']['lengthRepairCount'] == 1
-    assert first['updates']['lengthRepairTotal'] == 4
-    state.update(first['updates'])
-    for _ in range(2):
-        action = p.next_action(tmp_path, state, 'polish')
-        assert action['action'] == 'advance'
-        state.update(action['updates'])
-    assert state['lengthRepairTotal'] == 6
-    assert p.next_action(tmp_path, state, 'polish')['action'] == 'pause'
-
-
-def test_legacy_first_draft_limit_is_not_reset_by_new_cycle_tracking(tmp_path):
-    write(tmp_path, 'story/0001/chapter.md', '衣' * 4708)
-    state = {'autoLengthRepairLimit': 3, 'lengthRepairCount': 3,
-             'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    action = policy().next_action(tmp_path, state, 'polish')
-    assert action['stage'] == 'reader-sim'
-    assert action['updates']['lengthRepairCount'] == 3
-
-
 def test_identical_body_across_content_repair_cycles_keeps_old_feedback_history(tmp_path):
     p = policy()
     write(tmp_path, 'story/0001/chapter.md', '衣' * 4708)
@@ -235,13 +224,13 @@ def test_identical_body_across_content_repair_cycles_keeps_old_feedback_history(
     write(tmp_path, 'quality/second.md', '第二轮批准的返修意见')
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200',
                         'author_feedback_file': 'quality/first.md'}}
-    state.update(p.next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     first = tmp_path / state['values']['author_feedback_file']
     raw = first.read_bytes()
     state.update(p.repair_ready(state, 'quality/second.md')['updates'])
-    action = p.next_action(tmp_path, state, 'polish')
-    second = tmp_path / action['updates']['values']['author_feedback_file']
-    assert action['updates']['lengthRepairCount'] == 1
+    install_legacy_length_feedback(tmp_path, state)
+    second = tmp_path / state['values']['author_feedback_file']
+    assert state['lengthRepairCount'] == 1
     assert first != second and first.read_bytes() == raw
     assert '第二轮批准的返修意见' in second.read_text(encoding='utf-8')
 
@@ -276,7 +265,7 @@ def test_in_range_polish_replaces_stale_progress_and_advances(tmp_path):
     write(tmp_path, 'story/0001/chapter.md', '衣' * 5000)
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}, 'lengthCheck': {'status': 'short'}}
     result = p.next_action(tmp_path, state, 'polish')
-    assert result['stage'] == 'reader-sim'
+    assert result['stage'] == 'post-hoc'
     assert result['updates']['lengthCheck']['status'] == 'pass'
 
 
@@ -287,17 +276,17 @@ def test_in_range_polish_refreshes_evidence_and_restores_original_author_feedbac
     write(tmp_path, 'quality/author.md', '保留旧徒亲自承认的代价。')
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200',
                         'author_feedback_file': 'quality/author.md'}}
-    state.update(p.next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     q.prepare_guidance(tmp_path, '0001', '4800-5200')
     body.write_text('衣' * 5002, encoding='utf-8')
     action = p.next_action(tmp_path, state, 'polish')
-    assert action['stage'] == 'reader-sim'
+    assert action['stage'] == 'post-hoc'
     assert action['updates']['values']['author_feedback_file'] == 'quality/author.md'
     assert action['updates']['lengthRepairFeedback'] == {}
     evidence = json.loads((tmp_path / 'quality/length/0001.json').read_text(encoding='utf-8'))
     assert evidence['actual'] == 5002 and evidence['body_sha256'] == hashlib.sha256(body.read_bytes()).hexdigest()
     context = (tmp_path / 'cache/quality/0001/length_context.md').read_text(encoding='utf-8')
-    assert '5002' in context and '至少净增加 1400' not in context
+    assert '5002' in context and '规划参考' in context and '至少净增加 1400' not in context
 
 
 @pytest.mark.parametrize('number', ['1', 1])
@@ -305,10 +294,10 @@ def test_feedback_origin_accepts_existing_short_chapter_number_inputs(tmp_path, 
     p = policy()
     body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3400)
     state = {'values': {'chapter_number': number, 'target_word_count': '4800-5200'}}
-    state.update(p.next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     body.write_text('衣' * 5002, encoding='utf-8')
     action = p.next_action(tmp_path, state, 'polish')
-    assert action['stage'] == 'reader-sim'
+    assert action['stage'] == 'post-hoc'
     assert action['updates']['values']['author_feedback_file'] == ''
 
 
@@ -328,7 +317,8 @@ def test_polish_and_reader_workflows_wire_real_length_evidence():
     reader = literary_graph(json.loads((root / 'reader-sim/definition.json').read_text(encoding='utf-8')))
     assert any(e['source'] == 'script_length_context' and e['target'] == 'script_reader_freeze' for e in reader['edges'])
     assert any(e['source'] == 'gw_reader_parallel' and e['target'] == 'agent_context_reader' for e in reader['edges'])
-    assert '{{length_context_file}}' in next(n for n in reader['nodes'] if n['id'] == 'agent_reader')['first_message']
+    assert all('{{length_context_file}}' not in n['first_message'] for n in reader['nodes']
+               if n['node_type'] == 'agent')
     assert any(n['id'] == 'script_length_gate' for n in reader['nodes'])
     assert any(e['source'] == 'script_reader_commit' and e['target'] == 'script_length_gate' for e in reader['edges'])
 

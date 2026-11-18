@@ -194,7 +194,7 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
             else:
                 _,report=evidence(body);packet=json.loads((directory/f'{phase}-audit-input.json').read_text(encoding='utf-8'))
                 report['book_contract_sha256']=packet['book_contract_sha256']
-                if phase=='expression':report['checks']['repetition']=True
+                if phase=='expression' or key=='agent_guard_facts_inspect':report['checks']['repetition']=True
                 save(directory/f'{phase}-audit.json',report)
             return NodeResult(status='completed')
     class Script(BaseNodePlugin):
@@ -224,5 +224,5 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
             needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
     outcome=asyncio.run(run())
     if outcome!='completed':raise AssertionError(json.dumps({key:(node.status,node.error) for key,node in task.node_states.items() if key in options['selected_node_ids']}))
-    assert len(calls)==(2 if inspect_first else 4)
+    assert len(calls)==(1 if inspect_first else 4)
     module.verify(tmp_path,state,task.to_dict())

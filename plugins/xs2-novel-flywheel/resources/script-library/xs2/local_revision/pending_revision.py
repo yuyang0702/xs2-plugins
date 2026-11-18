@@ -70,12 +70,13 @@ def merge(source,retained,proposed,patches):
     return sorted(result,key=lambda e:span(source,e,patches))
 
 
-def retain(root,b,source,context,raw,expanded,digest,patches):
+def retain(root,b,source,context,raw,expanded,digest,patches,*,blocked_indices=()):
     if expanded['compatible'] is not True or expanded['issues']:return
     effects={r['edit_index']:r['effect'] for r in expanded['change_reviews']}
     groups={e['group_id'] for e in context['edits'] if e.get('group_id')}
-    blocked={g for g in groups if any(e.get('group_id')==g and effects[i]!='improved' for i,e in enumerate(context['edits']))}
-    improved=[e for i,e in enumerate(context['edits']) if effects[i]=='improved' and e.get('group_id') not in blocked]
+    passed = {i for i,effect in effects.items() if effect=='improved' and i not in blocked_indices}
+    blocked = groups & {e.get('group_id') for i,e in enumerate(context['edits']) if i not in passed}
+    improved = [e for i,e in enumerate(context['edits']) if i in passed and e.get('group_id') not in blocked]
     if not improved:return
     previous=current(root,b,digest)
     edits=merge(source['source_body'],(previous or {}).get('edits',[]),improved,patches)

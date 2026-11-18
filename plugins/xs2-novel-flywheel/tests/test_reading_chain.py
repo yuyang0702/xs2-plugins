@@ -90,13 +90,18 @@ def test_workflow_exposes_safe_focus_and_all_gate_schemas():
     options=next(v for v in wf['variables'] if v['key']=='learning_direction')['options']
     assert all(isinstance(row,dict) and row.get('name') and row.get('value') for row in options)
     assert next(row for row in options if row['value']=='zhihu_short')['name']=='知乎短篇'
-    for name,ids in [('polish',['agent_local_review']),('reader-sim',['agent_blind_reader','agent_reader','agent_context_reader']),('mvp',['agent_guard_expression_audit'])]:
+    for name,ids in [('reader-sim',['agent_blind_reader']),('mvp',['agent_guard_expression_audit'])]:
         wf=json.loads((PLUGIN/f'resources/workflows/{name}/definition.json').read_text(encoding='utf8'))
         for id in ids:
             node=next(n for n in wf['nodes'] if n['id']==id)
             schema=node['node_params']['json_output_schema']
-            assert all('reading_checks' in arm['properties'] for arm in schema.get('anyOf',[schema]))
-            assert 'reading_checks 可省略' in node['first_message']
+            assert all('reading_checks' in arm['properties'] and 'reading_checks' not in arm.get('required', [])
+                       for arm in schema.get('anyOf',[schema]))
+            if name == 'reader-sim':
+                assert 'reading_checks 可省略' in node['first_message']
+    polish = json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf8'))
+    reviewer = next(n for n in polish['nodes'] if n['id']=='agent_local_review')
+    assert 'reading_checks' not in reviewer['node_params']['json_output_schema']['properties']
 
 
 def test_custom_goal_stays_private_and_contextual_comment_is_optional():

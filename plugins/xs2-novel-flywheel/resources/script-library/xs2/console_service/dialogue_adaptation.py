@@ -6,6 +6,7 @@ import re
 
 DIALOGUE_PATH = 'learning/dialogue_adaptations.json'
 POSITION_KEYS = ('premise', 'genre', 'narrative_pov', 'conflict_plan_mode', 'human_intent')
+QUOTE_END = {'“': '”', '「': '」', '『': '』', '"': '"'}
 
 
 def fingerprint(value):
@@ -25,7 +26,37 @@ def _annotations(sample):
 
 def _proof(sample):
     return [sample.get('source_sha256'), sample.get('context'),
-            [{k:t.get(k) for k in ('speaker','text','source_start','source_end')} for t in sample['turns']]]
+            [{k:t.get(k) for k in ('speaker','text','source_start','source_end','segments')} for t in sample['turns']]]
+
+
+def _turn_end(turn, context, begin, end, previous):
+    a, b = turn.get('source_start'), turn.get('source_end')
+    speaker = turn.get('speaker')
+    role_only = turn.get('speaker_label') == speaker and turn.get('attribution') == 'tentative'
+    if (type(a) is not int or type(b) is not int or not begin <= previous <= a < b <= end
+            or context[a-begin:b-begin] != turn.get('text')
+            or not isinstance(speaker, str) or not speaker.strip()
+            or (not role_only and speaker not in context)):
+        raise ValueError('来源对白轮次或说话人无法核对')
+    if 'segments' not in turn:
+        return b
+    segments = turn['segments']
+    if (not isinstance(segments, list) or not 2 <= len(segments) <= 8
+            or segments[0] != {key: turn[key] for key in ('text', 'source_start', 'source_end')}):
+        raise ValueError('来源对白片段或首段原句无法核对')
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise ValueError('来源对白片段无法核对')
+        start, stop = segment.get('source_start'), segment.get('source_end')
+        if (type(start) is not int or type(stop) is not int or not begin <= previous <= start < stop <= end
+                or context[start - begin:stop - begin] != segment.get('text')):
+            raise ValueError('来源对白片段无法核对')
+        opening = context[:start - begin].rstrip()[-1:]
+        closing = context[stop - begin:].lstrip()[:1]
+        if QUOTE_END.get(opening) != closing:
+            raise ValueError('来源对白片段无法核对')
+        previous = stop
+    return previous
 
 
 def source_samples(item):
@@ -52,12 +83,9 @@ def source_samples(item):
             raise ValueError('对白样本缺少可回查的前后语境')
         previous = begin
         for turn in turns:
-            a, b = turn.get('source_start'), turn.get('source_end')
-            if (type(a) is not int or type(b) is not int or not begin <= previous <= a < b <= end
-                    or text[a-begin:b-begin] != turn.get('text')
-                    or not isinstance(turn.get('speaker'), str) or turn['speaker'] not in text):
+            if not isinstance(turn, dict):
                 raise ValueError('来源对白轮次或说话人无法核对')
-            previous = b
+            previous = _turn_end(turn, text, begin, end, previous)
         if len({t['speaker'] for t in turns}) < 2:
             raise ValueError('来源对白缺少双方回应')
         key = sample.get('sample_id')

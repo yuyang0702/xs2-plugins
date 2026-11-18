@@ -7,22 +7,13 @@ import re
 
 ROOT=Path(__file__).resolve().parents[1]
 path=ROOT/'resources/workflows/reader-sim/definition.json';raw=path.read_bytes();d=json.loads(raw.decode('utf-8-sig'))
+if d.get('version', 0) >= 24:
+    raise SystemExit(0)  # Reader v24 owns its narrower fact reconciliation and wire schemas.
 nodes={n['id']:n for n in d['nodes']}
 if 'agent_context_reader' not in nodes:
     node=copy.deepcopy(nodes['agent_reader']);node.update(id='agent_context_reader',label='独立资料审稿',output_file_path='{{reader_preflight_raw_path}}')
-    text=node['first_message']
-    start=text.index('==== 已核验的独立初审')
-    end=text.index('【本书世界与文风',start)
-    # Preserve all earlier facts/style/whole-book instructions and the same full
-    # report schema. Only the dependent blind-resolution instructions differ.
-    tail=text[end:].replace('{{reader_context_feedback}}','{{reader_preflight_feedback}}')
-    node['first_message']=text[:start]+('【独立资料审稿】本轮与盲读并行，尚未获得盲读结果。请独立完成整章事实、人物认知、跨章连续性、表达六维及作者权限审查，'
-        '不能推测盲读问题。blind_resolutions必须为[]，revision_scope仅分类自己实际发现的问题。'
-        '后续汇合会保留盲读全部发现，必要时由原有复评阶段结合双方证据处理。\n{{reader_preflight_feedback}}\n')+tail
     node['var_bindings'].pop('reader_context_feedback',None)
     node['var_bindings']['reader_preflight_feedback']={'var_key':'reader_preflight_feedback'}
-    schema=node['node_params']['json_output_schema'];schema['properties']['blind_resolutions']['maxItems']=0
-    if 'blind_resolutions' not in schema['required']:schema['required'].append('blind_resolutions')
     d['nodes'].append(node)
     for id,action,label in [('script_reader_context_commit','commit-context','验证独立资料审稿'),('script_reader_freeze','freeze-parallel','冻结共同审稿来源'),('script_reader_join','join','核对并行分支及复评需要')]:
         n=copy.deepcopy(nodes['script_reader_blind_commit']);n.update(id=id,label=label)
@@ -55,7 +46,10 @@ if 'agent_context_reader' not in nodes:
 original=nodes['agent_reader']['first_message'];start=original.index('==== 已核验的独立初审');end=original.index('【本书世界与文风',start)
 context=next(n for n in d['nodes'] if n['id']=='agent_context_reader')
 context['first_message']=original[:start]+('【独立资料审稿】本轮与盲读并行，尚未获得盲读结果。独立完成全部整章审稿维度、事实、认知边界和作者范围判断。'
-    'blind_resolutions必须为[]，不得猜测初审编号；新增问题用context-前缀。汇合后必要时进行依序复评。\n')+original[end:].replace('{{reader_context_feedback}}','{{reader_preflight_feedback}}')
+    '省略 blind_resolutions，仅分类本报告实际列出的问题。不得猜测初审编号。汇合后必要时进行依序复评。\n')+original[end:].replace('{{reader_context_feedback}}','{{reader_preflight_feedback}}')
+schema=context['node_params']['json_output_schema']
+schema['properties']['blind_resolutions']['maxItems']=0
+schema['required']=[key for key in schema['required'] if key!='blind_resolutions']
 for variable in d['variables']:
     if variable['key'] in ('reader_preflight_raw_path','reader_preflight_path','reader_parallel_sources'):variable['type']='text'
 if not any(n['id']=='script_reader_reconcile_bypass' for n in d['nodes']):

@@ -2,7 +2,7 @@ import json
 import os
 import pytest
 from test_fragment_length import setup,commit
-from test_length_quality import quality,policy,write
+from test_length_quality import quality,policy,write, install_legacy_length_feedback
 
 
 def selected(root,outputs):
@@ -32,21 +32,11 @@ def test_expansion_rejects_unsafe_candidate_without_touching_body(tmp_path,mode)
     assert not receipt['accepted'] and body.read_bytes()==raw and body.stat().st_mtime_ns==mtime
 
 
-def test_v4_contract_migration_once_preserves_totals_profile_and_caps(tmp_path):
-    write(tmp_path,'story/0001/chapter.md','衣'*3375)
-    state={'readerRepairCount':0,'lengthRepairCycle':0,'lengthRepairCount':3,'lengthRepairTotal':9,'lengthRepairStrategy':'fragment-v4','writerModel':'anthropic:existing','lengthRepairModel':'anthropic:existing','autoLengthRepairLimit':3,'values':{'chapter_number':'0001','target_word_count':'4800-5200'}}
-    state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert state['lengthRepairStrategy']==quality().LENGTH_REPAIR_STRATEGY=='fragment-v6'
-    assert state['lengthRepairTotal']==10 and state['lengthRepairCount']==1 and state['lengthRepairModel']=='anthropic:existing'
-    for _ in range(2):state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim' and state['lengthRepairTotal']==12
-
-
 def test_next_expansion_avoids_entire_previous_multiline_output_range(tmp_path):
     state,outputs,raw=setup(tmp_path);guard,old=selected(tmp_path,outputs)
     _,receipt=commit(tmp_path,outputs,old+'\n\n'+'丁'*10)
     assert receipt['accepted']
-    state.update(policy().next_action(tmp_path,state,'polish')['updates']);write(tmp_path,'.novel-project.json',json.dumps(state,ensure_ascii=False))
+    install_legacy_length_feedback(tmp_path, state);write(tmp_path,'.novel-project.json',json.dumps(state,ensure_ascii=False))
     next_outputs=quality().prepare_execution(tmp_path,'0001','130-160','length_only')
     new,_=selected(tmp_path,next_outputs)
     start,end=receipt['expanded_span_range']

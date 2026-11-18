@@ -61,7 +61,10 @@ def test_blind_and_context_reader_schemas_accept_current_body_references():
         nonlocal count
         if isinstance(value,dict):
             if 'excerpts' in value.get('properties',{}):
-                schema=value['properties']['excerpts'];Draft7Validator(schema).validate([{'ref_id':'c0001'}]);count+=1
+                schema = value['properties']['excerpts']
+                spans = [{'ref_id': f'c{index:04d}'} for index in range(1, max(1, schema.get('minItems', 1)) + 1)]
+                Draft7Validator(schema).validate(spans)
+                count += 1
             for v in value.values():walk(v)
         elif isinstance(value,list):
             for v in value:walk(v)

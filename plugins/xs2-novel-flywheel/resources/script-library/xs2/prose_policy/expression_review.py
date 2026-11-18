@@ -1,5 +1,6 @@
 """Ground expression judgements in current prose and the book's chosen style."""
 import copy
+import re
 from itertools import combinations
 
 LEGACY_DIMENSIONS=('semantic_increment','constraint_transcription','imagery_function','dialogue_function','ending_function','voice_alignment')
@@ -14,6 +15,7 @@ GUARD_ISSUE_DIMENSIONS={
     'scripted_dialogue':'dialogue_function',
     'dialogue_stall':'dialogue_function',
     'voice_flattening':'voice_alignment',
+    'post_action_restatement':'voice_alignment',
     'turning_point_summary':'turning_point_payoff',
     'ending_overstatement':'ending_function',
 }
@@ -33,6 +35,54 @@ SCENE_CRAFT_GUIDANCE=(
     '转折之后概括交代次要手续，选择最影响信任、处境或下一步行动的一项后果，给它读者可辨的反应或变化。'
     '书信、纪实感、明确心理、预告、齐整对白、仪式性复沓、快切和有意概述均可承载阅读作用，按实际作用和本书风格判断。'
 )
+
+SCENE_FOCUS_GUIDANCE = (
+    '读完整场再定位能独立修的多余台词或旁白。对白先判实际听话的人、他此刻在等什么、说完对方能做什么。'
+    '角色向同事下指令、当面确认结果、故意回避或施压可以有用；即使信息首次出现，台词也可能越过当场对象替读者播报流程。'
+    '同时对照台词、动作和旁白是否在几处交代同一层意思。邻近有一句好接话，仍要独立判断旁边的解释。'
+    '对有明确阅读损害、能单独处理的句子，每处在现有 issues 单独编号，scene_focus.quote 引多余的句或分句，'
+    'excerpts 还要引支撑判断的前后原文。相同目标引文多次出现才须用 occurrence 指明第几处，首次为 1。'
+    '对白问题用 addressee 写明当场对象，可指出原文没有交代，勿猜人名。'
+    'preserve 只列本次修句确实需要逐字保住的短接话、指令或其他承重引文；其余作用在返修目标里说明，可自然改写。'
+    '允许职业口吻、完整解释、内心话、留白和有意复沓，依据本书和当场作用判断，不设词语、句长和解释次数限制。'
+)
+
+SCENE_OUTCOME_GUIDANCE = (
+    '对带 scene_focus 的原返修编号分别给 issue_outcomes。用当前候选中原定位改后的位置作证，'
+    '整段删去时引承接它的相邻原文。说明当场话语或叙述发生了什么变化，保留明确指定的接话或指令。'
+    '若换种说法或挪到另一处仍在做无效解释，填 remaining。只改了别处不能关闭该编号。'
+    '同一返修处即使换了说法也用原编号；只有另一个能独立处理的位置才增列 issues。'
+    '对原句有明确现场用途而撤回问题的，填 not_applicable，引用该原句和另一处当场依据，说明为什么保留。'
+)
+
+
+def scene_focus_position(issue, body):
+    """Validate a model-selected quote and its evidence without judging its style."""
+    if 'scene_focus' not in issue:
+        return None
+    focus = issue['scene_focus']
+    def text(value):
+        return isinstance(value, str) and bool(value.strip())
+    if not isinstance(focus, dict) or not text(focus.get('quote')):
+        raise ValueError('整场表达问题缺少逐字目标')
+    quote = focus['quote']
+    matches = list(re.finditer(re.escape(quote), body))
+    occurrence = focus.get('occurrence', 1 if len(matches) == 1 else None)
+    if type(occurrence) is not int or not 1 <= occurrence <= len(matches):
+        raise ValueError('整场表达逐字目标的出现位置无效或有歧义')
+    excerpts = issue.get('excerpts')
+    if (not isinstance(excerpts, list) or any(not text(q) or q not in body for q in excerpts)
+            or not any(quote in q for q in excerpts)
+            or not any(q not in quote and quote not in q for q in excerpts)):
+        raise ValueError('整场表达问题须分别引用目标及另一处当前场面依据')
+    preserve = focus.get('preserve', [])
+    if not isinstance(preserve, list) or any(not text(q) or q not in body or q in quote or quote in q for q in preserve):
+        raise ValueError('整场表达问题的保留引文须有当前原文且能与目标分开')
+    dialogue = (issue.get('category') in ('convenient_dialogue','scripted_dialogue','dialogue_stall')
+                or issue.get('dimension') == 'dialogue_function')
+    if (dialogue or 'addressee' in focus) and not text(focus.get('addressee')):
+        raise ValueError('台词解释问题须说明当场听话对象')
+    return matches[occurrence-1].start()
 
 SCENE_CRAFT_CHECKS=(
     '用explanation_progression与turning_point_payoff区分有用铺垫和提前讲完转折，用dialogue_function检查话轮是否只为递剧情，'
@@ -106,14 +156,16 @@ GUARD_GUIDANCE=(
     '在 issues 的 constraint_transcription 给当前原句及 source_constraints 中逐字的 source_quote。'
     '适合人物和场合的程序、立场与明确说明可保留。'
     'dialogue_function 顺着话轮检查当下的意图、听见后的回应、回应如何改变下一步。'
-    '报问题时引前一话轮或动作及出问题的接话。'
+    '核对说话前双方已经确认的情况，以及上一句此刻在等什么答复。报问题时引前一话轮或动作及出问题的接话。'
     'voice_alignment 用人物此刻的用语、节奏、判断或注意力辨认声音。有意切换语体按本书要求判断。'
+    '同时看旁白是否逐字复述刚发生的动作或对白：对照先说明意思的原句和随后的解释。后一句确实没有新增判断、行动、关系或节奏作用时，按 post_action_restatement 给两处原文、影响和局部目标。保留有作用的内心判断。'
     'turning_point_payoff 核心场景若只在事后概述，核对此前施压和此后可感知的选择或后果。'
     'ending_function 对照已完成的选择或有效意象与末尾解释，确认末尾是否增加判断、情绪或悬念。'
     '有效的跳切、概述、留白、安静收束与回环可以成立。'
     '每项 issue 须链接相应 issues 的 id，写具体阅读损害与可执行的局部目标。'
     '对白、转折、结尾的实质问题按正文顺序各引至少两处不同原文。'
     'pass 引当前依据，not_applicable 只在没有对应情节或表达时使用，说明理由。无实质问题时 issues=[]。'
+    + SCENE_FOCUS_GUIDANCE
 )
 
 
@@ -169,12 +221,14 @@ def validate_checks(report,body,required=False,*,dimensions=None):
             *[r for r in report.get('blind_review',{}).get('issues',[]) if r.get('id') not in resolved]]
     known={r.get('id') for r in issues if isinstance(r,dict) and isinstance(r.get('id'),str)}
     seen=set()
+    normalized=[]
     for row in rows:
         if (not isinstance(row,dict) or row.get('dimension') not in expected or row['dimension'] in seen
                 or row.get('status') not in ('pass','issue','not_applicable')
                 or any(not isinstance(row.get(k),str) or not row[k].strip() for k in ('reason','style_basis'))):
             raise ValueError('表达验收缺少有效维度、阅读作用或本书风格依据')
-        seen.add(row['dimension']);quotes=row.get('excerpts');ids=row.get('issue_ids')
+        seen.add(row['dimension']);quotes=row.get('excerpts')
+        ids=row.get('issue_ids', [] if row['status'] in ('pass', 'not_applicable') else None)
         if (not isinstance(quotes,list) or any(not isinstance(q,str) or not q.strip() or q not in body for q in quotes)
                 or (row['status']!='not_applicable' and not quotes)):
             raise ValueError('表达验收引文不在当前正文，不能用风格标签代替原文依据')
@@ -184,18 +238,20 @@ def validate_checks(report,body,required=False,*,dimensions=None):
         if row['dimension'] in SCENE_DIMENSIONS and row['status'] != 'not_applicable':
             minimum = 3 if row['status'] == 'issue' else 2
             if len(quotes) < minimum or not _distinct_quotes(quotes) or not _ordered_quotes(body, quotes):
-                raise ValueError('表达验收须按正文顺序对照整场的不同原文，成立至少两处，问题至少三处')
+                raise ValueError(f'表达验收须按正文顺序对照整场的不同原文：{row["dimension"]}（{row["status"]}）至少用 {minimum} 个不同段落的 ref_id，各写一个对象')
         if (not isinstance(ids,list) or any(not isinstance(k,str) for k in ids) or len(ids)!=len(set(ids))
                 or any(k not in known for k in ids) or (row['status']=='issue')!=bool(ids)):
             raise ValueError('表达验收问题编号不存在或与维度结论不一致')
-    return copy.deepcopy(rows)
+        normalized.append(copy.deepcopy({**row, 'issue_ids': ids}))
+    return normalized
 
 
-def validate_guard_checks(report, body, source_constraints):
+def validate_guard_checks(report, body, source_constraints, *, issues_only=False):
+    for issue in report['issues']:
+        scene_focus_position(issue, body)
     findings = [issue for issue in report['issues'] if issue['category'] in GUARD_ISSUE_DIMENSIONS]
-    if 'expression_checks' not in report and all(issue['category']=='convenient_dialogue' for issue in findings):
+    if not issues_only and 'expression_checks' not in report and all(issue['category']=='convenient_dialogue' for issue in findings):
         return  # Accept stored draft reports that predate these checks.
-    rows = validate_checks(report, body, required=True, dimensions=GUARD_DIMENSIONS)
     known = {}
     for issue in findings:
         key, category = issue.get('id'), issue['category']
@@ -210,6 +266,9 @@ def validate_guard_checks(report, body, source_constraints):
             excerpts=issue['excerpts']
             if not any(_distinct_quotes(pair) and _ordered_quotes(body,pair) for pair in combinations(excerpts,2)):
                 raise ValueError('表达验收的接话、转折或结尾问题须按正文顺序对照两处不同原文')
+    if issues_only:
+        return
+    rows = validate_checks(report, body, required=True, dimensions=GUARD_DIMENSIONS)
     linked=set()
     for row in rows:
         for key in row['issue_ids']:

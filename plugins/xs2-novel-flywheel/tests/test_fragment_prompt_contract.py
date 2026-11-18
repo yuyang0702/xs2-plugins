@@ -32,7 +32,8 @@ def test_real_professional_template_delivers_fragment_contract_once_after_full_c
     output_rule = next(s['content'] for s in sections if s['name'] == 'npp_output')
     assert final.count(contract) == 1
     assert final.index(contract) > final.index(output_rule)
-    assert final.endswith(contract) and '{{custom_append}}' not in final
+    assert '此局部输出契约优先于通常完整正文输出要求' in contract
+    assert '{{custom_append}}' not in final
 
 
 def test_empty_append_is_byte_identical_to_old_professional_prompt(monkeypatch):
@@ -40,18 +41,3 @@ def test_empty_append_is_byte_identical_to_old_professional_prompt(monkeypatch):
     old = [s for s in sections if s['name'] != 'custom_task_context']
     assert render(sections, '', monkeypatch) == render(old, '', monkeypatch)
     assert render(sections, '  ', monkeypatch) == render(old, '', monkeypatch)
-
-
-def test_delivered_contract_strategy_gets_one_recorded_budget_migration(tmp_path):
-    write(tmp_path, 'story/0001/chapter.md', '衣'*4360)
-    state = {'readerRepairCount': 2, 'lengthRepairCycle': 2, 'lengthRepairCount': 3, 'lengthRepairTotal': 12,
-             'lengthRepairStrategy': 'fragment-v2', 'autoLengthRepairLimit': 3,
-             'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    action = policy().next_action(tmp_path, state, 'polish')
-    assert action['action'] == 'advance'
-    state.update(action['updates'])
-    assert state['lengthRepairStrategy'] == quality().LENGTH_REPAIR_STRATEGY == 'fragment-v6'
-    assert state['lengthRepairTotal'] == 13 and state['lengthRepairCount'] == 1
-    for _ in range(2): state.update(policy().next_action(tmp_path, state, 'polish')['updates'])
-    assert policy().next_action(tmp_path, state, 'polish')['action'] == 'pause'
-    assert state['readerRepairCount'] == 2 and state['lengthRepairTotal'] == 15

@@ -217,17 +217,22 @@ def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp
             if 'turns' in packet:
                 assert packet['turns'][1]['action']=='把门撑住'
                 reply={'question_pileup': [], 'unsupported_commitment': [], 'voice_or_knowledge': []}
+            elif 'assigned_roles' in packet:
+                assert 'turn' in packet['scene'] and 'exit' in packet['scene']
+                reply={'voice_or_knowledge': []}
             elif 'role' in packet:
                 if packet['role']['name']=='阿杏':
                     assert '救下柜台' in str(packet) and '让人能出门' not in str(packet)
+                    assert rehearsal_calls[-1].get('assigned_roles')
                     reply={'speech':'这头我来。','action':'扶住柜台','private_beat':'','wants_reply':False}
                 else:
                     assert packet['observable_turns'][0]['speech']=='这头我来。'
                     reply={'speech':'','action':'把门撑住','private_beat':'','wants_reply':False}
             else:
                 assert '先给动作，再让人接话' in str(packet)
+                assert set(packet['scene'])=={'entry'}
                 reply={'public_start':'门口下着雨','roles':[
-                    {'name':'阿杏','knowledge':'柜台淋雨','goal':'把柜台搬开','voice':'开口短'},
+                    {'name':'阿杏','knowledge':'柜台淋雨','goal':'救下柜台','voice':'开口短'},
                     {'name':'掌柜','knowledge':'门打开了','goal':'守着门口','voice':'话少'}]}
             rehearsal_calls.append(packet)
             return AIMessage(content=json.dumps(reply,ensure_ascii=False),
@@ -285,24 +290,20 @@ def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp
             shared_ws=tmp_path,parent_id='test',on_node_started=lambda _:None,needs_approval=False,
             run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
     outcome=asyncio.run(run())
-    if assembly_retry:
-        from src.workflow.failure_policy import activate_scheduled_retry
-        assert outcome=='retry_waiting'
-        assert task.node_states['script_multi_scene_2'].status=='completed'
-        task.node_states['agent_dw']=activate_scheduled_retry(task.node_states['agent_dw'])
-        outcome=asyncio.run(run())
-        assert calls.count('agent_dw')==2 and calls.count('agent_aw')==calls.count('agent_si')==1
     assert outcome=='completed',json.dumps({'calls':calls,'states':{k:vars(s) for k,s in task.node_states.items() if s.status not in {'completed','skipped'}},'control':task.control_flow_state},ensure_ascii=False,default=str)
-    assert len(rehearsal_calls)==4
+    assert len(rehearsal_calls)==5
     owner='agent_sw' if writer_type=='single' else 'agent_si'
-    assert task.node_states[f'rehearse_{owner}'].token_usage['test:writer']['total_tokens']==60
+    assert task.node_states[f'rehearse_{owner}'].token_usage['test:writer']['total_tokens']==75
     if writer_type=='single':
         assert calls[-1]=='agent_sw' and not set(calls)&set(m.WRITERS)
         assert m.read_json(tmp_path/'cache/si/chapter.json')['body']=='试演后单写手交稿'
         return
     expected=[m.WRITERS[i-1] for i in list(range(1,count))+[6]]
     assert set(calls)&set(m.WRITERS)==set(expected)
-    if not assembly_retry:assert calls[-1]=='agent_si'
+    assert calls[-1]=='agent_si'
     for i in range(count,6):assert task.node_states[m.WRITERS[i-1]].status=='skipped'
     result=m.read_json(tmp_path/'cache/si/chapter.json')['body']
     assert len(result.split('\n\n'))==count
+    if assembly_retry:
+        assert calls.count('agent_dw') == 1
+        assert result.split('\n\n')[1] == '夏'*20

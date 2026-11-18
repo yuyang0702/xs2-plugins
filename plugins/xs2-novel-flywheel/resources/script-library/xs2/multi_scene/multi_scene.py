@@ -93,7 +93,7 @@ def duplicates(body, previous):
     return False
 
 
-def scene_problem(body, minimum, maximum, pov, book_contract=None):
+def scene_problem(body, minimum, maximum, pov, book_contract=None, *, advisory=False):
     if not isinstance(body, str) or not body.strip():
         return '[scene_empty] 请在 body 字段提供本场完整正文。'
     if _SLOT.search(body) or r'\n\n' in body or re.search(r'(?m)^#{1,6}\s|^\s*```', body):
@@ -102,6 +102,8 @@ def scene_problem(body, minimum, maximum, pov, book_contract=None):
         return '[scene_duplicate] 本场出现重复段落，删掉重复并展开不同的行动和后果。'
     if book_contract is None and pov == 'third_person' and _FIRST.search(_QUOTES.sub(' ', body)):
         return '[scene_pov] 在引号外出现第一人称叙述。使用既定第三人称焦点，保留正常对白。'
+    if advisory:
+        return None
     actual = length.count_prose(body)
     if actual < minimum or actual > maximum + 50:
         detail = ('展开已有交涉、动作和人物取舍，禁止靠回顾前场凑字。' if actual < minimum
@@ -110,7 +112,7 @@ def scene_problem(body, minimum, maximum, pov, book_contract=None):
     return None
 
 
-def validate(bodies, target, pov, allocation=None, book_contract=None):
+def validate(bodies, target, pov, allocation=None, book_contract=None, *, advisory=False):
     """Return the offending scene and safe retry feedback, or None."""
     if allocation is None:
         nominal_lo, nominal_hi = budgets(target)
@@ -125,14 +127,16 @@ def validate(bodies, target, pov, allocation=None, book_contract=None):
     if len(bodies) != len(lo):
         raise ValueError('正文场景数与已确认分场不一致')
     previous = []
-    counts = [length.count_prose(body) for body in bodies]
     for i, body in enumerate(bodies):
-        issue = scene_problem(body, lo[i], hi[i], pov, book_contract=book_contract)
+        issue = scene_problem(body, lo[i], hi[i], pov, book_contract=book_contract, advisory=advisory)
         if issue:
             return i, issue
         if book_contract is None and duplicates(body, previous):
             return i, '[scene_duplicate] 场景含与已有段落高度重复的内容。从自己的入场点继续，删除复述并写出本场的具体行动和后果。'
         previous.extend(paragraphs(body))
+    if advisory:
+        return None
+    counts = [length.count_prose(body) for body in bodies]
     total = sum(counts)
     draft_min, draft_max = (sum(nominal_lo) * 90 + 99) // 100, sum(nominal_hi) * 145 // 100
     if total < draft_min or total > draft_max:
@@ -170,7 +174,7 @@ def rehearsal_roster(root):
     return module.rehearsal_roster(root)
 
 
-def planning_sources(root, chapter, policy_runtime='', task_id=None):
+def planning_sources(root, chapter, policy_runtime='', task_id=None, *, advisory=False):
     """Freeze book facts from current effective sources, never another scene's guesses."""
     policy = None
     if (root/'.novel-project.json').is_file():
@@ -194,7 +198,7 @@ def planning_sources(root, chapter, policy_runtime='', task_id=None):
     entry=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
     spec=importlib.util.spec_from_file_location('scene_composition_budget',entry)
     composer=importlib.util.module_from_spec(spec);spec.loader.exec_module(composer)
-    quota=composer.current(root,chapter)
+    quota=(composer.reference if advisory else composer.current)(root,chapter)
     if quota:parts.append('## 已独立审核的篇幅与阅读作用规划（意图，不是已发生事实）\n'+json.dumps(quota['plan'],ensure_ascii=False,indent=2))
     return '\n\n'.join(parts)
 
@@ -261,8 +265,8 @@ def full_scene_retry(directory, index, issue):
         + json.dumps(brief, ensure_ascii=False, indent=2) + '\n'))
 
 
-def accept_full_scene_attempt(directory, index, incoming, minimum, maximum, pov, allocation_sha='', source_sha='', book_contract=None):
-    issue = scene_problem(incoming, minimum, maximum, pov, book_contract=book_contract)
+def accept_full_scene_attempt(directory, index, incoming, minimum, maximum, pov, allocation_sha='', source_sha='', book_contract=None, *, advisory=False):
+    issue = scene_problem(incoming, minimum, maximum, pov, book_contract=book_contract, advisory=advisory)
     if issue is None:
         record = {'body': incoming.strip()}
         if allocation_sha:
@@ -319,7 +323,10 @@ def main():
     parser.add_argument('--reason', default='场景返修后仍未通过，重新按本场边界交付')
     parser.add_argument('--chapter',default='0001')
     parser.add_argument('--policy-runtime',default='')
+    parser.add_argument('--advisory-length',action='store_true')
     args = parser.parse_args()
+    if args.advisory_length and not args.target.strip():
+        args.target = length.DEFAULT_PLANNING_TARGET
     root = Path.cwd()
     task = os.environ.get('TASK_ID', '')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', task):
@@ -357,7 +364,7 @@ def main():
     elif args.action == 'prepare':
         if not re.fullmatch(r'\d{4}',args.chapter):raise ValueError('章节编号无效')
         save_json(profile_file,current_profile)
-        source_text=planning_sources(root,args.chapter,args.policy_runtime,task_id=task)
+        source_text=planning_sources(root,args.chapter,args.policy_runtime,task_id=task,advisory=args.advisory_length)
         source_file=directory/'planning-sources.md'
         if source_file.exists() and source_file.read_text(encoding='utf-8')!=source_text:
             raise ValueError('规划依据已有变化，请创建新任务')
@@ -449,7 +456,8 @@ def main():
         i = args.scene - 1
         problem = accept_full_scene_attempt(directory, args.scene, scene_text(raw), lo[i], hi[i], args.pov,
             allocation_policy.digest(directory / 'allocation.json') if allocation else '',
-            allocation_policy.digest(directory / f'scene-{args.scene}.txt') if allocation else '',book_contract=profile)
+            allocation_policy.digest(directory / f'scene-{args.scene}.txt') if allocation else '',
+            book_contract=profile,advisory=args.advisory_length)
         if problem:
             retry(WRITERS[i], problem)
     else:
@@ -473,7 +481,7 @@ def main():
                 # Revalidate replaced or reset drafts here before trusting its cache.
                 if data is None or data.get('source_sha256') != source_sha or data.get('body') != scene_text(raw).strip():
                     issue = accept_full_scene_attempt(directory, i, scene_text(raw), lo[i-1], hi[i-1], args.pov,
-                        allocation_sha, source_sha,book_contract=profile)
+                        allocation_sha, source_sha,book_contract=profile,advisory=args.advisory_length)
                     if issue:
                         retry(writer, issue)
                         return
@@ -486,7 +494,7 @@ def main():
                 retry(writer, '[scene_empty] 请在 body 字段提供本场完整正文。')
                 return
             bodies.append(body.strip())
-        error = validate(bodies, args.target, args.pov, allocation=allocation,book_contract=profile)
+        error = validate(bodies, args.target, args.pov, allocation=allocation,book_contract=profile,advisory=args.advisory_length)
         if error:
             index = slots[error[0]]
             full_scene_retry(directory, index, error[1])

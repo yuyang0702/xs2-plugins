@@ -18,6 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from functools import lru_cache
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import writing_dna
@@ -38,6 +39,9 @@ OPENING_HEADING = re.compile(
     r"^(?:#{1,6}\s|<h[1-6]\b|第[\s零一二三四五六七八九十百千两〇\d]+[章节卷回部篇]|"
     r"(?:序章|楔子|引子|正文|上篇|上卷)(?:\s|[：:]|$)|chapter\s|prologue\b)", re.I
 )
+WINDOW_GROUPS = {'candidates': ('candidate', 12), 'style_observations': ('style', 12),
+                 'conflict_patterns': ('conflict', 8)}
+MAX_ITEM_REPAIR_ROUNDS = 2
 
 # Workflow captures subprocess stdout as UTF-8.  Windows may otherwise select
 # the active console code page (for example GBK), which turns Chinese status
@@ -159,7 +163,7 @@ def split(args):
         if end == len(raw):
             break
         start = end - args.overlap
-    save(MANIFEST, {"schema": "xs2.reference.windows.v1", "source": source, "windows": windows})
+    save(MANIFEST, {"schema": "xs2.reference.windows.v1", "run_id": uuid4().hex, "source": source, "windows": windows})
     for window in windows:
         save(f"learning/cache/{window['window_id']}.json", window)
         save(f"learning/cache/{window['window_id']}.feedback.md",'')
@@ -233,6 +237,75 @@ def checked_export_layout(item, evidence, raw, source_sha256):
     return layout
 
 
+def _checked_candidate(item, window, raw, source_sha256):
+    relocated = 0
+    if not isinstance(item, dict):
+        raise ValueError("候选必须是对象")
+    mechanism = text_field(item, "mechanism", 100)
+    guidance = text_field(item, "transfer_guidance")
+    constraints = strings(item, "constraints")
+    dimension = item.get('dimension')
+    if 'dimension' in item and dimension not in DIMENSIONS:
+        raise ValueError('dimension 不是支持的参考维度')
+    scopes = (strings(item, 'scopes', False) if not dimension
+              else optional_strings(item, 'scopes', 16))
+    misplaced = set(scopes) & APPLICATION_SCOPES
+    scopes = [scope for scope in scopes if scope not in misplaced]
+    if (not dimension and not scopes) or not set(scopes) <= SCOPES:
+        raise ValueError("候选包含未知流程范围")
+    confidence = item.get("confidence")
+    if confidence not in {"high", "medium", "low"}:
+        raise ValueError("confidence 只能为 high、medium、low")
+    layer = item.get("layer", "narrative_lens")
+    if layer not in LAYERS:
+        raise ValueError("layer 不是支持的写法层次")
+    source_pov = optional_strings(item, "source_pov", 4)
+    target_pov = optional_strings(item, "target_pov", 4)
+    pov_compatibility = item.get("pov_compatibility", "adaptable")
+    if pov_compatibility not in POV_COMPATIBILITY:
+        raise ValueError("pov_compatibility 只能为 direct、adaptable 或 risky")
+    adaptation_guidance = item.get("adaptation_guidance", "")
+    if not isinstance(adaptation_guidance, str) or len(adaptation_guidance) > 800:
+        raise ValueError("adaptation_guidance 必须是 800 字以内的文本")
+    risk_flags = optional_strings(item, "risk_flags", 8)
+    application_scope = list(dict.fromkeys([*optional_strings(item, "application_scope", 5), *sorted(misplaced)]))
+    if not set(application_scope) <= APPLICATION_SCOPES:
+        raise ValueError("application_scope 包含未知的篇幅适用范围")
+    evidence = item.get("evidence")
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 8:
+        raise ValueError("每条候选需要 1～8 条证据")
+    checked = []
+    for proof in evidence:
+        if not isinstance(proof, dict):
+            raise ValueError("证据必须是对象")
+        start, end, excerpt, repaired = evidence_position(proof, window, raw)
+        relocated += int(repaired)
+        checked.append({"window_id": window["window_id"], "source_start": start,
+                        "source_end": end, "excerpt": excerpt, "reason": text_field(proof, "reason")})
+    # Reject literal copying in generation-facing fields; semantic abstraction
+    # still requires the user to inspect candidates before selection.
+    for value in [mechanism, guidance, *constraints]:
+        if any(value[offset:offset + 20] in raw for offset in range(max(0, len(value) - 19))):
+            raise ValueError("抽象写法包含连续 20 字原文，请重新提炼")
+    semantic = {"mechanism": mechanism, "transfer_guidance": guidance,
+                "constraints": constraints, "scopes": scopes,
+                "layer": layer, "source_pov": source_pov, "target_pov": target_pov,
+                "pov_compatibility": pov_compatibility,
+                "adaptation_guidance": adaptation_guidance, "risk_flags": risk_flags,
+                "application_scope": application_scope}
+    if "dimension" in item:
+        semantic["dimension"] = item["dimension"]
+        semantic["scopes"] = list(mechanism_scopes(semantic))
+    if "export_layout" in item:
+        layout = checked_export_layout(item, checked, raw, source_sha256)
+        if layout != "preserve":
+            semantic["export_layout"] = layout
+    objectives=reading().abstract_definitions(item['reading_objectives'],[raw]) if item.get('reading_objectives',[])!=[] else []
+    if objectives:semantic['reading_objectives']=objectives
+    return {"candidate_id": "mechanism-" + digest(semantic)[:20],
+            **semantic, "confidence": confidence, "evidence": checked}, relocated
+
+
 def normalize(args):
     data, raw = manifest()
     window = next((item for item in data["windows"] if item["window_id"] == args.window_id), None)
@@ -256,116 +329,221 @@ def normalize(args):
     observations, patterns = writing_dna.checked_extras(payload, window, raw, text_field, strings, evidence_position)
     relocated = 0
     for item in items:
-        if not isinstance(item, dict):
-            raise ValueError("候选必须是对象")
-        mechanism = text_field(item, "mechanism", 100)
-        guidance = text_field(item, "transfer_guidance")
-        constraints = strings(item, "constraints")
-        dimension = item.get('dimension')
-        if 'dimension' in item and dimension not in DIMENSIONS:
-            raise ValueError('dimension 不是支持的参考维度')
-        scopes = (strings(item, 'scopes', False) if not dimension
-                  else optional_strings(item, 'scopes', 16))
-        misplaced = set(scopes) & APPLICATION_SCOPES
-        scopes = [scope for scope in scopes if scope not in misplaced]
-        if (not dimension and not scopes) or not set(scopes) <= SCOPES:
-            raise ValueError("候选包含未知流程范围")
-        confidence = item.get("confidence")
-        if confidence not in {"high", "medium", "low"}:
-            raise ValueError("confidence 只能为 high、medium、low")
-        layer = item.get("layer", "narrative_lens")
-        if layer not in LAYERS:
-            raise ValueError("layer 不是支持的写法层次")
-        source_pov = optional_strings(item, "source_pov", 4)
-        target_pov = optional_strings(item, "target_pov", 4)
-        pov_compatibility = item.get("pov_compatibility", "adaptable")
-        if pov_compatibility not in POV_COMPATIBILITY:
-            raise ValueError("pov_compatibility 只能为 direct、adaptable 或 risky")
-        adaptation_guidance = item.get("adaptation_guidance", "")
-        if not isinstance(adaptation_guidance, str) or len(adaptation_guidance) > 800:
-            raise ValueError("adaptation_guidance 必须是 800 字以内的文本")
-        risk_flags = optional_strings(item, "risk_flags", 8)
-        application_scope = list(dict.fromkeys([*optional_strings(item, "application_scope", 5), *sorted(misplaced)]))
-        if not set(application_scope) <= APPLICATION_SCOPES:
-            raise ValueError("application_scope 包含未知的篇幅适用范围")
-        evidence = item.get("evidence")
-        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 8:
-            raise ValueError("每条候选需要 1～8 条证据")
-        checked = []
-        for proof in evidence:
-            if not isinstance(proof, dict):
-                raise ValueError("证据必须是对象")
-            start, end, excerpt, repaired = evidence_position(proof, window, raw)
-            relocated += int(repaired)
-            checked.append({"window_id": window["window_id"], "source_start": start,
-                            "source_end": end, "excerpt": excerpt, "reason": text_field(proof, "reason")})
-        # Reject literal copying in generation-facing fields; semantic abstraction
-        # still requires the user to inspect candidates before selection.
-        for value in [mechanism, guidance, *constraints]:
-            if any(value[offset:offset + 20] in raw for offset in range(max(0, len(value) - 19))):
-                raise ValueError("抽象写法包含连续 20 字原文，请重新提炼")
-        semantic = {"mechanism": mechanism, "transfer_guidance": guidance,
-                    "constraints": constraints, "scopes": scopes,
-                    "layer": layer, "source_pov": source_pov, "target_pov": target_pov,
-                    "pov_compatibility": pov_compatibility,
-                    "adaptation_guidance": adaptation_guidance, "risk_flags": risk_flags,
-                    "application_scope": application_scope}
-        if "dimension" in item:
-            semantic["dimension"] = item["dimension"]
-            semantic["scopes"] = list(mechanism_scopes(semantic))
-        if "export_layout" in item:
-            layout = checked_export_layout(item, checked, raw, source_sha256)
-            if layout != "preserve":
-                semantic["export_layout"] = layout
-        objectives=reading().abstract_definitions(item['reading_objectives'],[raw]) if item.get('reading_objectives',[])!=[] else []
-        if objectives:semantic['reading_objectives']=objectives
-        candidates.append({"candidate_id": "mechanism-" + digest(semantic)[:20],
-                           **semantic, "confidence": confidence, "evidence": checked})
+        candidate, fixed = _checked_candidate(item, window, raw, source_sha256)
+        candidates.append(candidate)
+        relocated += fixed
         samples = normalize_dialogue_samples(item.get('dialogue_samples'), window, raw, evidence_position)
         if samples:
             candidates[-1]['dialogue_samples'] = samples
     save(f"learning/cache/{window['window_id']}.validated.json",
-         {"source_sha256": source_sha256, "window_id": window["window_id"],
+         {"source_sha256": source_sha256, "window_id": window["window_id"], "run_id": data.get('run_id'),
           "evidence_positions_relocated": relocated, "candidates": candidates,
           "style_observations": observations, "conflict_patterns": patterns})
     print(f"<script_out>已校验 {window['window_id']}：{len(candidates)} 条候选，精确定位修正 {relocated} 条证据</script_out>")
 
 
+def _frozen_window(window_id):
+    data, raw = manifest()
+    window = next((w for w in data['windows'] if w['window_id'] == window_id), None)
+    if window is None or not re.fullmatch(r'window-\d{4}', window_id):
+        raise ValueError('未知窗口')
+    start, end = window['source_start'], window['source_end']
+    if window['text'] != raw[start:end] or window['source_sha256'] != data['source']['text_sha256']:
+        raise ValueError('窗口与参考资料快照不一致')
+    if 'dialogue_context' in window and window['dialogue_context'] != dialogue_context(raw, start, end):
+        raise ValueError('对白窗口语境与参考资料快照不一致')
+    for row in window.get('evidence_catalog', []):
+        a, z = row['source_start'], row['source_end']
+        if not start <= a < z <= end or raw[a:z] != row['excerpt']:
+            raise ValueError('证据目录与参考资料快照不一致')
+    return [digest(data), data['source']['text_sha256'], os.environ.get('TASK_ID', '')], {
+        **window, 'run_id': data.get('run_id')}, raw
+
+
+def _window_items(value, limit, group):
+    if not isinstance(value, list) or len(value) > limit:
+        raise ValueError(f'{group} 必须为至多 {limit} 项的数组')
+    return value
+
+
+def _check_window_record(state, identifier, entry, window, raw):
+    """Store a single checked record, or keep only this record for repair."""
+    group, value = entry['group'], entry['value']
+    try:
+        if entry.get('section'):
+            prefix, limit = WINDOW_GROUPS[group]
+            items = _window_items(value, limit, group)
+            for index, item in enumerate(items, 1):
+                key = f'{prefix}-{index:02d}'
+                if group == 'candidates' and isinstance(item, dict):
+                    item = dict(item)
+                    samples = item.pop('dialogue_samples', None)
+                    if samples is not None:
+                        _check_window_record(state, f'{key}.dialogue-samples',
+                                             {'group': 'dialogue_samples', 'parent': key, 'value': samples}, window, raw)
+                _check_window_record(state, key, {'group': group, 'value': item}, window, raw)
+        elif group == 'dialogue':
+            samples = normalize_dialogue_samples([value], window, raw, evidence_position)
+            state['dialogue'][identifier] = {'parent': entry['parent'], 'sample': samples[0]}
+        elif group == 'dialogue_samples':
+            items = _window_items(value, 3, group)
+            for index, item in enumerate(items, 1):
+                _check_window_record(state, f"{entry['parent']}.dialogue-{index:02d}",
+                                     {'group': 'dialogue', 'parent': entry['parent'], 'value': item}, window, raw)
+        elif group == 'candidates':
+            checked, fixed = _checked_candidate(value, window, raw, window['source_sha256'])
+            state['accepted'][group][identifier] = checked
+            state['evidence_positions_relocated'] += fixed
+        else:
+            observed, conflict = writing_dna.checked_extras(
+                {group: [value]}, window, raw, text_field, strings, evidence_position)
+            state['accepted'][group][identifier] = (observed or conflict)[0]
+    except (ValueError, KeyError, TypeError) as error:
+        state['pending'][identifier] = {**entry, 'error': str(error)}
+    else:
+        state['pending'].pop(identifier, None)
+
+
+def _apply_window_repairs(state, payload, window, raw):
+    if (type(payload.get('repair_round')) is not int or payload['repair_round'] != state['round']
+            or not isinstance(payload.get('repairs'), list) or len(payload['repairs']) > 68):
+        return '返修回复须使用当前 repair_round 与 repairs 数组。'
+    provided = {}
+    pending = dict(state['pending'])
+    for row in payload['repairs']:
+        if not isinstance(row, dict) or not isinstance(row.get('repair_id'), str):
+            continue
+        identifier = row['repair_id']
+        if identifier in pending:
+            provided.setdefault(identifier, []).append(row)
+    for identifier, rows in provided.items():
+        if len(rows) != 1 or 'value' not in rows[0]:
+            continue
+        entry = pending[identifier]
+        row = rows[0]
+        if row['value'] is None:
+            try:
+                reason = text_field(row, 'reason', 400)
+            except ValueError:
+                continue
+            state['unresolved'].append({'repair_id': identifier, 'group': entry['group'],
+                                        'reason': entry['error'], 'repair_note': reason})
+            state['pending'].pop(identifier)
+            continue
+        _check_window_record(state, identifier, {**entry, 'value': row['value']}, window, raw)
+    return ''
+
+
+def _window_output(state, window):
+    groups = {group: [rows[key] for key in sorted(rows)] for group, rows in state['accepted'].items()}
+    samples_by_parent = {}
+    for _, item in sorted(state['dialogue'].items()):
+        samples_by_parent.setdefault(item['parent'], []).append(item['sample'])
+    groups['candidates'] = [checked | ({'dialogue_samples': samples_by_parent[key]}
+                                      if key in samples_by_parent else {})
+                            for key, checked in sorted(state['accepted']['candidates'].items())]
+    unresolved = state['unresolved'] + [{'repair_id': key, 'group': row['group'], 'reason': row['error']}
+                                        for key, row in state['pending'].items()]
+    return {'source_sha256': window['source_sha256'], 'window_id': window['window_id'], 'run_id': window['run_id'],
+            'evidence_positions_relocated': state['evidence_positions_relocated'],
+            'unresolved': unresolved, **groups}
+
+
+def _archive_window_reply(window_id, binding, raw_bytes, response, errors):
+    receipt = {'window_id': window_id, 'source_binding': binding[:2],
+               'response_sha256': hashlib.sha256(raw_bytes).hexdigest(), 'response': response,
+               'raw_text': raw_bytes.decode('utf-8-sig', errors='replace'), 'error': errors[0], 'errors': errors,
+               'note': '原始回复含待返修内容。逐条验收结果见窗口记录。'}
+    relative = f'learning/cache/rejected/{window_id}-{digest(receipt)[:20]}.json'
+    if not path(relative).exists():
+        save(relative, receipt)
+    return relative
+
+
+def _item_repair_feedback(state, reply_error, archive):
+    issues = []
+    remaining = 12000
+    for key, item in state['pending'].items():
+        issue = {'repair_id': key, 'group': item['group'], 'error': item['error']}
+        original = json.dumps(item['value'], ensure_ascii=False)
+        if len(original) <= min(3600, remaining):
+            issue['original'] = item['value']
+            remaining -= len(original)
+        elif remaining:
+            preview = original[:min(250, remaining)]
+            issue['original_preview'] = preview
+            remaining -= len(preview)
+        issues.append(issue)
+    return ('本轮只返修列出的条目，已核验项会原样保留。只返回 window_id、repair_round 和 repairs。'
+            '每个 repairs 项包含 repair_id 与 value，value 为该条完整修正。'
+            '证据不足时用 value:null 并填写 reason。证据必须从当前原文选取。'
+            f'\nrepair_round: {state["round"]}\n' + (reply_error + '\n' if reply_error else '')
+            + json.dumps(issues, ensure_ascii=False) + '\n本次原始回复：' + archive)
+
+
 def validate_window(args):
-    """Retry the responsible analyst, never repair semantic claims in code."""
-    def binding():
-        data,raw=manifest()
-        window=next((w for w in data['windows'] if w['window_id']==args.window_id),None)
-        if window is None or not re.fullmatch(r'window-\d{4}',args.window_id):raise ValueError('未知窗口')
-        start,end=window['source_start'],window['source_end']
-        if window['text']!=raw[start:end]:raise ValueError('窗口与参考资料快照不一致')
-        if 'dialogue_context' in window and window['dialogue_context'] != dialogue_context(raw, start, end):
-            raise ValueError('对白窗口语境与参考资料快照不一致')
-        for row in window.get('evidence_catalog',[]):
-            a,z=row['source_start'],row['source_end']
-            if not start<=a<z<=end or raw[a:z]!=row['excerpt']:raise ValueError('证据目录与参考资料快照不一致')
-        return digest(data),digest(raw)
-    original=binding() # Source-integrity failures must not be sent to a model.
-    input_path=path(args.input)
-    if not input_path.is_relative_to(path('learning/cache')):raise ValueError('模型回复必须位于本书学习缓存')
-    raw_bytes=input_path.read_bytes()
-    try:normalize(args)
-    except (ValueError,KeyError,TypeError) as exc:
-        if binding()!=original:raise ValueError('校验期间来源变化，未退回模型') from exc
-        if input_path.read_bytes()!=raw_bytes:raise ValueError('校验期间模型回复变化，未退回模型') from exc
-        message=str(exc)
-        try:response=json.loads(raw_bytes)
-        except (ValueError,UnicodeError):response=None
-        receipt={'window_id':args.window_id,'source_binding':original,'response_sha256':hashlib.sha256(raw_bytes).hexdigest(),
-            'response':response,'raw_text':raw_bytes.decode('utf8',errors='replace'),'error':message,
-            'note':'拒绝的实际模型回复，未修改、未验收、未采用；只能由分析者根据原文重新提交。'}
-        relative=f"learning/cache/rejected/{args.window_id}-{digest(receipt)[:20]}.json"
-        if not path(relative).exists():save(relative,receipt)
-        feedback=('当前窗口分析未通过：'+message+'\n逐项核对所有数组字段（source_pov、target_pov、application_scope等）及证据编号。'
-            '证据编号须来自当前evidence_catalog，或引用准确摘录。对白可引用当前附加语境。不猜编号、不改来源、不编造引文，也不能为了过检悄悄丢掉仍有依据的分析。'
-            '若分析确实不成立，按原文重新判断。未通过回复已归档：'+relative)
-        save(f'learning/cache/{args.window_id}.feedback.md',feedback)
-        print('<WF_REJECT_UPSTREAM target="agent_distill_window">'+html.escape(feedback)+'</WF_REJECT_UPSTREAM>')
+    """Retain individually validated entries while retrying only open issues."""
+    binding, window, raw = _frozen_window(args.window_id)
+    prefix = f"learning/cache/{window['window_id']}"
+    input_path = path(args.input)
+    if not input_path.is_relative_to(path('learning/cache')):
+        raise ValueError('模型回复必须位于本书学习缓存')
+    stamp = input_path.stat().st_mtime_ns
+    raw_bytes = input_path.read_bytes()
+    attempt = [stamp, hashlib.sha256(raw_bytes).hexdigest()]
+    try:
+        response = json.loads(raw_bytes.decode('utf-8-sig'))
+    except (ValueError, UnicodeError):
+        response = None
+    if (not isinstance(response, dict) or response.get('window_id') != window['window_id']
+            or response.get('source_sha256') not in (None, window['source_sha256'])):
+        message = '模型返回的窗口身份或来源哈希不一致' if isinstance(response, dict) else '窗口分析回复必须是 JSON 对象'
+        relative = _archive_window_reply(window['window_id'], binding, raw_bytes, response, [message])
+        previous = path(prefix + '.feedback.md')
+        notice = message + '。请按当前窗口编号重交，来源哈希可省略。未通过回复：' + relative
+        current = previous.read_text(encoding='utf-8-sig').strip() if previous.is_file() else ''
+        feedback = current if current.startswith(notice) else '\n\n'.join(filter(None, (notice, current)))
+        save(prefix + '.feedback.md', feedback)
+        print('<WF_REJECT_UPSTREAM target="agent_distill_window">' + html.escape(feedback) + '</WF_REJECT_UPSTREAM>')
+        return
+
+    review_path = prefix + '.review.json'
+    state = load(review_path) if path(review_path).is_file() else {}
+    if state.get('binding') != binding:
+        state = {'binding': binding, 'round': 0, 'accepted': {group: {} for group in WINDOW_GROUPS},
+                 'dialogue': {}, 'pending': {}, 'unresolved': [], 'evidence_positions_relocated': 0}
+    if state.get('attempt') != attempt and not state.get('finished'):
+        reply_error = ''
+        if state['round'] == 0:
+            for group in WINDOW_GROUPS:
+                _check_window_record(state, group, {'group': group, 'section': True,
+                                     'value': response.get(group, None if group == 'candidates' else [])}, window, raw)
+        else:
+            reply_error = _apply_window_repairs(state, response, window, raw)
+        if _frozen_window(args.window_id)[0] != binding or input_path.read_bytes() != raw_bytes:
+            raise ValueError('校验期间来源或模型回复发生变化')
+        problems = [item['error'] for item in state['pending'].values()]
+        if reply_error:
+            problems.insert(0, reply_error)
+        if problems:
+            relative = _archive_window_reply(window['window_id'], binding, raw_bytes, response, problems)
+        if state['pending'] and state['round'] < MAX_ITEM_REPAIR_ROUNDS:
+            state['round'] += 1
+            state['feedback'] = _item_repair_feedback(state, reply_error, relative)
+        else:
+            state['finished'] = True
+            state['feedback'] = ''
+        state['attempt'] = attempt
+        save(review_path, state)
+
+    save(prefix + '.feedback.md', state['feedback'])
+    if not state.get('finished'):
+        print('<WF_REJECT_UPSTREAM target="agent_distill_window">' + html.escape(state['feedback']) + '</WF_REJECT_UPSTREAM>')
+        return
+    checked = _window_output(state, window)
+    save(prefix + '.validated.json', checked)
+    print(f'<script_out>已校验 {window["window_id"]}：{len(checked["candidates"])} 条候选，'
+          f'{len(checked["unresolved"])} 项证据不足或未完成返修</script_out>')
 
 
 def _candidate_similarity(left, right):
@@ -437,10 +615,14 @@ def merge(args):
     merged = {}
     observations = []
     patterns = []
+    unresolved = []
     for window in data["windows"]:
         packet = load(f"learning/cache/{window['window_id']}.validated.json")
-        if packet.get("source_sha256") != data["source"]["text_sha256"] or packet.get("window_id") != window["window_id"]:
+        if (packet.get("source_sha256") != data["source"]["text_sha256"]
+                or packet.get("window_id") != window["window_id"]
+                or packet.get('run_id') != data.get('run_id')):
             raise ValueError("窗口结果过期或身份不匹配")
+        unresolved.extend({**issue, 'window_id': window['window_id']} for issue in packet.get('unresolved', []))
         for key, target in (("style_observations", observations), ("conflict_patterns", patterns)):
             for item in packet.get(key, []):
                 if item not in target:
@@ -457,6 +639,8 @@ def merge(args):
     result = {"schema": "xs2.reference.candidates.v2", "source": data["source"],
               "covered_window_ids": [item["window_id"] for item in data["windows"]],
               "candidates": candidates, "style_observations": observations, "conflict_patterns": patterns}
+    if unresolved:
+        result['unresolved'] = unresolved
     result["candidates_sha256"] = digest(result["candidates"])
     from reference_choices import with_reference_choices
     result = with_reference_choices(result)
@@ -570,7 +754,7 @@ def adopt(args):
                     'dimension': 'voice' if dimension == 'voice' else 'custom',
                     'intent': mechanism['transfer_guidance'],
                     'planning_question': '本书哪一场的实际处境适合借鉴这条方法？',
-                    'acceptance_question': '当前正文哪里体现了这条写法？如果没有相符的用法，可以跳过。',
+                    'acceptance_question': reading().creative().REFERENCE_QUESTION,
                     'limits': mechanism.get('constraints') or [],
                 }]
         mechanism["source"] = by_id[item].get("source") or data["source"]
@@ -733,7 +917,8 @@ def render_adopted_contexts():
 def render(scope, chapter=None):
     from reference_choices import DIMENSION_NAMES, active_blueprint, mechanism_scopes, text
     lines = ["# 用户已选写法（创作参考）", "",
-             "本页的蒸馏写法、风格、对白和冲突方法均按场景自选，可改用或略过。以作者明确要求、人物此刻的处境和声音、以及本书事实为准。", ""]
+             "本页的蒸馏写法、风格、对白和冲突方法均按场景自选，可改用或略过。以作者明确要求、人物此刻的处境和声音、以及本书事实为准。",
+             reading().creative().REFERENCE_GUIDANCE, ""]
     version = 0
     has_reference = False
     dialogue_receipt = {'applied':0, 'pending':0, 'skipped':0}
@@ -774,7 +959,7 @@ def render(scope, chapter=None):
             for index, item in enumerate(values, 1):
                 # Deliberately omit source titles/plots, excerpts and statistics.
                 lines.extend([f"## {index}. 已确认适配", item["guidance"], "使用边界：" + text(item.get("limits")), ""])
-        lines.extend(["参考风格与本书基线共同使用：已有正文的统一风格、事实、人物声音和作者意图优先。发现冲突时提出适配建议，不自动替换基线，不清除旧规则。",
+        lines.extend(["参考风格与本书基线共同使用：作者明确要求和既有事实优先，人物声音结合当下处境理解。模型生成的风格偏好不自动成为禁令；不改写已保存的基线或作者禁令。",
                       "风格是表达倾向，不是句长或标点配额；根据场景允许变化，避免每段机械执行全部规则。",
                       "使用冲突参考时，可借鉴它怎样改变人物的选择、代价或关系，按本书情节取舍。", ""])
         excluded = {item['candidate_id'] for item in blueprint['mechanisms']
@@ -798,7 +983,7 @@ def render(scope, chapter=None):
                 goal.pop('intent')
         objectives = objectives if objectives['objectives'] else None
     if objectives:
-        lines.extend(['','## 范文阅读效果参考',json.dumps(objectives,ensure_ascii=False,indent=2),
+        lines.extend(['','## 范文阅读效果参考',json.dumps(reading().model_view(objectives),ensure_ascii=False,indent=2),
             '按当前场景需要借鉴阅读效果，审核可给建议，采用与否由人物和场景决定。'])
     advisor_file = path("learning/advisor_report.json")
     if advisor_file.exists() and scope not in {'novel-advisor', 'export'}:

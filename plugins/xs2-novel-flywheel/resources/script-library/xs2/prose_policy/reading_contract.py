@@ -2,7 +2,15 @@
 import copy
 import hashlib
 import json
+import importlib.util
+from functools import lru_cache
 from pathlib import Path
+
+
+@lru_cache(maxsize=1)
+def creative():
+    spec=importlib.util.spec_from_file_location('reference_creative_latitude',Path(__file__).with_name('creative_latitude.py'))
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
 
 QUESTIONS={
     'opening_promise':'开篇提出了什么值得继续阅读的问题或期待，是否有本书风格下的具体依据？',
@@ -72,6 +80,17 @@ def public(contract):
     return {'schema':1,'objectives':[{'id':g['id'],'dimension':g['dimension'],'question':QUESTIONS[g['dimension']],
         'application_scope':g.get('application_scope',['general'])} for g in contract.get('objectives',[])
         if g['dimension']!='custom' and not g.get('source_dimension')]}
+
+
+def model_view(contract):
+    """Qualify legacy questions for generation, preserving identities and storage."""
+    result = copy.deepcopy(contract)
+    result['boundary'] = creative().REFERENCE_GUIDANCE
+    for goal in result.get('objectives', []):
+        question = goal.get('acceptance_question')
+        if question and not question.startswith('仅在实际采用时评估：'):
+            goal['acceptance_question'] = '仅在实际采用时评估：' + question
+    return result
 
 
 def schema(excerpt=None):

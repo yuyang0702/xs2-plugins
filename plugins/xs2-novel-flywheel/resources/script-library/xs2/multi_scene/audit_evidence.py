@@ -52,9 +52,22 @@ def catalog(body,units=None):
     return rows
 
 
-def resolve_report(report,body,units=None):
+def resolve_report(report,body,units=None,*,reader_excerpts=False):
     rows={r['id']:r for r in catalog(body,units)}
     def fail(path,reason):raise ValueError(path+'：'+reason)
+    def reader_excerpt(quote,path):
+        if not isinstance(quote,str) or not quote.strip() or quote in body:
+            return quote
+        # A model may collapse paragraph breaks. Restore only an unambiguous
+        # contiguous span with every non-newline character intact.
+        lines=re.split(r'(?:\r?\n)+',quote)
+        if len(lines)>1 and all(lines):
+            pattern=r'(?:\r?\n)+'.join(map(re.escape,lines))
+            matches=re.finditer(pattern,body)
+            first=next(matches,None)
+            if first and next(matches,None) is None:
+                return first[0]
+        fail(path,'使用实际 ref_id 或完整范围引用当前原文中的连续片段')
     def span(value,path):
         if set(value)=={'ref_id'}:
             row=rows.get(value['ref_id'])
@@ -78,6 +91,9 @@ def resolve_report(report,body,units=None):
             result={k:walk(v,path+'.'+k) for k,v in value.items()}
             if 'excerpts' in result and isinstance(result['excerpts'],list):
                 result['excerpts']=[v['text'] if isinstance(v,dict) and set(v)=={'text','occurrence'} else v for v in result['excerpts']]
+                if reader_excerpts:
+                    result['excerpts']=[reader_excerpt(quote,f'{path}.excerpts[{index}]')
+                                        for index,quote in enumerate(result['excerpts'])]
             return result
         if isinstance(value,list):return [walk(v,path+f'[{i}]') for i,v in enumerate(value)]
         return value

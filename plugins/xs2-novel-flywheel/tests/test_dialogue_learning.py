@@ -81,6 +81,231 @@ def test_source_dialogue_cannot_omit_an_intervening_reply():
         checked(module, [sample], window, raw)
 
 
+@pytest.mark.parametrize('excerpt', ['「被动」', '可有时候，「被动」不见得处于下位。'])
+@pytest.mark.parametrize('nested_reason', [False, True])
+def test_dialogue_exchange_can_classify_a_quoted_narrative_term(excerpt, nested_reason):
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('绣工问：', '可有时候，「被动」不见得处于下位。\n绣工问：')
+    window['source_end'] = len(raw)
+    sample['non_dialogue_quotes'] = [{
+        'evidence': {'window_id': window['window_id'], 'excerpt': excerpt},
+        'reason': '叙述段落强调一个词语',
+    }]
+    if nested_reason:
+        item = sample['non_dialogue_quotes'][0]
+        item['evidence']['reason'] = item.pop('reason')
+    record = checked(module, [sample], window, raw)[0]
+    assert [turn['text'] for turn in record['turns']] == ['明日再来。', '明日几时？']
+    assert record['non_dialogue_quotes'][0]['evidence']['excerpt'] == excerpt
+    assert record['non_dialogue_quotes'][0]['reason'] == '叙述段落强调一个词语'
+
+
+@pytest.mark.parametrize('reply', [
+    '掌柜又说：“不要催。”', '掌柜又问：\n“不要催。”', '掌柜冷笑：\n\n“不要催。”',
+    '“不要催。”掌柜反驳。', '“不要催。”\n掌柜反驳。', '“不要催。”\n\n掌柜反驳。',
+])
+def test_dialogue_cannot_classify_a_reply_with_a_speech_tag_as_narration(reply):
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('绣工问：', reply + '\n绣工问：')
+    window['source_end'] = len(raw)
+    sample['non_dialogue_quotes'] = [{
+        'evidence': {'window_id': window['window_id'], 'excerpt': '“不要催。”'},
+        'reason': '叙述者使用引号强调',
+    }]
+    with pytest.raises(ValueError, match='中间回应'):
+        checked(module, [sample], window, raw)
+
+
+def test_source_dialogue_keeps_a_role_label_without_guessing_a_name():
+    module = reference()
+    raw, window, sample = source_sample()
+    turn = sample['turns'][1]
+    del turn['speaker']
+    turn.update(speaker_label='来讨生活费的人', attribution='tentative')
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_tentative'
+    assert record['turns'][1]['speaker_label'] == '来讨生活费的人'
+    assert record['turns'][1]['attribution'] == 'tentative'
+    turn.update(source_speaker='绣工', attribution='observed',
+                attribution_evidence={'window_id': window['window_id'], 'excerpt': '绣工问：'})
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_verified'
+    assert record['turns'][1]['speaker'] == '绣工'
+    assert record['turns'][1]['speaker_label'] == '来讨生活费的人'
+    turn['speaker'] = '外来将军'
+    with pytest.raises(ValueError, match='人物姓名'):
+        checked(module, [sample], window, raw)
+
+
+@pytest.mark.parametrize(('tag', 'claim', 'source_speaker', 'expected'), [
+    ('绣工闭了闭眼，咬牙道：', {'speaker': '绣工'}, None, '绣工'),
+    ('绣工这才惊觉失言，连忙收敛失态，移开眼神，找补道：\n\n',
+     {'speaker': '绣工'}, None, '绣工'),
+    ('女修鄙夷道：', {'speaker_label': '女修'}, None, '女修'),
+    ('绣工抬眼，女修低声问：', {'speaker_label': '女修'}, '女修', '女修'),
+    ('对讲机里的绣工有点蒙了，问我：\n',
+     {'speaker': '绣工', 'speaker_label': '无线电里的绣工'}, None, '对讲机里的绣工'),
+    ('我死死盯着掌柜，没好气地说：\n',
+     {'speaker_label': '叙述者'}, '我', '我'),
+])
+def test_attribution_uses_the_original_subject_and_adjacent_speech_tag(tag, claim, source_speaker, expected):
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('绣工问：', tag)
+    window['source_end'] = len(raw)
+    turn = sample['turns'][1]
+    del turn['speaker']
+    turn.update(claim, attribution='observed',
+                attribution_evidence={'window_id': window['window_id'], 'excerpt': tag.strip()})
+    if source_speaker:
+        turn['source_speaker'] = source_speaker
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_verified'
+    assert record['turns'][1]['attribution'] == 'observed'
+    assert record['turns'][1]['speaker'] == expected
+
+
+@pytest.mark.parametrize(('tag', 'excerpt'), [
+    ('绣工抬眼，掌柜问：', '绣工抬眼，掌柜问：'),
+    ('绣工听掌柜问：', '绣工听掌柜问：'),
+    ('他低声问：', '他低声问：'),
+    ('绣工问：\n换了地方。\n', '绣工问：'),
+    ('绣工问：\n6\n', '绣工问：'),
+    ('\n', ''),
+    ('绣工问：', '绣工'),
+])
+def test_attribution_cannot_use_another_subject_or_an_unlinked_mention(tag, excerpt):
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('绣工问：“明日几时？”', tag + '“明日几时？”')
+    window['source_end'] = len(raw)
+    if excerpt == '绣工':
+        start = raw.index('绣工问')
+    else:
+        start = raw.index(excerpt or '明日几时？')
+    sample['turns'][1].update(source_speaker='绣工', attribution='observed', attribution_evidence={
+        'window_id': window['window_id'], 'excerpt': excerpt or '明日几时？',
+        'source_start': start, 'source_end': start + len(excerpt or '明日几时？'),
+    })
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_tentative'
+    assert record['turns'][1]['attribution'] == 'tentative'
+
+
+def test_attribution_keeps_a_model_tentative_judgment_even_with_a_nearby_speech_tag():
+    module = reference()
+    raw, window, sample = source_sample()
+    turn = sample['turns'][1]
+    turn.update(speaker_label='暂定角色', attribution='tentative', source_speaker='绣工',
+                attribution_evidence={'window_id': window['window_id'], 'excerpt': '绣工问：'})
+    assert checked(module, [sample], window, raw)[0]['status'] == 'context_tentative'
+
+
+def test_attribution_can_cite_only_the_clause_that_actually_names_the_speaker():
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('绣工问：', '掌柜把账本一合，绣工回过头，低声问：')
+    window['source_end'] = len(raw)
+    sample['turns'][1].update(source_speaker='绣工', attribution='observed', attribution_evidence={
+        'window_id': window['window_id'], 'excerpt': '绣工回过头，低声问：',
+    })
+    assert checked(module, [sample], window, raw)[0]['status'] == 'context_verified'
+
+
+def test_original_role_does_not_require_a_second_display_label():
+    module = reference()
+    raw, window, sample = source_sample()
+    turn = sample['turns'][1]
+    del turn['speaker']
+    turn.update(source_speaker='绣工', attribution='observed',
+                attribution_evidence={'window_id': window['window_id'], 'excerpt': '绣工问：'})
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_verified'
+    assert record['turns'][1]['speaker'] == '绣工'
+
+
+def test_a_tag_introducing_the_next_quote_cannot_attribute_the_previous_quote():
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('掌柜说：“明日再来。”\n绣工问：', '“明日再来。”绣工问：')
+    window['source_end'] = len(raw)
+    sample['turns'][0].update(speaker='绣工', attribution='observed', source_speaker='绣工',
+                              attribution_evidence={'window_id': window['window_id'], 'excerpt': '绣工问：'})
+    sample['turns'][1].update(speaker_label='提问者')
+    del sample['turns'][1]['speaker']
+    assert checked(module, [sample], window, raw)[0]['turns'][0]['attribution'] == 'tentative'
+
+
+def test_postposed_speech_tag_can_end_at_a_line_break_without_punctuation():
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('绣工问：“明日几时？”', '“明日几时？”绣工问')
+    window['source_end'] = len(raw)
+    record = checked(module, [sample], window, raw)[0]
+    assert record['status'] == 'context_verified'
+
+
+def test_copied_quote_delimiters_are_removed_from_legacy_turn_text():
+    module = reference()
+    raw, window, sample = source_sample()
+    sample['turns'][0].update(text='“明日再来。”',
+                              evidence={'window_id': window['window_id'], 'excerpt': '掌柜说：“明日再来。”'})
+    turn = checked(module, [sample], window, raw)[0]['turns'][0]
+    assert raw[turn['source_start']:turn['source_end']] == turn['text'] == '明日再来。'
+
+
+def test_segmented_dialogue_preserves_exact_quotes_through_adoption(tmp_path):
+    module = reference()
+    raw, window, sample = source_sample()
+    raw = raw.replace('“明日再来。”', '“明日再来。”掌柜又说：“账还没对完。”')
+    window['source_end'] = len(raw)
+    turn = sample['turns'][0]
+    del turn['text'], turn['evidence']
+    turn['segments'] = [
+        {'text': text, 'evidence': {'window_id': window['window_id'], 'excerpt': text}}
+        for text in ('明日再来。', '账还没对完。')
+    ]
+    record = checked(module, [sample], window, raw)[0]
+    turn = record['turns'][0]
+    assert raw[turn['source_start']:turn['source_end']] == turn['text'] == '明日再来。'
+    assert [raw[s['source_start']:s['source_end']] for s in turn['segments']] == ['明日再来。', '账还没对完。']
+    assert [s['text'] for s in turn['segments']] == ['明日再来。', '账还没对完。']
+
+    adoption, selections, *_ = review_fixture(tmp_path)
+    item = selections[0]
+    item['candidate']['dialogue_samples'] = [record]
+    item['library']['candidates']['source']['text_sha256'] = record['source_sha256']
+    assert adoption.source_samples(item)[0]['turns'][0]['segments'] == turn['segments']
+    narration = '掌柜又说：'
+    start = raw.index(narration)
+    turn['segments'][1] = {'text': narration, 'source_start': start, 'source_end': start + len(narration)}
+    with pytest.raises(ValueError, match='无法核对'):
+        adoption.source_samples(item)
+
+
+def test_a_single_quote_requires_the_legacy_turn_form():
+    module = reference()
+    raw, window, sample = source_sample()
+    turn = sample['turns'][0]
+    turn['segments'] = [{'text': turn.pop('text'), 'evidence': turn.pop('evidence')}]
+    with pytest.raises(ValueError, match='对白片段'):
+        checked(module, [sample], window, raw)
+
+
+def test_tentative_role_dialogue_does_not_block_abstract_adoption(tmp_path):
+    module = reference()
+    raw, window, sample = source_sample()
+    turn = sample['turns'][1]
+    del turn['speaker']
+    turn['speaker_label'] = '来讨生活费的人'
+    record = checked(module, [sample], window, raw)[0]
+    adoption, selections, *_ = review_fixture(tmp_path)
+    selections[0]['candidate']['dialogue_samples'] = [record]
+    assert adoption.source_samples(selections[0]) == []
+
+
 def test_wrong_speaker_in_real_surrounding_quote_is_never_verified():
     module = reference()
     raw, window, sample = source_sample()
@@ -94,13 +319,19 @@ def test_wrong_speaker_in_real_surrounding_quote_is_never_verified():
 
 def test_both_writer_modes_and_polish_receive_dialogue_learning_contract():
     prompts = json.loads((RESOURCES/'prompts.json').read_text(encoding='utf-8'))
-    for name in ['novel-single-writer', 'novel-dialogue-writer', 'novel-storyboard-integrator',
-                 'novel-polisher', 'novel-professional-polisher']:
+    for name in ['novel-dialogue-writer', 'novel-storyboard-integrator', 'novel-polisher',
+                 'novel-professional-polisher']:
         sections = prompts['agents'][name]['sections']
         contract = next((s for s in sections if s['name'] == 'dialogue_learning_contract'), None)
         assert contract and contract.get('enabled', True), f'{name} lacks the dialogue learning contract'
         assert '前后回应' in contract['content']
         assert '原作' in contract['content']
+    workflow = json.loads((RESOURCES/'workflows/mvp/definition.json').read_text(encoding='utf-8'))
+    single_writer = next(node for node in workflow['nodes'] if node['id'] == 'agent_sw')
+    message = single_writer['first_message']
+    assert '{{single_writer_context}}' in message
+    assert '对方那句话的实际意图' in message
+    assert '按场面重新组织台词' in message
 
 
 @pytest.mark.parametrize('stage', ['mvp','polish'])

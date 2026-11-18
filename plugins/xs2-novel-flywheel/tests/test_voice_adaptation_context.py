@@ -22,7 +22,6 @@ def test_confirmed_voice_adaptations_reach_writer_branches_and_reviewers(tmp_pat
         'character': ['agent_voice'],
         'mvp': ['agent_cm', 'agent_se', 'agent_dw', 'agent_sw', 'agent_si'],
         'polish': ['agent_sc', 'agent_pl', 'agent_pp'],
-        'reader-sim': ['agent_reader'],
     }.items():
         definition = load(stage)
         fields = {v['key']: v for v in definition['variables']}

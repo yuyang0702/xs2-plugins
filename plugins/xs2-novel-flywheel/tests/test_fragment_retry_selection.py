@@ -1,7 +1,7 @@
 import json
 
 from test_fragment_length import setup, commit
-from test_length_quality import quality, policy, write
+from test_length_quality import quality, policy, write, install_legacy_length_feedback
 
 
 def test_rejected_copy_rotates_source_range_and_preserves_original_bytes(tmp_path):
@@ -13,7 +13,7 @@ def test_rejected_copy_rotates_source_range_and_preserves_original_bytes(tmp_pat
     _, receipt = commit(tmp_path, outputs, copied, 'task-copy-rejected')
     assert not receipt['accepted']
     assert (tmp_path / 'story/0001/chapter.md').read_bytes() == raw
-    state.update(policy().next_action(tmp_path, state, 'polish')['updates'])
+    install_legacy_length_feedback(tmp_path, state)
     write(tmp_path, '.novel-project.json', json.dumps(state))
     following = q.prepare_execution(tmp_path, '0001', '130-160', 'length_only')
     next_guard = json.loads((tmp_path / following['length_commit_guard']).read_text(encoding='utf8'))

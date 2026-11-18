@@ -74,6 +74,19 @@ def test_expression_issue_checks_must_link_a_real_finding():
     m.validate_checks(report,BODY,required=True)
 
 
+def test_missing_empty_issue_ids_do_not_discard_grounded_pass_checks():
+    m = module()
+    rows = checks(m)
+    for row in rows:
+        del row['issue_ids']
+    report = {'issues': [], 'expression_checks': rows}
+    assert m.validate_checks(report, BODY, required=True) == checks(m)
+    assert all('issue_ids' not in row for row in rows)
+    rows[0]['status'] = 'issue'
+    with pytest.raises(ValueError, match='问题编号'):
+        m.validate_checks(report, BODY, required=True)
+
+
 def test_legacy_reviews_stay_readable_and_style_is_not_a_word_blacklist():
     m=module();assert m.validate_checks({},BODY)==[]
     report={'issues':[],'expression_checks':checks(m)}

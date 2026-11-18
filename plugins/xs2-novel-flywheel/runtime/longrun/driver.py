@@ -127,19 +127,15 @@ def boundary_stop_request(root,cursor,stage,chapter):
             or ('chapter' in request and (not isinstance(request['chapter'],str)
                 or len(request['chapter'])!=4 or not request['chapter'].isdigit()))):
         raise ValueError('阶段边界停止请求格式无效')
-    if (request['id']==cursor.get('last_stop_request_id') or request['after_stage']!=stage
+    # Old requests may survive a plugin upgrade or a completed stop.
+    boundary='post-hoc' if request['after_stage']=='reader-sim' else request['after_stage']
+    if (request['id']==cursor.get('last_stop_request_id') or boundary!=stage
             or request.get('chapter',chapter)!=chapter):return None
     return request
 
 
-def baseline_action(cursor,state,policy,root=None):
+def baseline_action(cursor):
     if cursor.get('phase')=='baseline_plan':
-        cursor['phase']='baseline_reader'
-        return {'action':'advance','stage':'reader-sim','reset':['reader-sim','post-hoc','export']}
-    if cursor.get('phase')=='baseline_reader':
-        if cursor.get('stage')!='reader-sim':return None
-        if policy.reader_report(root,state)['verdict']!='pass':
-            return policy.next_action(root,state,'reader-sim')
         cursor['phase']='baseline_archive'
         return {'action':'advance','stage':'post-hoc','reset':['post-hoc','export']}
     return None
@@ -355,11 +351,11 @@ async def run(root,resources,host_root):
         try:
             while True:
                 if cursor.get('paused'):raise ValueError(cursor.get('reason','长跑已暂停'))
-                if cursor.get('phase')=='baseline_archive' and cursor['stage']=='post-hoc' and not cursor.get('task_id'):
-                    try:policy.reader_report(root,state)
-                    except ValueError:
-                        cursor.update(phase='baseline_reader',stage='reader-sim',task_id=None)
-                        save_state(root,state,cursor)
+                if cursor['stage']=='reader-sim':
+                    if cursor.get('phase')=='baseline_reader':
+                        cursor['phase']='baseline_archive'
+                    cursor.update(stage='post-hoc',task_id=None,interruption_pending=None)
+                    save_state(root,state,cursor)
                 number=policy.chapter(state);stage=cursor['stage']
                 print(f'STAGE {number} {stage}',flush=True)
                 task=await execute_stage(root,resources,runtime,policy,state,cursor)
@@ -376,7 +372,7 @@ async def run(root,resources,host_root):
                         policy.run_control().finish(root,state)
                         cursor.update(finished=True,finished_at=log.now(),task_id=None)
                         save_state(root,state,cursor);return result
-                    baseline=baseline_action(cursor,state,policy,root)
+                    baseline=baseline_action(cursor)
                     if baseline:action=baseline
                     elif cursor.get('phase')=='baseline_archive':
                         cursor['phase']='continuation'
@@ -387,8 +383,7 @@ async def run(root,resources,host_root):
                         action={'action':'advance','stage':'outline','reset':['outline',*policy.PRODUCTION],
                             'updates':{'values':values,'serialReservation':None}}
                     else:action=policy.next_action(root,state,stage)
-                    if action['action']=='repair':action=await repair(root,state,policy,root/'observability/workflows')
-                automation._apply_action(root,state,action)
+                state=automation._apply_action(root,state,action)
                 if action['action'] in ('pause','finish'):raise ValueError(action.get('reason','流程已暂停'))
                 cursor.update(stage=action['stage'],task_id=None,interruption_count=0,interruption_pending=None)
                 save_state(root,state,cursor)

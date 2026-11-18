@@ -12,6 +12,7 @@ import re
 import tempfile
 
 LENGTH_REPAIR_STRATEGY = 'fragment-v6'
+DEFAULT_PLANNING_TARGET = '3000-4000'
 
 METRIC = '正文实字：中文按汉字、英文和数字按词；标题、标点、空白不计'
 _HAN = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0003134a]')
@@ -71,45 +72,90 @@ def target_range(target):
     return lower, upper
 
 
-def resolve_target(root, target):
-    policy_path=safe_path(root,'meta/length_policy.json')
-    if policy_path.is_file():
-        source=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
-        spec=importlib.util.spec_from_file_location('effective_composition_length',source)
-        planner=importlib.util.module_from_spec(spec);spec.loader.exec_module(planner)
-        project=safe_path(root,'.novel-project.json')
-        values=json.loads(project.read_text(encoding='utf-8-sig')).get('values',{}) if project.is_file() else {}
-        chapter=chapter_number(str(values.get('chapter_number','0001')).zfill(4))
-        fixed=planner.fixed_edit(root,chapter,os.environ.get('TASK_ID',''))
-        if fixed:return tuple(fixed['edit']['bounds'])
-        quota=planner.current(root,chapter)
-        if quota:
-            effective=f"{quota['minimum']}-{quota['maximum']}"
-            if not str(target or '').strip() or str(target).strip() in (str(values.get('target_word_count','')).strip(),effective):
-                return quota['minimum'],quota['maximum']
-    if str(target or '').strip():
-        return target_range(target)
+def resolve_length(root, target='', *, chapter=None, task_id=None, advisory=False):
+    """Distinguish planning measurements from ranges that can block publication."""
+    requested = target_range(target)
+    policy_path = safe_path(root, 'meta/length_policy.json')
+    configured = policy_path.is_file()
+    if requested and not configured and not advisory:
+        return {'ownership': 'legacy', 'bounds': list(requested)}
     project = safe_path(root, '.novel-project.json')
-    if project.is_file():
-        data = json.loads(project.read_text(encoding='utf-8-sig'))
-        return target_range(data.get('values', {}).get('target_word_count', ''))
-    return None
+    values = json.loads(project.read_text(encoding='utf-8-sig')).get('values', {}) if project.is_file() else {}
+    nominal = target_range(values.get('target_word_count', ''))
+    if advisory:
+        bounds = requested or nominal
+        return {'ownership': 'planner', 'bounds': list(bounds) if bounds else None}
+    if not configured:
+        return {'ownership': 'legacy', 'bounds': list(nominal) if nominal else None}
+    source = Path(__file__).resolve().parents[1] / 'composition_plan/composition_plan.py'
+    spec = importlib.util.spec_from_file_location('effective_composition_length', source)
+    planner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(planner)
+    config = planner.policy(root)
+    if config is None:
+        bounds = requested or nominal
+        return {'ownership': 'legacy', 'bounds': list(bounds) if bounds else None}
+    chapter = chapter_number(chapter or str(values.get('chapter_number', '0001')).zfill(4))
+    fixed = planner.fixed_edit(root, chapter, os.environ.get('TASK_ID', '') if task_id is None else task_id)
+    if fixed:
+        return {'ownership': 'author', 'bounds': list(fixed['edit']['bounds'])}
+    quota = planner.current(root, chapter)
+    planned = (quota['minimum'], quota['maximum']) if quota else None
+    envelope = [config.get('minimum', 1), config.get('maximum', 200000)] if 'minimum' in config or 'maximum' in config else None
+    explicit = requested is not None and requested not in (nominal, planned)
+    use_quota = planned is not None and not explicit
+    if config['ownership'] == 'author' or explicit or (use_quota and planner.quota_author_range(root, quota)):
+        bounds = planned if use_quota else (requested or nominal or envelope)
+        if bounds and envelope:
+            bounds = max(bounds[0], envelope[0]), min(bounds[1], envelope[1])
+            if bounds[0] > bounds[1]:
+                raise ValueError('本章要求与作者明确的篇幅边界冲突')
+        return {'ownership': 'author', 'bounds': list(bounds) if bounds else None}
+    bounds = planned or requested or nominal
+    return {'ownership': 'planner', 'bounds': list(bounds) if bounds else None, 'hard_bounds': envelope}
 
 
-def assess(root, chapter, target=''):
+def resolve_target(root, target):
+    bounds = resolve_length(root, target)['bounds']
+    return tuple(bounds) if bounds else None
+
+
+def required_bounds(policy):
+    if isinstance(policy, dict):
+        return policy.get('hard_bounds') if policy['ownership'] == 'planner' else policy['bounds']
+    return policy
+
+
+def is_blocking(result):
+    return result.get('blocking', result['status'] in {'short', 'long'})
+
+
+def assess(root, chapter, target='', *, advisory=False):
     chapter = chapter_number(chapter)
     body = safe_path(root, f'story/{chapter}/chapter.md')
     if not body.is_file():
         raise ValueError('缺少本章正文，无法核对实际字数')
     raw = body.read_bytes()
-    bounds = resolve_target(root, target)
-    return measurement(raw, chapter, bounds)
+    return measurement(raw, chapter, resolve_length(root, target, chapter=chapter, task_id='', advisory=advisory))
 
 
 def measurement(raw, chapter, bounds):
     actual = count_prose(raw.decode('utf-8-sig'))
     result = {'chapter_number': chapter, 'metric': METRIC, 'actual': actual,
               'body_sha256': hashlib.sha256(raw).hexdigest(), 'status': 'unconfigured'}
+    if isinstance(bounds, dict):
+        ownership = bounds['ownership']
+        planning = bounds['bounds']
+        enforced = required_bounds(bounds)
+        if ownership != 'legacy':
+            blocking = enforced is not None and not enforced[0] <= actual <= enforced[1]
+            result.update(ownership=ownership, blocking=blocking)
+            if ownership == 'planner':
+                if enforced:
+                    result['hard_bounds'] = enforced
+                if planning:
+                    result['planning_bounds'] = planning
+        bounds = enforced if ownership == 'planner' and (blocking or not planning) else planning
     if bounds is not None:
         lower, upper = bounds
         result.update(lower=lower, upper=upper, add_at_least=max(0, lower - actual),
@@ -134,15 +180,25 @@ def guidance(result):
              f"当前正文实测 {result['actual']} 实字；正文指纹 {result['body_sha256']}。"]
     if result['status'] == 'unconfigured':
         lines.append('本书未配置明确字数，沿用现有篇幅，不新加限制。')
+    elif result.get('ownership') == 'planner' and not is_blocking(result):
+        if result.get('planning_bounds'):
+            lower, upper = result['planning_bounds']
+            lines.append(f'规划参考 {lower}—{upper} 实字。保留有阅读作用的正文，按现稿记录与规划的差值，不为达到参考值补写或删减。')
+        if result.get('hard_bounds'):
+            lower, upper = result['hard_bounds']
+            lines.append(f'正文在作者另设的硬性边界 {lower}—{upper} 实字内。')
     else:
-        lines.append(f"最终范围 {result['lower']}—{result['upper']} 实字，建议靠近 {(result['lower'] + result['upper']) // 2} 实字。")
+        if result.get('ownership'):
+            lines.append(f"作者硬性范围 {result['lower']}—{result['upper']} 实字。仅按有阅读作用的内容补足或压缩。")
+        else:
+            lines.append(f"最终范围 {result['lower']}—{result['upper']} 实字，建议靠近 {(result['lower'] + result['upper']) // 2} 实字。")
         if result['status'] == 'short':
             lines.append(f"当前不足，至少净增加 {result['add_at_least']} 实字；若删掉重复内容，还须补足相同字数。不能继续把完整正文压缩成梗概。")
         elif result['status'] == 'long':
             lines.append(f"当前超出，至少净减少 {result['cut_at_least']} 实字；压缩重复解释和重复手续，保留承重场景及结局。")
         else:
             lines.append('篇幅已在范围内；润色保留必要场景，不大幅压缩或膨胀。')
-        lines.extend(['增加内容应展开已有场景的交涉往返、可观察行动、具体阻碍、人物反应和选择后果；不得凭空增加关键事实、证人或支线灌水。',
+        lines.extend(['增加内容先从现有分场与原文找确实缺少的行动、反应、必要信息或选择后果；保留已有作用的短接话和正文。物件变化、对白或动作已把意思传达清楚时，删去重复解释。没有安全扩写位置时，按篇幅冲突重新规划。',
                       '人物事实与前后因果优先，原有作者返修意见仍须落实。输出完整正文，不能输出改写计划或字数声明。',
                       '标点、空白、标题和声称“已有五千字”都不能补足正文实字，后续由插件重新计数；不得用复制段落凑数。'])
     return '\n'.join(lines) + '\n'
@@ -171,8 +227,8 @@ def gesture_review_context(text):
             + '\n'.join(candidates) + '\n')
 
 
-def prepare_guidance(root, chapter, target=''):
-    result = assess(root, chapter, target)
+def prepare_guidance(root, chapter, target='', *, advisory=False):
+    result = assess(root, chapter, target, advisory=advisory)
     relative = f'cache/quality/{chapter}/length_context.md'
     source = safe_path(root, f'story/{chapter}/chapter.md')
     hints = gesture_review_context(source.read_text(encoding='utf-8-sig')) if source.is_file() else ''
@@ -181,13 +237,13 @@ def prepare_guidance(root, chapter, target=''):
     return relative
 
 
-def prepare_draft_guidance(root, chapter, target, candidate):
+def prepare_draft_guidance(root, chapter, target, candidate, *, advisory=False):
     chapter = chapter_number(chapter)
     data = json.loads(safe_path(root, candidate).read_text(encoding='utf-8-sig'))
     body = data.get('body') if isinstance(data, dict) else None
     if not isinstance(body, str) or not body.strip():
         raise ValueError('润色候选正文缺失，不能沿用修改前的字数')
-    result = measurement(body.encode('utf-8'), chapter, resolve_target(root, target))
+    result = measurement(body.encode('utf-8'), chapter, resolve_length(root, target, chapter=chapter, task_id='', advisory=advisory))
     relative = f'cache/quality/{chapter}/polish_draft_length_context.md'
     text = ('# 待编辑润色稿实测（尚未提交正文）\n\n'
             f'来源：{candidate}。以下预算针对最终编辑正在读取的候选稿，不能当作当前已提交正文的评估。\n\n'
@@ -202,14 +258,28 @@ def gate_report(root, chapter, target, report):
         raise ValueError('读者报告绑定的正文已变化，请重新评估')
     gated = copy.deepcopy(report)
     expression_gate(gated, safe_path(root, f'story/{chapter}/chapter.md').read_text(encoding='utf-8-sig'))
+    previous = gated.get('length_check') or {}
     gated['length_check'] = result
-    if result['status'] in {'short', 'long'}:
+    if is_blocking(result):
         if gated.get('verdict') != 'reject':
             gated['verdict'] = 'revise'
         issue = {'code': 'length_out_of_range', 'location': '整篇正文实测字数', 'priority': 'high',
                  'impact': f"实测 {result['actual']} 实字，目标 {result['lower']}—{result['upper']}；模型通过判断不能替代实际计数。",
                  'goal': guidance(result)}
         gated['issues'] = [item for item in gated.get('issues', []) if item.get('code') != 'length_out_of_range'] + [issue]
+    elif (result.get('ownership') == 'planner' and previous.get('body_sha256') == result['body_sha256']
+          and previous.get('status') in {'short', 'long'}):
+        issues = gated.get('issues', [])
+        retained = [item for item in issues if item.get('code') != 'length_out_of_range']
+        if len(retained) != len(issues):
+            gated['issues'] = retained
+            scope = gated.get('revision_scope')
+            if scope and isinstance(scope.get('assessments'), list):
+                removed = {item.get('id') for item in issues if item.get('code') == 'length_out_of_range'}
+                scope['assessments'] = [row for row in scope['assessments'] if row.get('issue_id') not in removed]
+            if (gated.get('verdict') == 'revise' and not retained
+                    and all(gated.get(key, {}).get('verdict') == 'pass' for key in ('fact_review', 'expression_review'))):
+                gated['verdict'] = 'pass'
     if 'reader_review_version' in gated:
         path = Path(__file__).resolve().parents[1] / 'reader_review/reader_review.py'
         spec = importlib.util.spec_from_file_location('reader_review_gate', path)
@@ -220,7 +290,7 @@ def gate_report(root, chapter, target, report):
     return gated
 
 
-def expression_gate(report, body):
+def expression_gate(report, body, *, verified_addition_issues=False):
     """Keep literary judgements with the reviewer; verify their cited evidence.
 
     Legacy reports stay readable. New separate reviews cannot hide substantive
@@ -249,18 +319,22 @@ def expression_gate(report, body):
                 or any(not isinstance(quote, str) or not quote.strip() or quote not in body for quote in excerpts)):
             raise ValueError('表达审稿引用须为当前正文中连续存在的原句，不能拼接或改述')
         expression_rules.validate_narrative_issue(item)
+        expression_rules.scene_focus_position(item, body)
         blocking = blocking or item['priority'] in {'medium', 'high'}
         # Idempotent: this report is checked both at publication and dispatch.
         merged = dict(item, source='expression_review')
         if not any(isinstance(old, dict) and old.get('location') == item['location']
-                   and old.get('impact') == item['impact'] for old in issues):
+                   and old.get('impact') == item['impact']
+                   and old.get('scene_focus') == item.get('scene_focus') for old in issues):
             issues.append(merged)
-    if review['verdict'] != 'pass' and not blocking:
+    if review['verdict'] != 'pass' and not blocking and not (review['verdict'] == 'revise' and verified_addition_issues):
         raise ValueError('表达审稿返修结论缺少有原文依据的实质问题')
     report['issues'] = issues
     verdicts = {report.get('verdict'), report['fact_review']['verdict']}
     if blocking:
         verdicts.add(review['verdict'] if review['verdict'] != 'pass' else 'revise')
+    if verified_addition_issues:
+        verdicts.add('revise')
     report['verdict'] = 'reject' if 'reject' in verdicts else 'revise' if 'revise' in verdicts else 'pass'
 
 
@@ -318,12 +392,12 @@ def correction_feedback(root, state, result):
 
 
 
-def prepare_execution(root, chapter, target='', scope='content', *, policy_runtime='', task_id=None, feedback_path=None):
+def prepare_execution(root, chapter, target='', scope='content', *, policy_runtime='', task_id=None, feedback_path=None, advisory=False):
     """Freeze the current body and both feedback sources before the final editor."""
-    relative = prepare_guidance(root, chapter, target)
+    relative = prepare_guidance(root, chapter, target, advisory=advisory)
     outputs = {'length_context_file': relative, 'polish_pass': 'content', 'length_execution_context': '',
                'length_expected_body_sha': '', 'length_commit_guard': '', 'length_commit_guard_sha': '', 'length_execution_system': ''}
-    if scope != 'length_only':
+    if scope != 'length_only' and not advisory:
         return outputs
     state_file = safe_path(root, '.novel-project.json')
     if not state_file.is_file():
@@ -353,14 +427,22 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         raise ValueError('作者同时修改了原始意见与字数反馈，请先确认合并；没有忽略任何一份意见')
     if not managed_same:
         return outputs  # The task already points at the full author-edited managed file.
+    if advisory:
+        outputs['author_feedback_file'] = source
+        return outputs
     if not source_same:
         outputs['author_feedback_file'] = source or prior
         return outputs
     result = assess(root, chapter, target)
+    if result.get('ownership') and not is_blocking(result):
+        return outputs
     body_path = f'story/{chapter}/chapter.md'
     body = safe_path(root, body_path).read_bytes()
     if hashlib.sha256(body).hexdigest() != result['body_sha256']:
         raise ValueError('字数定向返修前正文已变化，请重新核对')
+    fragment, expansion_evidence = focused_fragment(root, body, result)
+    if fragment is None:
+        raise ValueError('没有与当前正文绑定的有效扩写位置，须按内容与篇幅冲突重新规划。')
     book=book_rules.freeze(root,task_id)['contract'] if task_id else book_rules.resolve(root)
     binding = {'chapter_number': chapter, 'author_feedback_file': prior, 'receipt': receipt,
                'book_contract_sha256':book_rules.digest(book),
@@ -381,18 +463,6 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     context = folder + '/execution.md'
     guard_path = folder + '/commit_guard.json'
     atomic_text(safe_path(root, base), json.dumps({'body': body.decode('utf-8-sig')}, ensure_ascii=False, indent=2) + '\n')
-    previous_path = safe_path(root, f'quality/length/{chapter}-last-attempt.json')
-    previous = json.loads(previous_path.read_text(encoding='utf-8')) if previous_path.is_file() else {}
-    excluded = []
-    if previous.get('accepted') and previous.get('body_sha256') == result['body_sha256']:
-        excluded.extend(_span_ranges(previous.get('expanded_span_range')))
-    # A rejected candidate leaves the source unchanged. Rotate away from every
-    # rejected source span for that exact source, not merely accepted expansions.
-    for path in safe_path(root, f'quality/length-attempts/{chapter}').glob('*/receipt.json'):
-        attempt = json.loads(path.read_text(encoding='utf-8'))
-        if not attempt.get('accepted') and attempt.get('input_body_sha256') == result['body_sha256']:
-            excluded.extend(_span_ranges(attempt.get('selected_span_range')))
-    fragment = fragment_anchor(body, result, excluded)
     system_path = folder + '/fragment_system.md'
     system = ('本次是插件控制的局部片段字数修复。你只返回JSON对象，body字段只能包含指定原段落的扩写或精简替换文本，允许保留选定原段原句。'
               '绝不能返回整章、选定段落以外的旧正文、插入锚或计划。整章由插件按冻结锚合成。遵守既定人物事实、视角、语言与原作者约束。'
@@ -429,6 +499,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
              base: hashlib.sha256(safe_path(root, base).read_bytes()).hexdigest(),
              context: hashlib.sha256(safe_path(root, context).read_bytes()).hexdigest(),
              system_path: hashlib.sha256(safe_path(root, system_path).read_bytes()).hexdigest()}
+    files.update(expansion_evidence)
     if source:
         files[source] = receipt['source_sha256']
     if shared_bytes is not None:
@@ -437,6 +508,12 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         story_context_path = ''
     guard = {'body_path': body_path, 'story_context_path': story_context_path, 'body_sha256': result['body_sha256'], 'files': files,
              'state_binding': binding, 'outputs': outputs, 'fragment': fragment, 'assessment': result, 'semantic_review_required': True}
+    if result.get('ownership'):
+        target_policy = resolve_length(root, target, chapter=chapter, task_id='')
+        if measurement(body, chapter, target_policy) != result:
+            raise ValueError('字数定向准备期间篇幅要求已有变化，请重新核对')
+        guard['target'] = target
+        guard['target_policy'] = target_policy
     atomic_text(safe_path(root, guard_path), json.dumps(guard, ensure_ascii=False, indent=2) + '\n')
     outputs['length_commit_guard'] = guard_path
     outputs['length_commit_guard_sha'] = hashlib.sha256(safe_path(root, guard_path).read_bytes()).hexdigest()
@@ -453,6 +530,8 @@ def confirm_execution(root, chapter, expected_sha, guard_path, guard_sha, accept
     guard = json.loads(file.read_text(encoding='utf-8'))
     if guard.get('body_sha256') != expected_sha or guard.get('body_path') != f'story/{chapter}/chapter.md':
         raise ValueError('字数定向正文凭证不匹配')
+    if 'target_policy' in guard and resolve_length(root, guard['target'], chapter=chapter, task_id='') != guard['target_policy']:
+        raise ValueError('字数定向准备后作者篇幅要求已有变化，请重新发起返修')
     for relative, digest in guard['files'].items():
         bound = safe_path(root, relative)
         if relative == guard['body_path'] and accepted_body_sha:
@@ -479,6 +558,85 @@ def _span_ranges(value):
     if len(value) == 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in value):
         return [value] if 0 <= value[0] < value[1] else []
     return [span for item in value for span in _span_ranges(item)]
+
+
+def focused_fragment(root, raw, result):
+    chapter = result['chapter_number']
+    path = safe_path(root, f'quality/length/{chapter}-last-attempt.json')
+    previous = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+    excluded = []
+    if previous.get('accepted') and previous.get('body_sha256') == result['body_sha256']:
+        excluded.extend(_span_ranges(previous.get('expanded_span_range')))
+    # A rejected candidate leaves the source unchanged. Rotate away from every
+    # rejected source span for that exact source, not merely accepted expansions.
+    for path in safe_path(root, f'quality/length-attempts/{chapter}').glob('*/receipt.json'):
+        attempt = json.loads(path.read_text(encoding='utf-8'))
+        if not attempt.get('accepted') and attempt.get('input_body_sha256') == result['body_sha256']:
+            excluded.extend(_span_ranges(attempt.get('selected_span_range')))
+    if result.get('ownership') and result['status'] == 'short':
+        return reviewed_expansion(root, raw, result, excluded)
+    return fragment_anchor(raw, result, excluded), {}
+
+
+def reviewed_expansion(root, raw, result, excluded):
+    """Select a bounded original passage from the reader's grounded repair goals."""
+    relative = f"story/{result['chapter_number']}/reader_report.json"
+    path = safe_path(root, relative)
+    if not path.is_file():
+        return None, {}
+    report_raw = path.read_bytes()
+    report = json.loads(report_raw)
+    if report.get('body_sha256') != result['body_sha256']:
+        return None, {}
+    issues = (report.get('expression_review') or {}).get('issues', [])
+    text = raw.decode('utf-8')
+    normalized = text.removeprefix('\ufeff').replace('\r\n', '\n')
+    paragraphs = list(re.finditer(r'([\s\S]+?)(?:\r?\n[ \t]*\r?\n|\Z)', text))
+    gap = result['lower'] - result['actual']
+    maximum = min(1600, int(result['actual'] * .45))
+    for priority in ('high', 'medium'):
+        for issue in issues:
+            if issue.get('priority') != priority or issue.get('category') not in (
+                    'turning_point_summary', *expression_rules.SCENE_PROBLEMS):
+                continue
+            goal = issue.get('goal')
+            quotes = issue.get('excerpts') or []
+            if (not isinstance(goal, str) or not goal.strip() or not quotes
+                    or any(not isinstance(quote, str) or not quote.strip() or quote not in normalized for quote in quotes)):
+                continue
+            # A scene issue already cites onset, exchange and outcome in order.
+            # The exchange is the editable center; other evidence stays visible.
+            if issue.get('scene_focus'):
+                offset = expression_rules.scene_focus_position(issue, normalized)
+            else:
+                quote = quotes[1] if len(quotes) > 1 else quotes[0]
+                if normalized.count(quote) != 1:
+                    continue
+                offset = normalized.index(quote)
+            offset += int(text.startswith('\ufeff'))
+            for match in re.finditer('\r\n', text):
+                if match.start() >= offset:
+                    break
+                offset += 1
+            paragraph = next((match for match in paragraphs if match.start(1) <= offset < match.end(1)), None)
+            if paragraph is None:
+                continue
+            start, end = paragraph.span(1)
+            if start == 0 and text.startswith('\ufeff'):
+                start = 1
+            count = count_prose(text[start:end])
+            if not 0 < count <= maximum or (start <= int(text.startswith('\ufeff')) and end == len(text)):
+                continue
+            start, end = len(text[:start].encode('utf-8')), len(text[:end].encode('utf-8'))
+            if any(start < span[1] and end > span[0] for span in excluded):
+                continue
+            upper = min(result['upper'] - result['actual'], 2 * count)
+            fragment = {'kind': 'expand', 'start': start, 'end': end,
+                        'old_span_sha256': hashlib.sha256(raw[start:end]).hexdigest(),
+                        'requested_net_lower': min(gap, upper), 'requested_net_upper': upper,
+                        'reading_goal': goal, 'reading_evidence': quotes}
+            return fragment, {relative: hashlib.sha256(report_raw).hexdigest()}
+    return None, {}
 
 
 def fragment_anchor(raw, result, exclude_range=None):
@@ -620,6 +778,10 @@ def fragment_instructions(raw, fragment, result):
         action = '仅做字数局部扩写：body返回下面冻结原段的完整扩写替换文本，可以保留原段原句；不在已完成事件之间发明新事件。保持原段关键事实、结果、信息取得与先后顺序，展开当时已有的行动、回应、感受；不得搬来原段外已经发生或稍后才发生的事件。'
         if fragment.get('selection_mode') == 'contiguous_window':
             action += '本次选定的是连续多段原文窗口：可以展开窗口内已经存在的完整行动、交涉、验品或交易过程及其回应与结果，保持原有信息取得和时序，不把其中已写事实误当禁写项；不得重演窗口外的事件。'
+        if fragment.get('reading_goal'):
+            action += ('\n先完成已有读者目标中的缺口：' + fragment['reading_goal']
+                       + '\n相关原文：' + ' / '.join(fragment['reading_evidence'])
+                       + '\n通过确有必要的行动、回答、信息或选择后果写清变化；保留有用的现成接话，已传达的意思不再解释。')
     else:
         selected = raw[start:end].decode('utf-8')
         budget = f"当前全章{result['actual']}实字、目标{result['lower']}—{result['upper']}。仅压缩下方选定段落，净减少至少{result['actual']-result['upper']}实字；不允许把整章当作替换段。"

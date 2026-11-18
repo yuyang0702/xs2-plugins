@@ -34,6 +34,17 @@ def intent(root):
     return {k:values.get(k,'') for k in ('chapter_number','target_word_count','author_feedback_file','human_intent','world_intent')}
 
 
+def quota_author_range(root, quota):
+    if 'author_range' in quota:
+        return quota['author_range']
+    # Older signed quotas retained the distinction in the originating request.
+    request = support.load(root, folder(quota['task_id'])+'/request.json', {})
+    if (request.get('request_digest') == quota['request_digest']
+            and identity({key: value for key, value in request.items() if key != 'request_digest'}) == quota['request_digest']):
+        return request.get('author_range')
+    return None
+
+
 def feedback_layers(root):
     path=intent(root)['author_feedback_file']
     local=load('composition_feedback_layers',HERE/'local_revision/local_revision.py')
@@ -221,7 +232,9 @@ def fixed_deletion(root,request,quality):
     return {'bounds':bounds,'patch':patch,'candidate_sha256':measured['body_sha256'],'candidate_count':measured['actual']}
 
 
-def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedback_file=None):
+def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedback_file=None,advisory=False):
+    if advisory:
+        return {'enabled': False}
     quality=load('composition_quality',HERE/'console_service/length_quality.py')
     ownership={'沿用本书':'inherit','作者硬性范围':'author','按内容规划':'planner'}.get(ownership,ownership)
     if ownership not in ('inherit','author','planner'):raise ValueError('未知篇幅归属选项')
@@ -248,14 +261,16 @@ def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedba
     project=support.load(root,'.novel-project.json',{})
     total=support.load(root,'meta/longrun_contract.json',{}).get('target_new_characters')
     body=support.read(root,f'story/{chapter}/chapter.md')
+    nominal = values.get('target_word_count', '')
+    selected_range = quality.target_range(target or nominal)
+    author_range = selected_range if config['ownership'] == 'author' or selected_range != quality.target_range(nominal) else None
     request={'schema':1,'enabled':True,'chapter':chapter,'task_id':task,'policy':config,
         'macro_guard':macro_guard(root),
         'reuse_profile':{'code':code_profile(),'runtime':runtime_profile(root),'models':{k:v for k,v in project.items() if 'model' in k.lower()},
             'scope':{'mode':project.get('mode'),**{k:values.get(k) for k in
                 ('conflict_plan_mode','chapter_ending_mode','writer_type','preparation_mode','estimated_length','learning_context')}}},
         'intent':intent(root),
-        'nominal_target':target,'author_range':list(quality.target_range(target)) if target and
-            (config['ownership']=='author' or target!=values.get('target_word_count','')) else None,
+        'nominal_target':target,'author_range':list(author_range) if author_range else None,
         'book_contract':book.reading().legacy_book_view(frozen['contract']),'source_hashes':hashes,
         'body':body,'reader_report':support.load(root,f'story/{chapter}/reader_report.json'),
         'chapter_plan':support.load(root,f'planning/chapters/{chapter}.json'),
@@ -406,6 +421,7 @@ def accept(root,task,plan,review):
         'book_contract_sha256':support.archive_store().contract(root,persistent=True),
         'author_intent':{k:v for k,v in request['intent'].items() if k in ('target_word_count','human_intent','world_intent')},
         'authored_selection':request['authored_selection'],'prior_revision':prior_revision(request),'reuse_key':reuse_key(request)}
+    quota['author_range'] = request.get('author_range')
     if expected:quota['reading_contract_sha256']=identity(request['book_contract']['reading_contract'])
     def guards():
         support.verify(root,request['source_hashes']);return request['source_hashes']
@@ -430,6 +446,14 @@ def current(root,chapter):
     return quota
 
 
+def reference(root, chapter):
+    """Use an existing verified plan as context. An obsolete plan is optional."""
+    try:
+        return current(root, chapter)
+    except ValueError:
+        return None
+
+
 def schemas():
     text={'type':'string','minLength':1};integer={'type':'integer','minimum':1,'maximum':200000}
     def obj(properties):return {'type':'object','properties':properties,'required':list(properties),'additionalProperties':False}
@@ -450,10 +474,11 @@ def main():
     parser.add_argument('--ownership',default='inherit')
     parser.add_argument('--polish-pass',default='')
     parser.add_argument('--feedback-file',default=None)
+    parser.add_argument('--advisory-length', action='store_true')
     args=parser.parse_args();root=Path.cwd();task=os.environ.get('TASK_ID','');out={}
     if args.action=='prepare':
         request=prepare(root,args.chapter,task,args.target,args.ownership,
-                        polish_pass=args.polish_pass,feedback_file=args.feedback_file);enabled=request['enabled']
+                        polish_pass=args.polish_pass,feedback_file=args.feedback_file,advisory=args.advisory_length);enabled=request['enabled']
         out={'composition_enabled':'yes' if enabled else 'no','composition_reused':'yes' if request.get('reused') else 'no'}
         if enabled:
             base=folder(task);out.update(composition_dir=base,composition_request_file=base+'/request.json',

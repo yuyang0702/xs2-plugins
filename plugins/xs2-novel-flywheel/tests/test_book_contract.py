@@ -106,7 +106,15 @@ def test_writing_contextual_review_and_revision_share_the_contract_file():
                     'agent_guard_expression_repair':'guard_expression_model','agent_guard_expression_audit':'guard_expression_audit_model',
                     'agent_guard_facts_inspect':'guard_facts_audit_model','agent_guard_expression_inspect':'guard_expression_audit_model'}
                 if n['id'] in model_views:
-                    assert '{{'+model_views[n['id']]+'}}' in n['first_message'] and 'book_contract' in n['first_message']
+                    assert '{{'+model_views[n['id']]+'}}' in n['first_message']
+                    if n['id'] in {'agent_sc', 'agent_local_review'}:
+                        # These nodes get the frozen contract in the structured revision packet.
+                        from test_local_revision import module
+                        contract = {'genre': 'test contract'}
+                        role = 'critic' if n['id'] == 'agent_sc' else 'reviewer'
+                        assert module().model_view({'book_contract': contract}, role)['book_contract'] == contract
+                    else:
+                        assert 'book_contract' in n['first_message']
                 elif n['id']=='agent_sw':
                     default=next(v['default'] for v in d['variables'] if v['key']=='single_writer_context')
                     assert '{{single_writer_context}}' in n['first_message'] and '{{book_contract_file}}' in default
@@ -140,7 +148,7 @@ def test_existing_prose_preference_mode_is_part_of_the_contract_binding(tmp_path
     assert m.digest(m.resolve(tmp_path))!=original
 
 
-def test_single_writer_uses_the_same_frozen_plan_and_two_stage_guard(tmp_path,monkeypatch):
+def test_single_writer_uses_the_same_frozen_plan_and_combined_guard(tmp_path,monkeypatch):
     import asyncio
     from types import SimpleNamespace
     from src.workflow.definition import WorkflowDef,WorkflowTask,WorkflowRunRecord
@@ -168,8 +176,11 @@ def test_single_writer_uses_the_same_frozen_plan_and_two_stage_guard(tmp_path,mo
             disabled_ids=set(),shared_ws=tmp_path,parent_id='test',on_node_started=lambda _:None,needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
     assert asyncio.run(run())=='completed'
     assert 'agent_sw' in calls
-    assert calls.index('agent_nw')<calls.index('agent_sw')<calls.index('agent_guard_facts_inspect')<calls.index('agent_guard_expression_inspect')
-    assert not {'agent_guard_facts_repair','agent_guard_expression_repair'}.intersection(calls)
+    expected = ['agent_nw', 'agent_sw', 'agent_guard_facts_inspect', 'script_guard_facts_accept',
+                'script_guard_expression_precheck', 'script_guard_expression_accept']
+    assert [call for call in calls if call in expected] == expected
+    assert not {'agent_guard_facts_repair', 'agent_guard_expression_repair',
+                'agent_guard_expression_inspect'}.intersection(calls)
 def test_advisor_uses_existing_rank_snapshot_without_work_titles(tmp_path):
     import importlib.util
 

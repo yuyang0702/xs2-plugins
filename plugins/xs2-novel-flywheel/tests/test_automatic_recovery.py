@@ -4,13 +4,69 @@ import pytest
 from test_length_quality import policy
 
 
+def test_short_production_reuses_only_a_current_combined_precheck(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from test_book_contract import helper
+    p=policy()
+    workflow='xs2-novel-flywheel-mvp'
+    task_id='task-combined'
+    text='他停了停，把灯交过去。'
+    body=tmp_path/'story/0001/chapter.md'
+    body.parent.mkdir(parents=True)
+    body.write_text(text+'\n',encoding='utf-8')
+    directory=tmp_path/'cache/draft-guard'/task_id
+    directory.mkdir(parents=True)
+    audit=directory/'expression-audit.json'
+    audit.write_text('{}',encoding='utf-8')
+    book=helper()
+    receipt={'phase':'expression','body':text,'body_sha256':hashlib.sha256(text.encode()).hexdigest(),
+             'audit_sha256':hashlib.sha256(audit.read_bytes()).hexdigest(),'book_contract_sha256':book.digest(book.resolve(tmp_path))}
+    (directory/'final-receipt.json').write_text(json.dumps(receipt),encoding='utf-8')
+    (directory/'binding.json').write_text(json.dumps({'task_id':task_id,'combined_precheck':True}),encoding='utf-8')
+    native={'task_id':task_id,'status':'completed','workspace_override':str(tmp_path),
+            'node_states':{node:{'status':'completed'} for node in ('script_guard_finish','script_render_si')}}
+    monkeypatch.setattr(p.execution_guard(),'terminal_native_task',lambda *_:native)
+    state={'mode':'short','values':{'chapter_number':'0001','target_word_count':'1-50','writer_type':'single'},
+           'completed':['mvp'],'refs':{'mvp':{'workflow_id':workflow,'task_id':task_id}}}
+    assert p.next_action(tmp_path,state,'mvp')['stage']=='post-hoc'
+    assert p.next_action(tmp_path,{**state,'values':{**state['values'],'author_feedback_file':'author.md'}},'mvp')['stage']=='polish'
+    body.write_text('本章后来被另行修改。',encoding='utf-8')
+    assert p.next_action(tmp_path,state,'mvp')['stage']=='polish'
+
+
+def test_retired_reader_cannot_start_or_schedule_repair(tmp_path):
+    p=policy()
+    state={'mode':'short','values':{'chapter_number':'0001'},'readerRepairCount':0}
+    with pytest.raises(ValueError, match='读者模式已移除'):
+        p.launch_check(tmp_path,state,'reader-sim')
+    assert p.next_action(tmp_path,state,'reader-sim')['action']=='pause'
+
+
+@pytest.mark.parametrize('stage',['post-hoc','export'])
+def test_automatic_release_uses_current_body_without_reader_gate(tmp_path,stage):
+    from test_length_quality import write
+    p=policy()
+    state={'values':{'chapter_number':'0001','target_word_count':'1-30'}}
+    body=write(tmp_path,'story/0001/chapter.md','「那留下的人呢？」\n\n她停了一下。')
+    p.launch_check(tmp_path,state,stage)
+    write(tmp_path,'story/0001/reader_report.json','{"verdict":"reject","body_sha256":"old"}')
+    p.launch_check(tmp_path,state,stage)
+    assert body.read_text(encoding='utf-8')=='「那留下的人呢？」\n\n她停了一下。'
+    state['values']['target_word_count']='100-120'
+    p.launch_check(tmp_path,state,stage)
+    body.unlink()
+    with pytest.raises(ValueError,match='正文'):
+        p.launch_check(tmp_path,state,stage)
+
+
 def test_recovery_relaunches_only_known_operational_failures_with_durable_bound():
     p = policy()
     state={'values':{'chapter_number':'0001'},'writerModel':'volcengine:writer','polishModel':'anthropic:polisher'}
     task={'task_id':'old','status':'failed','node_states':{'script':{'status':'failed','error':'Script Library 已漂移，请创建新任务'}}}
     first=p.recovery_action(state,'polish',task)
     assert first['action']=='advance' and first['stage']=='polish'
-    assert set(first['reset'])=={'polish','reader-sim','post-hoc','export'}
+    assert set(first['reset'])=={'polish','post-hoc','export'}
     updated=copy.deepcopy(state);updated.update(first['updates'])
     second=p.recovery_action(updated,'polish',{**task,'task_id':'second'})
     assert second is not None
@@ -96,7 +152,7 @@ def test_compact_context_overflow_relaunches_only_mvp_with_full_preparation(tmp_
     assert p.recovery_action(state, 'mvp', task, root=tmp_path) is None
 
 
-def test_exhausted_polish_can_send_unchanged_audited_draft_to_readers(tmp_path, monkeypatch):
+def test_exhausted_polish_can_archive_unchanged_audited_draft(tmp_path, monkeypatch):
     import hashlib
     import json
     from test_book_contract import helper
@@ -118,10 +174,10 @@ def test_exhausted_polish_can_send_unchanged_audited_draft_to_readers(tmp_path, 
     failed={'task_id':'second-polish','status':'failed','workspace_override':str(root),
             'node_states':{'agent_pl':{'status':'failed','error':'No streaming chunk received for 120.0s'}}}
     action=p.recovery_action(state,'polish',failed,root=root)
-    assert action['stage']=='reader-sim' and action['reset']==['reader-sim','post-hoc','export']
+    assert action['stage']=='post-hoc' and action['reset']==['post-hoc','export']
     decision=action['updates']['polishDecisions']['0001']
     assert decision['draft_task_id']==identity and decision['body_sha256']==hashlib.sha256(body.read_bytes()).hexdigest()
     assert decision['failed_task_id']=='second-polish' and state['completed']==['mvp']
-    assert (p.recovery_action({**state,'readerRepairCount':1},'polish',failed,root=root) or {}).get('stage')!='reader-sim'
+    assert (p.recovery_action({**state,'readerRepairCount':1},'polish',failed,root=root) or {}).get('stage')!='post-hoc'
     body.write_text(text+'正文另有改动。',encoding='utf-8')
-    assert (p.recovery_action(state,'polish',failed,root=root) or {}).get('stage')!='reader-sim'
+    assert (p.recovery_action(state,'polish',failed,root=root) or {}).get('stage')!='post-hoc'

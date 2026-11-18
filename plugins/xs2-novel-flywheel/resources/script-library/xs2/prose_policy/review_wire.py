@@ -9,12 +9,16 @@ SEMANTIC={'compatible','issues','expression_review','expression_checks','change_
 def expand(raw,context):
     if not isinstance(raw,dict):raise ValueError('审稿回复须为对象')
     if 'protocol' not in raw:return copy.deepcopy(raw)
-    if raw['protocol']!=PROTOCOL or set(raw)-{'reading_checks'}!=(SEMANTIC|{'protocol'}):
+    if raw['protocol']!=PROTOCOL or set(raw)-{'reading_checks','added_text_reviews'}!=(SEMANTIC|{'protocol'}):
         raise ValueError('精简审稿缺少语义判断或夹带绑定字段，不能自动补判')
     result=copy.deepcopy(raw);result.pop('protocol')
     expression=result['expression_review']
+    checks=result['expression_checks']
+    if isinstance(checks,list):
+        for row in checks:
+            if isinstance(row,dict) and row.get('status') in ('pass','not_applicable'):
+                row.setdefault('issue_ids',[])
     if isinstance(expression,dict) and 'issues' not in expression:
-        checks=result['expression_checks']
         if (expression.get('verdict')!='pass' or not isinstance(checks,list) or not checks
                 or any(not isinstance(row,dict) or row.get('status') not in ('pass','not_applicable')
                        or row.get('issue_ids')!=[] for row in checks)):
@@ -23,7 +27,8 @@ def expand(raw,context):
     result.update({k:context[k] for k in HASHES})
     if not isinstance(result['change_reviews'],list):raise ValueError('须逐项审查改动')
     for row in result['change_reviews']:
-        if not isinstance(row,dict) or set(row)!={'edit_index','effect','reason'}:raise ValueError('改动复核缺少判断、理由或索引')
+        if not isinstance(row,dict) or set(row)-{'preservation'}!={'edit_index','effect','reason'}:
+            raise ValueError('改动复核缺少判断、理由或索引')
         i=row['edit_index']
         if type(i) is not int or not 0<=i<len(context['edits']):raise ValueError('改动复核索引越界')
         edit=context['edits'][i];row.update(before_excerpt=edit['old'],after_excerpt=edit['replacement'])
@@ -43,6 +48,11 @@ def schema(legacy):
         row['required']=['edit_index','effect','reason']
     expression=compact['properties']['expression_review']
     expression['required']=[key for key in expression['required'] if key!='issues']
+    check=compact['properties']['expression_checks']['items']
+    check['required']=[key for key in check['required'] if key!='issue_ids']
+    check['if']={'properties':{'status':{'const':'issue'}}}
+    check['then']={'required':['issue_ids'],'properties':{'issue_ids':{'minItems':1}}}
+    check['else']={'properties':{'issue_ids':{'maxItems':0}}}
     compact['if']={'properties':{'expression_review':{'not':{'required':['issues']}}}}
     compact['then']={'properties':{
         'expression_review':{'properties':{'verdict':{'const':'pass'}}},

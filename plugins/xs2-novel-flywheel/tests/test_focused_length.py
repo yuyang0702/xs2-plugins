@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_length_quality import PLUGIN, policy, quality, write
+from test_length_quality import PLUGIN, policy, quality, write, install_legacy_length_feedback
 
 
 def definition():
@@ -23,7 +23,7 @@ def managed(root):
     write(root, 'story/0001/chapter.md', prose(4708))
     write(root, 'quality/author.md', '保留已经落实的当场交易，不重写事实。')
     state = {'values': {'chapter_number': '0001', 'target_word_count': '4800-5200', 'author_feedback_file': 'quality/author.md'}}
-    state.update(policy().next_action(root, state, 'polish')['updates'])
+    install_legacy_length_feedback(root, state)
     write(root, '.novel-project.json', json.dumps(state, ensure_ascii=False))
     return state
 
@@ -42,9 +42,9 @@ def cli(root, scope):
     return _parse_wf_vars(result.stdout)
 
 
-def test_scope_is_derived_from_receipt_not_persistent_input(tmp_path):
+def test_current_production_ignores_old_length_only_scope(tmp_path):
     state = managed(tmp_path)
-    assert policy().parameters(state, definition())['polish_pass'] == 'length_only'
+    assert policy().parameters(state, definition())['polish_pass'] == 'content'
     state['values']['author_feedback_file'] = 'quality/author.md'
     state['values']['polish_pass'] = 'length_only'
     assert policy().parameters(state, definition())['polish_pass'] == 'content'
@@ -80,22 +80,6 @@ def test_edited_managed_feedback_falls_back_without_overriding_content_inputs(tm
     assert outputs['length_execution_context'] == ''
     assert 'pl_body_file' not in outputs and 'critique_file' not in outputs
     assert '作者新增事实修改' in file.read_text(encoding='utf-8')
-
-
-def test_focused_strategy_migrates_old_revision_budget_once_and_keeps_total(tmp_path):
-    write(tmp_path, 'story/0001/chapter.md', '衣' * 4708)
-    state = {'readerRepairCount': 2, 'lengthRepairCycle': 2, 'lengthRepairCount': 3, 'lengthRepairTotal': 6,
-             'autoLengthRepairLimit': 3, 'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    first = policy().next_action(tmp_path, state, 'polish')
-    assert first['action'] == 'advance'
-    state.update(first['updates'])
-    assert state['lengthRepairStrategy'] == quality().LENGTH_REPAIR_STRATEGY
-    assert state['lengthRepairCount'] == 1 and state['lengthRepairTotal'] == 7
-    for _ in range(2): state.update(policy().next_action(tmp_path, state, 'polish')['updates'])
-    assert policy().next_action(tmp_path, state, 'polish')['action'] == 'pause'
-    assert state['lengthRepairTotal'] == 9
-    state['readerRepairCount'] = 0; state['lengthRepairCycle'] = 0; state.pop('lengthRepairStrategy')
-    assert policy().next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
 
 
 @pytest.mark.parametrize('scope,agents', [('length_only', ['agent_pp', 'agent_fragment_review']), ('content', ['agent_sc', 'agent_pl', 'agent_local_review'])])
@@ -154,8 +138,8 @@ def test_focused_history_does_not_overwrite_old_strategy_attempt(tmp_path):
     write(tmp_path, 'story/0001/chapter.md', '衣' * 4597)
     state = {'readerRepairCount': 2, 'lengthRepairCycle': 2, 'lengthRepairCount': 3, 'lengthRepairTotal': 6,
              'values': {'chapter_number': '0001', 'target_word_count': '4800-5200'}}
-    action = policy().next_action(tmp_path, state, 'polish')
-    receipt = action['updates']['lengthRepairFeedback']
+    install_legacy_length_feedback(tmp_path, state)
+    receipt = state['lengthRepairFeedback']
     assert receipt['strategy'] == quality().LENGTH_REPAIR_STRATEGY and ('/'+quality().LENGTH_REPAIR_STRATEGY+'/') in receipt['path']
     assert old.read_bytes() == before
 

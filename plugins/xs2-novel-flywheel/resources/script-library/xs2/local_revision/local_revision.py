@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
-import unicodedata
+from collections import Counter
 from xml.sax.saxutils import escape
 
 HERE=Path(__file__).resolve().parents[1]
@@ -24,6 +24,7 @@ wire=load('local_revision_wire',HERE/'prose_policy/review_wire.py')
 pending=load('local_revision_pending',HERE/'local_revision/pending_revision.py')
 guard=load('local_revision_execution_guard',HERE/'production_guard/production_guard.py')
 report_repair=load('local_revision_report_repair',HERE/'prose_policy/report_repair.py')
+SCOPED_REVIEW='local-review-v3'
 
 
 class Retry(ValueError):
@@ -58,8 +59,28 @@ def sha(raw):return hashlib.sha256(raw).hexdigest()
 def digest(data):return sha(json.dumps(data,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode())
 def read(p):return json.loads(p.read_text(encoding='utf-8-sig'))
 def save(p,data):quality.atomic_text(p,json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-def save_model(p,data,role):
+def model_view(data,role):
     view=packet.local(data,role)
+    if data.get('review_protocol')==SCOPED_REVIEW:
+        if role=='writer':
+            by_id={row['id']:row for row in data['goals']}
+            for row in view['goals']:
+                goal=by_id[row['id']]
+                row.update({key:copy.deepcopy(goal[key]) for key in ('source','level','required_source') if key in goal})
+                row['evidence']=copy.deepcopy(goal.get('excerpts',[]))
+        elif role=='reviewer':
+            view.pop('reader_report',None)
+            view.pop('critique',None)
+    return view
+
+
+def verify_model(actual,data,role):
+    if actual!=model_view(data,role):
+        raise ValueError('模型所见输入与冻结的完整资料不一致，核验未复用或发布')
+
+
+def save_model(p,data,role):
+    view=model_view(data,role)
     if (data.get('writer_view_version')==packet.FOCUSED_WRITER_VERSION
             or data.get('critic_view_version')==packet.COMPACT_CRITIC_VERSION):
         quality.atomic_text(p,json.dumps(view,ensure_ascii=False,separators=(',',':'))+'\n')
@@ -99,7 +120,7 @@ def retained_feedback_sources(root,path):
             for source in paths]
 
 
-def source_files(root,chapter,context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None):
+def source_files(root,chapter,context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,reader_paths=()):
     paths={safe(root,f'story/{chapter}/chapter.md')}
     for folder in ('meta','outline'):
         paths.update(p for p in safe(root,folder).rglob('*') if p.is_file() and p.suffix in ('.md','.json'))
@@ -111,6 +132,7 @@ def source_files(root,chapter,context_path='cache/story-support/context.md',refe
                  'learning/active_context.md','learning/character_center/preferences.json','learning/prose_policy/policy.json'):
         paths.add(safe(root,name))
     if reference_path:paths.add(safe(root,reference_path))
+    paths.update(safe(root,path) for path in reader_paths)
     feedback=state(root)['author_feedback_file'] if feedback_path is None else feedback_path
     if feedback:
         p=safe(root,feedback)
@@ -133,17 +155,92 @@ def locations(folder):
             'revision_review_expanded':folder+'/review-expanded.json','revision_review_repair':folder+'/review-repair.json'}
 
 
-def prepare(root,chapter,task_id,target='',context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,*,dialogue_check=False,dialogue_check_version=1):
+def confirmed_reader(root,chapter,source):
+    report=source['reader_report']
+    if (not isinstance(report,dict) or report.get('reader_review_version')!=2
+            or report.get('chapter_number')!=chapter or report.get('body_sha256')!=source['source_sha256']
+            or report.get('book_contract_sha256')!=source['book_contract_sha256']):
+        return None
+    receipt=report.get('review_binding')
+    if not isinstance(receipt,dict) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',str(receipt.get('task_id',''))):
+        return None
+    folder=f'cache/reader-review/{chapter}/{receipt["task_id"]}'
+    relative=folder+'/binding.json'
+    path=safe(root,relative)
+    if not path.is_file():return None
+    try:binding=read(path)
+    except (ValueError,OSError):return None
+    if (not isinstance(binding,dict) or binding.get('chapter_number')!=chapter
+            or binding.get('reader_protocol')!=2
+            or {key:binding.get(key) for key in ('task_id','scope_source','body_sha256','input_sha256')}!=receipt
+            or receipt.get('body_sha256')!=source['source_sha256']
+            or not isinstance(receipt.get('scope_source'),dict)
+            or receipt['scope_source'].get('book_contract_sha256')!=source['book_contract_sha256']
+            or not isinstance(report.get('revision_scope'),dict) or report['revision_scope'].get('mode')!='unrestricted'
+            or report.get('requires_scope_confirmation')):
+        return None
+    input_path=folder+'/blind-input.json'
+    original=source['source_body'].removeprefix('\ufeff').replace('\r\n','\n').replace('\r','\n')
+    try:
+        frozen_input=safe(root,input_path).read_bytes()
+        if sha(frozen_input)!=binding['input_sha256'] or json.loads(frozen_input).get('manuscript')!=original:
+            return None
+    except (ValueError,OSError,TypeError,AttributeError):return None
+    rows=book.reading().advisory_report(report).get('issues')
+    if not isinstance(rows,list):return None
+    result=[]
+    seen=set()
+    body=source['source_body'].replace('\r\n','\n').replace('\r','\n')
+    try:
+        for row in rows:
+            if row.get('priority') not in ('medium','high') and not (
+                    row.get('kind')=='expression' and row.get('actionability')=='targeted'
+                    and row.get('scene_focus') and row.get('editability')=='editable'):
+                continue
+            key=row['id']; excerpts=row['excerpts']; preserve=row.get('preserve',[])
+            if (not isinstance(key,str) or not key.strip() or key in seen or row.get('editability')!='editable'
+                    or not isinstance(row.get('goal'),str) or not row['goal'].strip()
+                    or not isinstance(excerpts,list) or not excerpts
+                    or any(not isinstance(q,str) or not q.strip() or q not in body for q in excerpts)
+                    or not isinstance(preserve,list) or any(not isinstance(q,str) or not q.strip() for q in preserve)):
+                return None
+            seen.add(key)
+            hard=(row.get('kind')=='fact' and row.get('source_quote')
+                  or row.get('kind') in ('fact','causality') and row.get('contradiction'))
+            goal={**row,'source':row.get('source','reader_review'),'origin':'reader_review',
+                  'level':'hard' if hard else 'advisory',
+                  'preserve':preserve}
+            if 'scene_focus' in row:
+                offset=expression.scene_focus_position(row,source['source_body'])
+                goal=patches.bind_scene_goal(source['source_body'],[],source['source_body'],goal,offset)
+            result.append(goal)
+    except (ValueError,KeyError,TypeError,AttributeError):return None
+    if report.get('verdict')!='pass' and not result:return None
+    return {'binding_path':relative,'source_paths':[relative,input_path],'goals':result}
+
+
+def prepare(root,chapter,task_id,target='',context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,*,dialogue_check=False,dialogue_check_version=1,scoped_review=False,whole_chapter_review=False,advisory=False):
     root=Path(root).resolve();chapter=quality.chapter_number(chapter)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',task_id or ''):raise ValueError('局部修订缺少有效任务编号')
     frozen=book.freeze(root,task_id);folder=f'cache/local-revision/{task_id}';out=locations(folder)
     body_path=f'story/{chapter}/chapter.md';raw=safe(root,body_path).read_bytes();body=raw.decode('utf-8')
     if not body.strip():raise ValueError('局部修订需要非空原文')
     planner=load('local_composition',HERE/'composition_plan/composition_plan.py')
-    fixed=planner.fixed_edit(root,chapter,task_id)
-    bounds=tuple(fixed['edit']['bounds']) if fixed else quality.resolve_target(root,target)
-    report_path=safe(root,f'story/{chapter}/reader_report.json');report=read(report_path) if report_path.is_file() else None
-    if report and report.get('body_sha256')!=sha(raw):report=None
+    fixed=None if advisory else planner.fixed_edit(root,chapter,task_id)
+    previous=safe(root,folder+'/source-binding.json')
+    prior_binding=read(previous) if previous.exists() else None
+    previous_source=read(safe(root,out['revision_source_input'])) if prior_binding is not None else None
+    target_policy=quality.resolve_length(root,target,chapter=chapter,task_id=task_id,advisory=advisory)
+    bounds=target_policy['bounds']
+    policy_bound=(prior_binding is None and target_policy['ownership']!='legacy'
+                  or prior_binding is not None and 'target_policy' in prior_binding)
+    scoped_review=previous_source.get('review_protocol')==SCOPED_REVIEW if previous_source is not None else scoped_review
+    report_path=safe(root,f'story/{chapter}/reader_report.json')
+    try:report=read(report_path) if report_path.is_file() else None
+    except ValueError:
+        if not scoped_review:raise
+        report=None
+    if report and (not isinstance(report,dict) or report.get('body_sha256')!=sha(raw)):report=None
     shared=safe(root,context_path);feedback=state(root)['author_feedback_file'] if feedback_path is None else feedback_path
     if feedback and not safe(root,feedback).is_file():raise ValueError('本次作者意见文件缺失，不能忽略后继续修订')
     if fixed and feedback!=fixed['feedback_path']:raise ValueError('本轮作者意见与单句删除的篇幅凭据不同')
@@ -151,7 +248,7 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
     for title,path in (('本书已确认人物对白适配','meta/character_voice_adaptations.md'),('本次已采用抽象参考',reference_path)):
         if path and safe(root,path).is_file():confirmed+='\n\n## '+title+'\n'+book.policy().effective_text(root,path)
     authored,automatic,_=feedback_layers(root,feedback)
-    composition=None if fixed else planner.current(root,chapter)
+    composition=None if fixed else (planner.reference if advisory else planner.current)(root,chapter)
     prior=(composition or {}).get('prior_revision')
     if prior and (prior.get('source_sha256')!=sha(raw) or prior.get('book_contract_sha256')!=frozen['sha256']):prior=None
     if composition:composition={k:v for k,v in composition.items() if k!='prior_revision'}
@@ -159,33 +256,47 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
             'book_contract':frozen['contract'],'book_contract_sha256':frozen['sha256'],
             'author_feedback':authored,'automatic_revision_advice':automatic,'composition_plan':composition,'prior_revision':prior,
             'confirmed_context':confirmed,
-            'reader_report':report,'length':quality.measurement(raw,chapter,bounds)}
-    previous=safe(root,folder+'/source-binding.json')
-    previous_source=read(safe(root,out['revision_source_input'])) if previous.exists() else None
-    if dialogue_check and not fixed and (previous_source is None or previous_source.get('dialogue_check')):
+            'reader_report':report,'length':quality.measurement(raw,chapter,target_policy if policy_bound else bounds)}
+    if scoped_review:
+        source['review_protocol']=SCOPED_REVIEW
+        source['whole_chapter_review']=(bool(previous_source['whole_chapter_review']) if previous_source is not None
+                                        else bool(whole_chapter_review or authored.strip()))
+        if not source['whole_chapter_review']:
+            confirmed=confirmed_reader(root,chapter,source)
+            if confirmed:source['confirmed_reader']=confirmed
+    if not scoped_review and dialogue_check and not fixed and (previous_source is None or previous_source.get('dialogue_check')):
         source['dialogue_check']=True
         version=dialogue_check_version if previous_source is None else previous_source.get('dialogue_check_version',1)
         if version>1:source['dialogue_check_version']=version
     if not previous.exists() or read(safe(root,out['revision_source_input'])).get('critic_view_version')==packet.COMPACT_CRITIC_VERSION:
         source['critic_view_version']=packet.COMPACT_CRITIC_VERSION
+    if not fixed and (previous_source is None or previous_source.get('added_text_review')):
+        source['added_text_review']=True
+        if previous_source is None or previous_source.get('mixed_added_text_review'):
+            source['mixed_added_text_review']=True
     if fixed:source['fixed_edit']=fixed['edit']
-    elif previous_source is None or previous_source.get('precision_review_version')==2:
+    elif not scoped_review and (previous_source is None or previous_source.get('precision_review_version')==2):
         candidates=packet.precision().review_candidates(body, source['paragraphs'])
         source['precision_review_version']=2
         if candidates:source['precision_candidates']=candidates
-    elif 'precision_candidates' in previous_source:
+    elif previous_source and 'precision_candidates' in previous_source:
         source['precision_candidates']=previous_source['precision_candidates']
     binding={'schema':1,'task_id':task_id,'chapter_number':chapter,'body_path':body_path,'body_sha256':sha(raw),
              'book_contract_sha256':frozen['sha256'],'state':state(root),'context_path':context_path,'reference_path':reference_path,'feedback_path':feedback,
-             'files':source_files(root,chapter,context_path,reference_path,feedback),
+             'files':source_files(root,chapter,context_path,reference_path,feedback,(source.get('confirmed_reader') or {}).get('source_paths',())),
              'source_digest':digest(source),'bounds':bounds,'outputs':out}
-    if previous.exists() and read(previous)!=binding:raise ValueError('同任务修订来源已有变化，请新建任务')
+    if policy_bound:binding['target_policy']=target_policy
+    if prior_binding is not None and prior_binding!=binding:raise ValueError('同任务修订来源已有变化，请新建任务')
     save(safe(root,out['revision_source_input']),source);save(safe(root,out['revision_input']),source)
     save_model(safe(root,out['revision_source_model']),source,'critic')
     quality.atomic_text(safe(root,out['revision_source_file']),body);save(previous,binding)
     p=safe(root,out['revision_feedback_file'])
     if not p.exists():quality.atomic_text(p,'')
     if not safe(root,out['revision_review_repair']).exists():save(safe(root,out['revision_review_repair']),{})
+    if scoped_review:
+        confirmed='confirmed_reader' in source
+        return {**out,'revision_critique_mode':'confirmed' if confirmed else 'critic',
+                'revision_checkpoint_source':f'story/{chapter}/reader_report.json' if confirmed else 'cache/sc/critique.json'}
     return out
 
 
@@ -194,10 +305,11 @@ def bound(root,folder,accepted_sha=None):
     if digest(source)!=b['source_digest'] or sha(safe(root,b['outputs']['revision_source_file']).read_bytes())!=b['body_sha256']:
         raise ValueError('冻结原文或本书规则上下文已变化，未发布')
     if b['outputs'].get('revision_source_model'):
-        packet.verify(read(safe(root,b['outputs']['revision_source_model'])),source,'critic')
+        verify_model(read(safe(root,b['outputs']['revision_source_model'])),source,'critic')
     if state(root)!=b['state'] or book.digest(book.resolve(root))!=b['book_contract_sha256']:
         raise ValueError('本书规则、作者意见选择或目标已变化，未发布')
-    current=source_files(root,b['chapter_number'],b['context_path'],b['reference_path'],b['feedback_path'])
+    current=source_files(root,b['chapter_number'],b['context_path'],b['reference_path'],b['feedback_path'],
+                         (source.get('confirmed_reader') or {}).get('source_paths',()))
     if accepted_sha and current.get(b['body_path'])==accepted_sha:current[b['body_path']]=b['body_sha256']
     if current!=b['files']:raise ValueError('正文、作者意见或已确认资料已有变化，未发布')
     if source.get('fixed_edit'):
@@ -211,19 +323,42 @@ def bound(root,folder,accepted_sha=None):
 def goals(source,critique):
     rows=[]
     for row in book.reading().advisory_report(source.get('reader_report') or {}).get('issues',[]):
-        if row.get('priority') in ('medium','high'):
-            rows.append({'id':'reader-'+str(row.get('id') or len(rows)),'goal':row.get('goal',''),'excerpts':row.get('excerpts',[])})
+        if row.get('priority') in ('medium','high') and row.get('editability') not in ('outside_scope','unclear'):
+            goal={'id':row.get('id') or f'reader-{len(rows)}', 'source':'reader_review',
+                  'goal':row.get('goal',''), 'excerpts':row.get('excerpts',[]),
+                  'category':row.get('category',''), 'impact':row.get('impact',''),
+                  'preserve':row.get('preserve',[])}
+            if 'scene_focus' in row:goal['scene_focus']=row['scene_focus']
+            rows.append(goal)
     indices=set(critique.get('blocking_issues',[]))
     indices.update(i for i,r in enumerate(critique.get('issues',[])) if r.get('severity') in ('medium','high'))
     for i in sorted(indices):
-        row=critique['issues'][i];rows.append({'id':f'critic-{i}','goal':row.get('suggestion') or row.get('description',''),
-            'excerpts':row.get('evidence',[])})
+        row=critique['issues'][i]
+        if 'scene_focus' in row and row.get('evidence_status')=='unverified':
+            continue
+        goal={'id':f'critic-{i}','goal':row.get('suggestion') or row.get('description',''),
+            'excerpts':row.get('evidence',[])}
+        if 'scene_focus' in row:
+            goal.update(scene_focus=row['scene_focus'],impact=row.get('impact',''),dimension=row.get('dimension'))
+        rows.append(goal)
     prior=source.get('prior_revision') or {}
     for i,row in enumerate(prior.get('remaining_issues',[])):
         excerpts=[q for q in row.get('excerpts',[]) if isinstance(q,str) and q and q in source.get('source_body','')]
         if excerpts and row.get('goal'):
             rows.append({'id':f'prior-{i}','goal':row['goal'],'excerpts':excerpts})
-    return rows
+    bound_goals = []
+    positions = set()
+    for row in rows:
+        if 'scene_focus' in row:
+            body = source['source_body']
+            offset = expression.scene_focus_position(row,body)
+            identity = (offset,row['scene_focus']['quote'])
+            if identity in positions:
+                continue
+            positions.add(identity)
+            row = patches.bind_scene_goal(body,[],body,row,offset)
+        bound_goals.append(row)
+    return bound_goals
 
 
 def precision_goals(source,checks):
@@ -277,7 +412,45 @@ def check_precision_goals(source,edits,goals):
         precision.check_removed(body,after,removed)
 
 
-def dialogue_goals(source, checks):
+def compact_exchange_revisions(review, exchanges):
+    if not isinstance(review, dict) or not isinstance(review.get('passed'), list) or not isinstance(review.get('revisions'), list):
+        raise ValueError('连续对白须提交 exchange_review，含 passed 和 revisions 两个数组。')
+    revisions = review['revisions']
+    if any(not isinstance(row, dict) for row in revisions):
+        raise ValueError('连续对白 revisions 须提交返修对象。')
+    coverage = review['passed'] + [row.get('exchange_id') for row in revisions]
+    if any(not isinstance(key, str) for key in coverage):
+        raise ValueError('连续对白验收须引用连续对白段编号。')
+    counts = Counter(coverage)
+    errors = []
+    for label, keys in (
+        ('缺少', [key for key in exchanges if key not in counts]),
+        ('重复', [key for key, count in counts.items() if count > 1]),
+        ('未知', [key for key in counts if key not in exchanges]),
+    ):
+        if keys:
+            errors.append(label + ' ' + ', '.join(keys))
+    if errors:
+        raise ValueError('连续对白编号须逐段且仅出现一次：' + '；'.join(errors))
+
+    checks = []
+    for row in revisions:
+        exchange_id = row['exchange_id']
+        if len(exchanges[exchange_id]['turn_ids']) < 2:
+            raise ValueError(f'连续对白 {exchange_id} 修订须有至少两处实际话轮。')
+        phase = row.get('phase')
+        if phase not in ('opening', 'later'):
+            raise ValueError(f'连续对白 {exchange_id} 返修须区分开场 opening 与后续 later。')
+        turns = row.get('turns')
+        if phase == 'opening':
+            if 'turns' in row:
+                raise ValueError(f'连续对白 {exchange_id} 开场依据由正文绑定，省略 turns。')
+            turns = [{'turn_id': key} for key in exchanges[exchange_id]['turn_ids'][:2]]
+        checks.append({**row, 'focus': 'checklist_exchange', 'status': 'revise', 'turns': turns})
+    return checks
+
+
+def dialogue_goals(source, checks, exchange_review=None):
     if not isinstance(checks,list) or not checks or any(not isinstance(row,dict) for row in checks):
         raise ValueError('须提交对白验收结论，有对白时逐字引出接话，有范围限制时说明')
     version=source.get('dialogue_check_version',1)
@@ -288,9 +461,25 @@ def dialogue_goals(source, checks):
     if version>=3:required.update(new_checks)
     paragraphs=source['paragraphs']
     exchange_checks = version >= 6
+    compact_exchanges = version >= packet.COMPACT_EXCHANGE_REVIEW_VERSION
     turns_by_id, exchanges = packet.dialogue_exchanges(paragraphs) if exchange_checks else ({}, {})
+    non_turn_ids = set()
+    excluded = {}
     if exchange_checks:
         required.remove('checklist_exchange')
+    if compact_exchanges:
+        if any(row.get('focus') == 'checklist_exchange' for row in checks):
+            raise ValueError('连续对白逐段验收须填写 exchange_review。')
+        if isinstance(exchange_review, dict) and 'non_turn_ids' in exchange_review:
+            candidates = turns_by_id
+            turns_by_id, exchanges = packet.confirmed_dialogue(candidates, exchanges, exchange_review['non_turn_ids'])
+            non_turn_ids = set(exchange_review['non_turn_ids'])
+            for turn_id in non_turn_ids:
+                turn = candidates[turn_id]
+                left = turn['offset']
+                excluded.setdefault(turn['paragraph_id'], []).append((left, left + len(turn['quote'])))
+        checks = checks + compact_exchange_revisions(exchange_review, exchanges)
+    elif exchange_checks:
         if len(exchanges) == 1:
             # With only one frozen exchange the older single verdict is unambiguous.
             only = next(iter(exchanges))
@@ -317,7 +506,7 @@ def dialogue_goals(source, checks):
             raise ValueError('对白验收须有判断与具体理由，返修项须给出可执行目标')
         if exchange_checks and focus == 'checklist_exchange' and bool(exchange) == (status == 'not_applicable'):
             raise ValueError('连续对白存在时必须给出 pass 或 revise；无连续对白时填 not_applicable')
-        if exchange and version >= 8:
+        if exchange and version == 8:
             opening_status = check.get('opening_status')
             opening_reason = check.get('opening_reason')
             if opening_status not in ('pass', 'revise') or not isinstance(opening_reason, str) or not opening_reason.strip():
@@ -341,7 +530,9 @@ def dialogue_goals(source, checks):
         for turn in turns:
             if exchange_checks and 'turn_id' in turn:
                 turn_id = turn['turn_id']
-                resolved = turns_by_id.get(turn_id)
+                resolved = turns_by_id.get(turn_id) if isinstance(turn_id, str) else None
+                if compact_exchanges and isinstance(turn_id, str) and turn_id in non_turn_ids:
+                    raise ValueError('已标记为非对白的引号内容不能作为话轮证据。')
                 if not resolved or (exchange and turn_id not in exchange['turn_ids']):
                     raise ValueError('对白编号必须来自当前冻结正文及指定连续对白段')
                 if exchange:
@@ -364,6 +555,8 @@ def dialogue_goals(source, checks):
             index=indices[key];row=paragraphs[index]
             speech=re.finditer(r'“[^”]+”|「[^」]+」|『[^』]+』|"[^"\r\n]+"|(?m:^\s*[—–-]+[^\r\n]+)',row['text'])
             positions=[match.start()+match[0].find(quote) for match in speech if quote in match[0]]
+            positions = [pos for pos in positions if not any(max(pos, left) < min(pos + len(quote), right)
+                         for left, right in excluded.get(key, []))]
             start=next((row['start']+pos for pos in positions if not offsets or row['start']+pos>=offsets[-1]),None)
             if not positions:raise ValueError('对白引文须逐字出自指定段落的台词')
             if start is None:raise ValueError('对白引文须按正文顺序，且不可重叠')
@@ -389,13 +582,16 @@ def dialogue_goals(source, checks):
         seen.add(identity)
         if status=='revise':
             anchors = exchange['paragraph_ids'] if exchange else [row['id'] for row in paragraphs[scope[0]:scope[-1]+1]]
-            target={'id':f'dialogue-{number}','goal':goal,'excerpts':quotes,
+            identifier = f'dialogue-{check["exchange_id"]}' if compact_exchanges and exchange else f'dialogue-{number}'
+            target={'id':identifier,'goal':goal,'excerpts':quotes,
                     'paragraph_ids':anchors,'turns':resolved_turns}
             if exchange:
                 target['exchange_id'] = check['exchange_id']
             if focused:
                 index=check.get('target_turn')
                 if type(index) is not int or not 0<=index<len(turns):raise ValueError('对白返修须标明要改的目标原话')
+                if compact_exchanges and exchange and check['phase'] == 'later' and exchange_indices[index] < 2:
+                    raise ValueError(f'连续对白 {check["exchange_id"]} 的开场返修须填 phase=opening。')
                 target.update(focus=focus,target=requested[index])
             if version>=3 and focus in new_checks:
                 preserve=check.get('preserve')
@@ -406,46 +602,34 @@ def dialogue_goals(source, checks):
     return targets
 
 
-def spoken_text(text):
-    return ''.join(char for char in text if not char.isspace() and not unicodedata.category(char).startswith('P'))
+def goal_paragraph_ids(goal):
+    return goal.get('paragraph_ids') or [goal['target']['paragraph_id']]
+
+
+def scope_edits(edits, goal):
+    if goal['id'].startswith('scene-'):
+        return [edit for edit in edits if edit.get('group_id') == goal['id']]
+    ids = set(goal_paragraph_ids(goal))
+    return [edit for edit in edits if edit['paragraph_id'] in ids]
+
+
+def check_scoped_edit(edits, goal, paragraphs, label):
+    ids = set(goal_paragraph_ids(goal))
+    scoped = scope_edits(edits, goal)
+    edited_ids = {edit['paragraph_id'] for edit in scoped}
+    if edited_ids <= ids:
+        changed = [patches._scoped_paragraph(paragraphs[key], scoped) != paragraphs[key]['text']
+                   for key in edited_ids]
+        if any(changed):
+            return
+    raise ValueError(f"{label}{goal['id']} 须在定位范围内交付逐字原文补丁：{goal['goal']}")
 
 
 def check_dialogue_goals(edits, goals, source):
-    paragraphs={row['id']:row['text'] for row in source['paragraphs']}
+    paragraphs = {row['id']: row for row in source['paragraphs']}
     for goal in goals:
-        if not goal['id'].startswith('dialogue-'):continue
-        if 'exchange_id' in goal:
-            anchors = goal['paragraph_ids']
-            original = '\n\n'.join(paragraphs[key] for key in anchors)
-            remap = dict(zip(anchors, (row['id'] for row in patches.paragraphs(original))))
-            scoped = [{**edit, 'paragraph_id': remap[edit['paragraph_id']]} for edit in edits
-                      if edit['paragraph_id'] in remap]
-            revised = patches.apply_patches(original, {'source_sha256': sha(original.encode()), 'edits': scoped})
-            old_speech, _ = packet.dialogue_exchanges(patches.paragraphs(original))
-            new_speech, _ = packet.dialogue_exchanges(patches.paragraphs(revised))
-            old_sequence = spoken_text(''.join(turn['quote'] for turn in old_speech.values()))
-            new_sequence = spoken_text(''.join(turn['quote'] for turn in new_speech.values()))
-            if old_sequence == new_sequence or spoken_text(original) == spoken_text(revised):
-                raise ValueError('整段对白 '+goal['exchange_id']+' 仍是原来的接话顺序和内容：'+goal['goal'])
-            continue
-        if 'target' in goal:
-            key,quote=(goal['target'][name] for name in ('paragraph_id','quote'))
-            original=paragraphs[key]
-            scoped=[{**edit,'paragraph_id':'p0001'} for edit in edits if edit['paragraph_id']==key]
-            if not scoped:
-                revised=original
-            elif len(scoped)==1 and scoped[0]['old']==original and not scoped[0]['replacement'].strip():
-                revised=''
-            else:
-                revised=patches.apply_patches(original,{'source_sha256':sha(original.encode()),'edits':scoped})
-            if goal.get('focus')=='checklist_exchange':
-                # 段落重排或换标点会打断逐字匹配，但并未改变这轮说了什么。
-                quote, original, revised = map(spoken_text, (quote, original, revised))
-            if revised.count(quote)>=original.count(quote):
-                raise ValueError('对白返修目标 '+goal['id']+' 仍保留目标原话：'+quote+'。'+goal['goal'])
-            continue
-        if not any(edit['paragraph_id'] in goal['paragraph_ids'] and edit['old']!=edit['replacement'] for edit in edits):
-            raise ValueError('对白返修目标 '+goal['id']+' 尚未修改原对话：'+goal['goal'])
+        if goal['id'].startswith('dialogue-') and 'scene_anchor' not in goal:
+            check_scoped_edit(edits, goal, paragraphs, '对白返修目标 ')
 
 
 def scene_goals(source, checks):
@@ -500,27 +684,34 @@ def scene_goals(source, checks):
 
 
 def check_scene_goals(edits, goals, source):
-    paragraphs = {row['id']: row['text'] for row in source['paragraphs']}
+    paragraphs = {row['id']: row for row in source['paragraphs']}
     for goal in goals:
-        if not goal['id'].startswith('scene-'):
-            continue
-        group = [edit for edit in edits if edit.get('group_id') == goal['id']]
-        if (not any(edit['old'] != edit['replacement'] for edit in group)
-                or any(edit['paragraph_id'] not in goal['paragraph_ids'] for edit in group)):
-            raise ValueError(f"场景返修目标 {goal['id']} 须在定位范围内交付同组补丁：{goal['goal']}")
-        if goal.get('focus') in ('narration', 'both'):
-            ids = goal['paragraph_ids']
-            original = '\n\n'.join(paragraphs[key] for key in ids)
-            remap = dict(zip(ids, (row['id'] for row in patches.paragraphs(original))))
-            scoped = [{**edit, 'paragraph_id': remap[edit['paragraph_id']]} for edit in group]
-            revised = patches.apply_patches(original, {'source_sha256': sha(original.encode()), 'edits': scoped})
-            if spoken_text(original) == spoken_text(revised):
-                raise ValueError(f"场景返修 {goal['id']} 只有表面格式变化：{goal['goal']}")
+        if goal['id'].startswith('scene-') and 'scene_anchor' not in goal:
+            check_scoped_edit(edits, goal, paragraphs, '场景返修目标 ')
 
 
 def writer_input(root,folder,critique_path):
-    b,source=bound(root,folder);p=safe(root,critique_path);critique=read(p)
-    targets=goals(source,critique)
+    b,source=bound(root,folder)
+    confirmed=source.get('confirmed_reader')
+    if confirmed:
+        p=safe(root,f'story/{b["chapter_number"]}/reader_report.json')
+        critique={'issues':[],'source':'reader_review','reader_binding':confirmed['binding_path']}
+    else:
+        p=safe(root,critique_path)
+        critique=read(p)
+    exchange_retry_path = safe(root, folder+'/critic-exchange-repair.json')
+    exchange_retry = read(exchange_retry_path) if exchange_retry_path.is_file() else None
+    if exchange_retry and not confirmed:
+        critique = report_repair.apply_exchange_retry(critique, exchange_retry, b['body_sha256'])
+        p = safe(root, folder+'/critique-accepted.json')
+    try:
+        if confirmed:targets=confirmed['goals']
+        elif source.get('review_protocol')==SCOPED_REVIEW:targets=scoped_critic_goals(source,critique)
+        else:targets=goals(source,critique)
+    except ValueError as exc:
+        reason='整场表达目标复查：'+str(exc)
+        guard.retry(root,'local-revision/'+b['task_id'],'agent_sc',reason)
+        raise Retry('agent_sc',reason) from exc
     if source.get('precision_candidates'):
         try:targets+=precision_goals(source,critique.get('precision_checks',[]))
         except ValueError as exc:
@@ -528,9 +719,15 @@ def writer_input(root,folder,critique_path):
             guard.retry(root,'local-revision/'+b['task_id'],'agent_sc',reason)
             raise Retry('agent_sc',reason) from exc
     if source.get('dialogue_check'):
-        try:targets+=dialogue_goals(source,critique.get('dialogue_checks'))
+        try:targets+=dialogue_goals(source,critique.get('dialogue_checks'),critique.get('exchange_review'))
         except ValueError as exc:
             reason='dialogue_review_format: '+str(exc)
+            if exchange_retry is None and '指定连续对白段' in str(exc) and source.get('dialogue_check_version',1)>=packet.COMPACT_EXCHANGE_REVIEW_VERSION:
+                turns, exchanges = packet.dialogue_exchanges(source['paragraphs'])
+                _, exchanges = packet.confirmed_dialogue(turns, exchanges, critique['exchange_review'].get('non_turn_ids', []))
+                repair = report_repair.exchange_request(critique, b['body_sha256'], exchanges)
+                if repair:
+                    save(exchange_retry_path, repair)
             guard.retry(root,'local-revision/'+b['task_id'],'agent_sc',reason)
             raise Retry('agent_sc',reason) from exc
     if source.get('dialogue_check_version', 1) >= 5:
@@ -541,7 +738,9 @@ def writer_input(root,folder,critique_path):
             guard.retry(root,'local-revision/'+b['task_id'],'agent_sc',reason)
             raise Retry('agent_sc',reason) from exc
     data={**source,'critique':critique,'goals':targets,
-          'length_edit_budget':patches.length_edit_budget(quality.count_prose(source['source_body']),b['bounds'])}
+          'length_edit_budget':patches.length_edit_budget(quality.count_prose(source['source_body']),quality.required_bounds(b.get('target_policy',b['bounds'])))}
+    if source.get('added_text_review'):
+        data['growth_guidance']=patches.GROWTH_GUIDANCE
     prior=safe(root,folder+'/editor-binding.json')
     previous=read(prior) if prior.is_file() else None
     if previous is None or previous['input_sha256']!=digest(data):
@@ -551,12 +750,45 @@ def writer_input(root,folder,critique_path):
                                    if path and safe(root,path).is_file()}
     review_version=packet.COMPACT_REVIEW_VERSION if previous is None else previous.get('reviewer_view_version')
     if review_version is not None:data['reviewer_view_version']=review_version
-    receipt={'critique_path':critique_path,'critique_sha256':sha(p.read_bytes()),'input_sha256':digest(data)}
+    if exchange_retry and not confirmed:
+        if p.is_file() and read(p) != critique:
+            raise ValueError('已经采用的对白补审结果发生变化，请新建任务')
+        if not p.is_file():
+            save(p, critique)
+    receipt={'critique_path':p.relative_to(root).as_posix(),'critique_sha256':sha(p.read_bytes()),'input_sha256':digest(data)}
     if 'reviewer_view_version' in data:receipt['reviewer_view_version']=data['reviewer_view_version']
     if previous is not None and previous!=receipt:raise ValueError('本轮自审或编辑输入已有变化，请新建任务')
     save(safe(root,b['outputs']['revision_input']),data);save(prior,receipt)
     if b['outputs'].get('revision_editor_model'):save_model(safe(root,b['outputs']['revision_editor_model']),data,'writer')
     return b['outputs']
+
+
+def scoped_critic_goals(source,critique):
+    result=[]
+    for index,row in enumerate(critique['issues']):
+        quotes=row.get('evidence',[])
+        if (row.get('severity') not in ('medium','high') or row.get('evidence_status')=='unverified'
+                or not quotes or any(not isinstance(q,str) or not q.strip() or q not in source['source_body'] for q in quotes)):
+            continue
+        goal={'id':f'critic-{index}','source':'local_critic','level':'advisory',
+              'goal':row['suggestion'],'excerpts':quotes,'preserve':row.get('preserve',[])}
+        required=row.get('required_source')
+        if required:
+            if required not in source['author_feedback']:
+                raise ValueError('作者必改目标须逐字引用本轮真实作者要求')
+            goal.update(level='mandatory',required_source=required)
+        source_quote=row.get('source_quote')
+        if source_quote and not required:
+            confirmed=source['confirmed_context']+'\n'+book.prompt(source['book_contract'])+'\n'+source['source_body']
+            if source_quote not in confirmed:
+                raise ValueError('客观事实矛盾须有冻结资料的逐字依据')
+            goal.update(level='hard',source_quote=source_quote)
+        if 'scene_focus' in row:
+            goal['scene_focus']=row['scene_focus']
+            offset=expression.scene_focus_position(row,source['source_body'])
+            goal=patches.bind_scene_goal(source['source_body'],[],source['source_body'],goal,offset)
+        result.append(goal)
+    return result
 
 
 def editor_bound(root,b):
@@ -565,7 +797,7 @@ def editor_bound(root,b):
     if digest(data)!=receipt['input_sha256'] or sha(safe(root,receipt['critique_path']).read_bytes())!=receipt['critique_sha256']:
         raise ValueError('自审或冻结编辑输入已有变化，未发布')
     if b['outputs'].get('revision_editor_model'):
-        packet.verify(read(safe(root,b['outputs']['revision_editor_model'])),data,'writer')
+        verify_model(read(safe(root,b['outputs']['revision_editor_model'])),data,'writer')
     return data
 
 
@@ -579,7 +811,8 @@ def compose(root,b,source):
     merged=pending.merge(source['source_body'],(working or {}).get('edits',[]),payload['edits'],patches)
     # A prior equivalent judgment grants only removal, never publication. The
     # native append-only event binds the exact proposals and original review.
-    for event in guard.store().events(root):
+    events = guard.store().events(root)
+    for event in events:
         pruning=event['data']
         if (event['kind']=='equivalent_prune' and pruning.get('task_id')==b['task_id']
                 and pruning.get('binding_digest')==digest(b) and pruning.get('merged_digest')==digest(merged)):
@@ -589,20 +822,20 @@ def compose(root,b,source):
             if removable!=pruning['indices']:raise ValueError('等价撤回凭据与原始判断不符')
             merged=[edit for index,edit in enumerate(merged) if index not in removable]
     candidate=patches.apply_patches(source['source_body'],{'source_sha256':payload['source_sha256'],'edits':merged},protected_phrases=source['book_contract']['protected_phrases'])
-    if any(row['id'].startswith('precision-') for row in data['goals']):check_precision_goals(source,merged,data['goals'])
-    check_dialogue_goals(merged,data['goals'],source)
-    check_scene_goals(merged,data['goals'],source)
+    if source.get('review_protocol')!=SCOPED_REVIEW:
+        if any(row['id'].startswith('precision-') for row in data['goals']):check_precision_goals(source,merged,data['goals'])
+        check_dialogue_goals(merged,data['goals'],source)
+        check_scene_goals(merged,data['goals'],source)
     if source.get('fixed_edit') and sha(candidate.encode())!=source['fixed_edit']['candidate_sha256']:
         raise ValueError('候选超出作者指定的单句删除范围')
-    measured=quality.measurement(candidate.encode(),b['chapter_number'],b['bounds'])
-    if measured['status'] not in ('pass','unconfigured'):
+    measured=quality.measurement(candidate.encode(),b['chapter_number'],b.get('target_policy',b['bounds']))
+    if quality.is_blocking(measured):
         path=safe(root,b['outputs']['revision_dir']+'/length-candidates.json');history=read(path) if path.is_file() else []
         key=sha((digest(payload)+':'+str(safe(root,b['outputs']['revision_patch_path']).stat().st_mtime_ns)).encode())
         if key not in [r['key'] for r in history]:history.append({'key':key,'patch_digest':digest(payload),'measurement':measured})
         save(path,history)
-        # Repeated measurements do not prove a reading-function/scope conflict.
-        # The caller retains the hard length gate and bounded classified retry.
-        raise ValueError('候选篇幅未达作者目标：'+json.dumps(measured,ensure_ascii=False))
+        if 'target_policy' not in b:
+            raise ValueError('候选篇幅未达作者目标：'+json.dumps(measured,ensure_ascii=False))
     context={'task_id':b['task_id'],'source_body':source['source_body'],'source_sha256':b['body_sha256'],'candidate':candidate,
              'candidate_sha256':sha(candidate.encode()),'book_contract':source['book_contract'],
              'book_contract_sha256':b['book_contract_sha256'],'confirmed_context':source['confirmed_context'],
@@ -613,6 +846,18 @@ def compose(root,b,source):
                        critique=data['critique'])
     if source.get('precision_review_version')==2:context['precision_review_version']=2
     if 'reviewer_view_version' in data:context['reviewer_view_version']=data['reviewer_view_version']
+    if source.get('review_protocol')==SCOPED_REVIEW:context['review_protocol']=SCOPED_REVIEW
+    if source.get('added_text_review'):
+        tracked = tracked_addition_goals(events,b)
+        additions = [row for row in tracked if 'scene_anchor' not in row]
+        mixed = source.get('mixed_added_text_review', False)
+        if mixed:context['mixed_added_text_review']=True
+        context.update(growth_edit_indices=patches.growth_indices(merged, include_mixed=mixed), addition_goals=additions,
+                       goals=[*context['goals'], *tracked])
+        if context['growth_edit_indices'] or additions:
+            context['growth_review_guidance']=patches.GROWTH_REVIEW_GUIDANCE
+    if any('scene_anchor' in row for row in context['goals']):
+        context['scene_recheck_guidance']=expression.SCENE_OUTCOME_GUIDANCE
     context['review_input_sha256']=digest(context)
     return context
 
@@ -647,7 +892,164 @@ def save_repair(root,b,context,repair):
     if b['outputs'].get('revision_review_repair'):save(safe(root,b['outputs']['revision_review_repair']),repair or {})
 
 
+def tracked_addition_goals(events,binding):
+    binding_digest = digest(binding)
+    return next((event['data']['goals'] for event in reversed(events)
+                 if event['kind']=='local_added_text_goals'
+                 and event['data'].get('binding_digest')==binding_digest), [])
+
+
+def growth_findings(context, report):
+    if 'growth_edit_indices' not in context:
+        return []
+    return patches.review_additions(context['source_body'], context['edits'], report.get('added_text_reviews'),
+                                    include_mixed=context.get('mixed_added_text_review', False))
+
+
+def line_findings(context, report):
+    source, edits, candidate = (context[key] for key in ('source_body','edits','candidate'))
+    result = []
+    for row in report['expression_review']['issues']:
+        if 'scene_focus' not in row or row['priority'] not in ('medium','high'):
+            continue
+        offset = expression.scene_focus_position(row,candidate)
+        goal = patches.bind_scene_goal(source,edits,candidate,row,offset,assign_id=True)
+        focus = goal['scene_focus']
+        if any(old.get('paragraph_id')==goal['paragraph_id'] and old.get('scene_focus', {}).get('quote')==focus['quote']
+               and old['scene_focus'].get('occurrence',1)==focus.get('occurrence',1) for old in context['goals']):
+            continue
+        result.append({**goal,'source':'local_scene_review'})
+    return result
+
+
+def scoped_prose(body, rows, edits):
+    offset = rows[0]['start']
+    pieces = []
+    for row in rows:
+        pieces.extend((body[offset:row['start']], patches._scoped_paragraph(row, edits)))
+        offset = row['end']
+    return ''.join(pieces)
+
+
+def scoped_outcome_problem(context, goal, outcome):
+    """Require evidence that brackets a change within the frozen repair scope."""
+    key, reason, status = (outcome[field] for field in ('id', 'reason', 'status'))
+    if key != goal['id']:
+        raise ValueError('对白或场景返修须复查原问题编号。')
+    if status == 'remaining':
+        return key + ' 原有问题仍未解决：' + reason
+    if status == 'not_applicable':
+        return key + ' 已定位的对白或场景目标须用候选原文复核：' + reason
+    quotes = outcome['excerpts']
+    if len(quotes) < 2 or not expression._distinct_quotes(quotes) or not expression._ordered_quotes(context['candidate'], quotes):
+        raise ValueError('对白或场景返修须按顺序引两处不同的候选原文，证明反应和下一步行动。')
+    source = context['source_body']
+    edits = context['edits']
+    ids = set(goal_paragraph_ids(goal))
+    rows = [row for row in patches.paragraphs(source) if row['id'] in ids]
+    goal_edits = scope_edits(edits, goal)
+    before = scoped_prose(source, rows, [edit for edit in edits if edit not in goal_edits])
+    after = scoped_prose(source, rows, edits)
+    for first in re.finditer(re.escape(quotes[0]), after):
+        end = first.end()
+        for quote in quotes[1:]:
+            start = after.find(quote, end)
+            if start < 0:
+                break
+            end = start + len(quote)
+        else:
+            if after[first.start():end] not in before:
+                return ''
+    return key + ' 缺少原定位内能体现这次改动的候选依据：' + reason
+
+
+def expand_review(report,context):
+    if context.get('review_protocol')!=SCOPED_REVIEW:
+        return wire.expand(report,context)
+    required={'protocol','compatible','issues','change_reviews','issue_outcomes'}
+    if (not isinstance(report,dict) or set(report)-{'added_text_reviews'}!=required
+            or report['protocol']!=SCOPED_REVIEW):
+        raise ValueError('局部独立复查须按当前协议提交事实、实际改动和原目标结论')
+    # The current wire format keeps only judgments about the local edit. Use
+    # the existing exact before/after binding rather than have the model copy it.
+    compact={**report,'protocol':wire.PROTOCOL,
+             'expression_review':{'verdict':'pass','summary':'仅核对局部改动','issues':[]},'expression_checks':[]}
+    expanded=wire.expand(compact,context)
+    for key in ('expression_review','expression_checks'):expanded.pop(key)
+    return expanded
+
+
+def scoped_assessment(report,context):
+    body=context['source_body']; candidate=context['candidate']; edits=context['edits']
+    report=evidence.resolve_report(expand_review(report,context),candidate)
+    if (type(report['compatible']) is not bool or not isinstance(report['issues'],list)
+            or report['compatible']!= (not report['issues'])):
+        raise ValueError('事实复查结论与问题列表不一致')
+    sources='\n'.join((body,context['confirmed_context'],context['author_feedback'],book.prompt(context['book_contract'])))
+    source_rows=patches.paragraphs(body)
+    by_paragraph={row['id']:row for row in source_rows}
+    changed={edit['paragraph_id'] for edit in edits}
+    nearby={source_rows[j]['id'] for i,row in enumerate(source_rows) if row['id'] in changed
+            for j in range(max(0,i-1),min(len(source_rows),i+2))}
+    scope=[patches._scoped_paragraph(by_paragraph[key],edits) for key in nearby]
+    facts=[]
+    for issue in report['issues']:
+        if (not isinstance(issue,dict) or issue.get('category') not in ('facts','world','pov','continuity')
+                or any(not isinstance(issue.get(k),str) or not issue[k].strip()
+                       for k in ('id','candidate_quote','source_quote','reason'))
+                or not any(issue['candidate_quote'] in region for region in scope)
+                or issue['source_quote'] not in sources):
+            raise ValueError('事实矛盾须引用本轮受影响候选与冻结资料的逐字依据')
+        facts.append(issue['reason'])
+    changes=patches.review_changes(edits,report['change_reviews'],source=body,candidate=candidate)
+    additions=growth_findings(context,report)
+    problems=facts+[row['reason'] for row in changes]+[row['reason'] for row in additions]
+    blocked={row['edit_index'] for row in [*changes,*additions]}
+    goals_by_id={row['id']:row for row in context['goals']}
+    locators={row['id']:set(row['paragraph_ids']) for row in packet.focused_goals(context['goals'],body,packet.prose(body))}
+    outcomes=report['issue_outcomes']
+    if (not isinstance(outcomes,list) or any(not isinstance(row,dict) for row in outcomes)
+            or len(outcomes)!=len(goals_by_id) or {row.get('id') for row in outcomes}!=set(goals_by_id)):
+        raise ValueError('须按原编号核对本轮目标')
+    addition_goals=context.get('addition_goals',[])
+    addition_ids={row['id'] for row in addition_goals}
+    pending_additions={row['id']:row['recheck_reason'] for row in patches.review_addition_outcomes(
+        body,edits,addition_goals,[row for row in outcomes if row['id'] in addition_ids],candidate=candidate)}
+    still_open={}
+    touched={}
+    hard=[]
+    for outcome in outcomes:
+        key=outcome['id'];goal=goals_by_id[key];status=outcome.get('status');quotes=outcome.get('excerpts');reason=outcome.get('reason')
+        ids=locators[key]
+        if 'scene_anchor' in goal:
+            ids.update(goal['scene_anchor'].get('supporting',{}))
+        touched[key]={i for i,edit in enumerate(edits) if edit['paragraph_id'] in ids}
+        regions=[patches._scoped_paragraph(by_paragraph[p],edits) for p in ids if p in by_paragraph]
+        if (status not in ('resolved','remaining','keep') or not isinstance(reason,str) or not reason.strip()
+                or not isinstance(quotes,list) or not quotes
+                or any(not isinstance(q,str) or not q.strip() or q not in candidate for q in quotes)
+                or ids and not any(q in region or region.strip() and region in q for region in regions for q in quotes)):
+            raise ValueError('问题结论须引用原编号所在位置的当前候选原文')
+        required=goal.get('level') in ('hard','mandatory')
+        problem=''
+        if key in pending_additions:problem=pending_additions[key]
+        elif status=='remaining' or status=='keep' and required:problem=reason
+        elif 'scene_anchor' in goal:
+            # The established scene validator checks localized support and
+            # preserves explicit dialogue. "keep" documents why the line stays.
+            local_outcome={**outcome,'status':'not_applicable' if status=='keep' else status}
+            problem=patches.scene_outcome_problem(body,edits,candidate,goal,local_outcome)
+        elif status=='resolved' and not touched[key]:problem='原位置尚无依据表明本轮改动已解决问题。'
+        if problem:
+            still_open[key]=problem
+            if required:hard.append(key+' 原有必改问题仍未解决：'+problem)
+    return {'facts':facts,'blocked':blocked,'additions':additions,'hard':hard,'open':still_open,
+            'touched':touched,'problems':problems+hard}
+
+
 def review_decision(report,context):
+    if context.get('review_protocol')==SCOPED_REVIEW:
+        return scoped_assessment(report,context)['problems']
     reading=book.reading()
     reading_contract=context['book_contract'].get('reading_contract',{})
     report=wire.expand(reading.without_unrequested_checks(report,reading_contract),context)
@@ -662,32 +1064,45 @@ def review_decision(report,context):
                 or issue['candidate_quote'] not in context['candidate'] or issue['source_quote'] not in source):raise ValueError('事实复查缺少候选与冻结来源的逐字依据')
         reasons.append(issue['reason'])
     if report['compatible']!= (not report['issues']):raise ValueError('事实结论与问题列表不一致')
+    additions = growth_findings(context,report)
     temp={'verdict':'pass','issues':[],'fact_review':{'verdict':'pass','summary':'独立事实复查'},'expression_review':copy.deepcopy(report.get('expression_review'))}
-    quality.expression_gate(temp,context['candidate']);expression.validate_checks(report,context['candidate'],required=True)
+    quality.expression_gate(temp,context['candidate'],verified_addition_issues=bool(additions))
+    expression.validate_checks(report,context['candidate'],required=True)
     reasons += [r['impact']+'；'+r['goal'] for r in temp['issues'] if r['priority'] in ('medium','high')]
-    for row in patches.review_changes(context['edits'],report.get('change_reviews')):
+    for row in patches.review_changes(context['edits'],report.get('change_reviews'),
+                                      source=context['source_body'],candidate=context['candidate']):
         reasons.append('改动未改善或损害原表达：'+row['reason'])
+    reasons += [row['id']+' '+row['reason'] for row in additions]
     outcomes=report.get('issue_outcomes');goals_by_id={r['id']:r for r in context['goals']};expected=set(goals_by_id)
     if not isinstance(outcomes,list) or {r.get('id') for r in outcomes}!=expected or len(outcomes)!=len(expected):raise ValueError('原有实质问题未逐项复核')
+    addition_goals = context.get('addition_goals', [])
+    addition_ids = {row['id'] for row in addition_goals}
+    remaining_additions = patches.review_addition_outcomes(
+        context['source_body'], context['edits'], addition_goals,
+        [row for row in outcomes if row['id'] in addition_ids], candidate=context['candidate'])
+    reasons += [row['id']+' 增写返修仍有复述或损失有效增写：'+row['recheck_reason']
+                for row in remaining_additions]
     for row in outcomes:
+        if row['id'] in addition_ids:
+            continue
         if (row.get('status') not in ('resolved','remaining','not_applicable') or not isinstance(row.get('reason'),str) or not row['reason'].strip()
                 or not isinstance(row.get('excerpts'),list) or not row['excerpts']
-                or any(not isinstance(q,str) or not q or q not in context['candidate'] for q in row['excerpts'])):raise ValueError('问题解决情况缺少当前候选原文依据')
-        if row['status']=='remaining':reasons.append('原有问题仍未解决：'+row['reason'])
-        if row['id'].startswith('dialogue-') and row['status']=='not_applicable':
-            reasons.append('已定位的对白目标须用候选原文说明解决效果：'+row['reason'])
+                or any(not isinstance(q,str) or not q.strip() or q not in context['candidate'] for q in row['excerpts'])):raise ValueError('问题解决情况缺少当前候选原文依据')
         goal = goals_by_id[row['id']]
-        if goal.get('exchange_id') and row['status'] == 'resolved':
-            quotes = row['excerpts']
-            if len(quotes) < 2 or not expression._distinct_quotes(quotes) or not expression._ordered_quotes(context['candidate'], quotes):
-                raise ValueError('整段对白返修须按顺序引两处候选原文，证明反应改变了接下来的话或动作。')
-        if row['id'].startswith('scene-'):
-            if row['status']=='not_applicable':
-                reasons.append('已定位的场景目标须用候选原文复核：'+row['reason'])
-            elif row['status']=='resolved':
-                quotes = row['excerpts']
-                if len(quotes) < 2 or not expression._distinct_quotes(quotes) or not expression._ordered_quotes(context['candidate'], quotes):
-                    raise ValueError('场景返修须按顺序引两处不同的候选原文，证明反应和下一步行动。')
+        if 'scene_anchor' in goal:
+            reason = patches.scene_outcome_problem(context['source_body'],context['edits'],context['candidate'],goal,row)
+            if reason:reasons.append(reason)
+            continue
+        if row['id'].startswith(('dialogue-', 'scene-')):
+            reason = scoped_outcome_problem(context,goal,row)
+            if reason:reasons.append(reason)
+            continue
+        if row['status']=='remaining':reasons.append('原有问题仍未解决：'+row['reason'])
+        if goal.get('source') == 'reader_review' and row['status']=='not_applicable':
+            reasons.append('已定位的返修目标须用候选原文说明解决效果：'+row['reason'])
+        if (goal.get('source') == 'reader_review' and row['status']=='resolved'
+                and context['candidate'] == context['source_body']):
+            reasons.append('读者已核实的返修目标尚无实际修改：'+row['id'])
     return reasons
 
 
@@ -696,16 +1111,70 @@ def equivalent_indices(report,context,reasons):
     equivalent=[r for r in rows if r['effect']=='equivalent']
     # Other defects or a grouped/moved/dependent edit require writer attention.
     if not equivalent or len(reasons)!=len(equivalent):return []
-    if any(r['effect']=='regressed' for r in rows):return []
+    if any(r['effect']=='regressed' or r.get('preservation',{}).get('status')=='lost' for r in rows):return []
     if any(context['edits'][r['edit_index']].get('independent') is not True
            or context['edits'][r['edit_index']].get('group_id') for r in equivalent):return []
+    if any(context['edits'][r['edit_index']] in scope_edits(context['edits'], goal)
+           for goal in context['goals'] if goal['id'].startswith('dialogue-') and 'scene_anchor' not in goal
+           for r in equivalent):return []
     return sorted(r['edit_index'] for r in equivalent)
+
+
+def scoped_publication(context, assessment, binding):
+    if assessment['hard']:
+        return None,assessment['hard']
+    edits=context['edits']
+    all_indices=set(range(len(edits)))
+    if assessment['facts']:
+        selected=set()
+    elif assessment['blocked']:
+        selected={i for i,edit in enumerate(edits) if i not in assessment['blocked']
+                  and edit.get('independent') is True and not edit.get('group_id')}
+    else:
+        selected=all_indices
+
+    def checked(indices):
+        selected_edits=[edit for i,edit in enumerate(edits) if i in indices]
+        body=patches.apply_patches(context['source_body'],{'source_sha256':binding['body_sha256'],'edits':selected_edits},
+                                  protected_phrases=context['book_contract']['protected_phrases'])
+        length=quality.measurement(body.encode(),binding['chapter_number'],binding.get('target_policy',binding['bounds']))
+        return {'candidate':body,'candidate_sha256':sha(body.encode()),'edits':selected_edits,'length':length}
+
+    publication=checked(selected)
+    if quality.is_blocking(publication['length']) and selected!=all_indices:
+        selected=set()
+        publication=checked(selected)
+    if quality.is_blocking(publication['length']):
+        return None,['最终正文仍须满足明确篇幅：'+json.dumps(publication['length'],ensure_ascii=False)]
+    open_issues=[]
+    blockers=[]
+    for goal in context['goals']:
+        key=goal['id']
+        reason=assessment['open'].get(key)
+        if not reason and assessment['touched'][key]-selected:
+            reason='对应改动未验收采用，保留原问题供后续核对。'
+        if not reason:continue
+        if goal.get('level') in ('hard','mandatory'):
+            blockers.append(key+' 原有必改问题仍未解决：'+reason)
+        open_issues.append({**{name:goal[name] for name in ('id','source','goal','excerpts','preserve','level') if name in goal},
+                            'reason':reason})
+    if blockers:return None,blockers
+    return {**publication,'open_issues':open_issues},[]
 
 
 def commit(root,folder,expected_review):
     execution_fence=guard.assert_current(root)
     b=read(safe(root,folder+'/source-binding.json'));saved=read(safe(root,b['outputs']['revision_review_input']))
-    b,source=bound(root,folder,accepted_sha=saved['candidate_sha256'])
+    accepted_sha=saved['candidate_sha256']
+    if saved.get('review_protocol')==SCOPED_REVIEW:
+        for name in ('receipt.json','commit-intent.json'):
+            path=safe(root,folder+'/'+name)
+            if path.is_file():
+                prior=read(path)
+                if prior.get('task_id')==b['task_id'] and prior.get('before_sha256')==b['body_sha256']:
+                    accepted_sha=prior['after_sha256']
+                    break
+    b,source=bound(root,folder,accepted_sha=accepted_sha)
     editor_bound(root,b)
     try:context=compose(root,b,source)
     except CompositionConflict:raise
@@ -723,28 +1192,38 @@ def commit(root,folder,expected_review):
         refresh_retry_budget(root,'agent_local_review')
         raise Retry('agent_local_review','候选补丁已有变化，已重建复查输入；请独立复查新候选，旧报告不能发布')
     if b['outputs'].get('revision_review_model'):
-        packet.verify(read(safe(root,b['outputs']['revision_review_model'])),context,'reviewer')
+        verify_model(read(safe(root,b['outputs']['revision_review_model'])),context,'reviewer')
     report=read(safe(root,b['outputs']['revision_review_path']))
     actual_matches=False
     try:actual_matches=isinstance(expected_review,str) and json.loads(expected_review)==report
     except (ValueError,TypeError):pass
     try:
         if not actual_matches:raise ValueError('复查文件与本任务实际模型输出不一致')
-        active=repair_record(root,b,context)
-        if b['outputs'].get('revision_review_repair') and read(safe(root,b['outputs']['revision_review_repair']))!=(active or {}):
-            raise ValueError('局部补审资料与可信运行凭据不一致')
-        if active:report_repair.verify(report,active,context)
-        reasons=review_decision(report,context)
-        expanded=wire.expand(report,context)
+        scoped=context.get('review_protocol')==SCOPED_REVIEW
+        if scoped:
+            assessment=scoped_assessment(report,context)
+            publication,reasons=scoped_publication(context,assessment,b)
+        else:
+            active=repair_record(root,b,context)
+            if b['outputs'].get('revision_review_repair') and read(safe(root,b['outputs']['revision_review_repair']))!=(active or {}):
+                raise ValueError('局部补审资料与可信运行凭据不一致')
+            if active:report_repair.verify(report,active,context)
+            reasons=review_decision(report,context)
+            publication=context
+        expanded=expand_review(report,context)
     except (ValueError,KeyError,TypeError) as exc:
-        if actual_matches:
+        if actual_matches and context.get('review_protocol')!=SCOPED_REVIEW:
             targeted=report_repair.request(report,context,str(exc))
             if targeted:save_repair(root,b,context,targeted)
             elif '需要完整独立复审' in str(exc):save_repair(root,b,context,None)
         guard.retry(root,'local-revision/'+b['task_id'],'agent_local_review',str(exc))
         raise Retry('agent_local_review',str(exc)) from exc
     if b['outputs'].get('revision_review_expanded'):save(safe(root,b['outputs']['revision_review_expanded']),expanded)
-    removable=equivalent_indices(expanded,context,reasons)
+    if scoped and reasons:
+        pending.retain(root,b,source,context,report,expanded,digest,patches,blocked_indices=assessment['blocked'])
+        guard.retry(root,'local-revision/'+b['task_id'],'agent_pl','；'.join(reasons))
+        raise Retry('agent_pl','；'.join(reasons))
+    removable=[] if scoped else equivalent_indices(expanded,context,reasons)
     if removable:
         guard.store().event(root,'equivalent_prune',{'task_id':b['task_id'],'binding_digest':digest(b),
             'merged_digest':digest(context['edits']),'indices':removable,'review_context':context,'review_report':report})
@@ -755,7 +1234,20 @@ def commit(root,folder,expected_review):
         refresh_retry_budget(root,'agent_local_review')
         raise Retry('agent_local_review','已撤回无依赖的等价改动，重新组装并检查篇幅；须独立复查新候选，原结论未改写')
     if reasons:
-        pending.retain(root,b,source,context,report,expanded,digest,patches)
+        new_findings = growth_findings(context,expanded)
+        scene_findings = line_findings(context,evidence.resolve_report(expanded,context['candidate']))
+        previous_goals = [row for row in context['goals'] if row.get('source') in ('added_text_review','local_scene_review')]
+        new_findings += scene_findings
+        goals = patches.merge_addition_issues(previous_goals,new_findings)
+        if goals != previous_goals:
+            guard.store().event(root,'local_added_text_goals',{'task_id':b['task_id'],'binding_digest':digest(b),
+                'review_input_sha256':context['review_input_sha256'],'goals':goals})
+        scene_paragraphs = {row['paragraph_id'] for row in scene_findings}
+        blocked_indices = {row['edit_index'] for row in new_findings if 'edit_index' in row}
+        blocked_indices.update(i for i,edit in enumerate(context['edits']) if edit['paragraph_id'] in scene_paragraphs)
+        blocked_indices.update(row['edit_index'] for row in expanded['change_reviews']
+                               if row.get('preservation',{}).get('status')=='lost')
+        pending.retain(root,b,source,context,report,expanded,digest,patches,blocked_indices=blocked_indices)
         path=safe(root,folder+'/content-rejections.json');history=read(path) if path.is_file() else []
         payload=read(safe(root,b['outputs']['revision_patch_path']))
         key=sha((context['candidate_sha256']+digest(report)+str(safe(root,b['outputs']['revision_review_path']).stat().st_mtime_ns)).encode())
@@ -763,10 +1255,16 @@ def commit(root,folder,expected_review):
         save(path,history)
         guard.retry(root,'local-revision/'+b['task_id'],'agent_pl','；'.join(reasons))
         raise Retry('agent_pl','；'.join(reasons))
-    receipt={'schema':1,'task_id':b['task_id'],'before_sha256':b['body_sha256'],'after_sha256':context['candidate_sha256'],
+    if quality.is_blocking(publication['length']):
+        pending.retain(root,b,source,context,report,expanded,digest,patches)
+        message='本轮表达已通过复核，最终正文仍须满足明确篇幅。保留已有表达，只补可见的反应或后果。'+json.dumps(context['length'],ensure_ascii=False)
+        guard.retry(root,'local-revision/'+b['task_id'],'agent_pl',message)
+        raise Retry('agent_pl',message)
+    receipt={'schema':1,'task_id':b['task_id'],'before_sha256':b['body_sha256'],'after_sha256':publication['candidate_sha256'],
              'book_contract_sha256':b['book_contract_sha256'],'review_digest':digest(report),'patch_digest':context['patch_digest'],
-             'changed_spans':len(context['edits']),'length':context['length'],'accepted':True,
+             'changed_spans':len(publication['edits']),'length':publication['length'],'accepted':True,
              'expanded_review_digest':digest(expanded)}
+    if scoped:receipt.update(review_protocol=SCOPED_REVIEW,open_issues=publication['open_issues'],published_edits_digest=digest(publication['edits']))
     # Prepare bytes outside the database lock, then keep epoch verification,
     # final source validation, canonical replacement and receipt in one lock.
     p=safe(root,b['body_path'])
@@ -774,13 +1272,13 @@ def commit(root,folder,expected_review):
     temporary=None
     try:
         with tempfile.NamedTemporaryFile(dir=p.parent,delete=False) as f:
-            temporary=Path(f.name);f.write(context['candidate'].encode());f.flush();os.fsync(f.fileno())
+            temporary=Path(f.name);f.write(publication['candidate'].encode());f.flush();os.fsync(f.fileno())
         with guard.publication(root,proof=execution_fence) as proof:
-            bound(root,folder,accepted_sha=context['candidate_sha256'])
+            bound(root,folder,accepted_sha=publication['candidate_sha256'])
             editor_bound(root,b)
             if proof:receipt['execution_fence']=proof
             save(safe(root,folder+'/commit-intent.json'),receipt)
-            if sha(p.read_bytes())!=context['candidate_sha256']:os.replace(temporary,p)
+            if sha(p.read_bytes())!=publication['candidate_sha256']:os.replace(temporary,p)
             save(safe(root,folder+'/receipt.json'),receipt)
     finally:
         if temporary is not None and temporary.exists():temporary.unlink()
@@ -797,15 +1295,24 @@ def verify_attempt(root,task):
         raise ValueError('局部修订发布后正文已有变化，不能沿用旧完成记录')
     b,source=bound(root,folder,accepted_sha=receipt['after_sha256']);context=compose(root,b,source)
     if b['outputs'].get('revision_review_model'):
-        packet.verify(read(safe(root,b['outputs']['revision_review_model'])),context,'reviewer')
+        verify_model(read(safe(root,b['outputs']['revision_review_model'])),context,'reviewer')
     report=read(safe(root,b['outputs']['revision_review_path']))
     if receipt.get('expanded_review_digest'):
-        expanded=wire.expand(report,context)
+        expanded=expand_review(report,context)
         if (digest(expanded)!=receipt['expanded_review_digest'] or
                 read(safe(root,b['outputs']['revision_review_expanded']))!=expanded):raise ValueError('展开审查凭据与实际回复不符')
+    if context.get('review_protocol')==SCOPED_REVIEW:
+        publication,reasons=scoped_publication(context,scoped_assessment(report,context),b)
+        if (reasons or receipt.get('review_protocol')!=SCOPED_REVIEW
+                or receipt.get('open_issues')!=publication['open_issues']
+                or receipt.get('published_edits_digest')!=digest(publication['edits'])
+                or receipt.get('after_sha256')!=publication['candidate_sha256']
+                or receipt.get('length')!=publication['length'] or receipt.get('changed_spans')!=len(publication['edits'])):
+            raise ValueError('局部复查结果与实际发布的改动或保留问题不符')
+    else:reasons=review_decision(report,context)
     if (context!=read(safe(root,b['outputs']['revision_review_input'])) or digest(report)!=receipt['review_digest']
             or context['patch_digest']!=receipt['patch_digest'] or not isinstance(values.get('revision_review_result'),str)
-            or json.loads(values['revision_review_result'])!=report or review_decision(report,context)):
+            or json.loads(values['revision_review_result'])!=report or reasons):
         raise ValueError('局部修订完成凭据或复查与当前候选不符')
     return receipt
 
@@ -854,8 +1361,10 @@ def recover_rejected_review(root, task, *, interrupted_writer=False):
             or json.loads(values.get('revision_review_result','null'))!=report):
         raise ValueError('润色补丁、候选或独立复核和原任务不一致')
     if out.get('revision_review_model'):
-        packet.verify(read(safe(root,out['revision_review_model'])),context,'reviewer')
-    reasons=review_decision(report,context)
+        verify_model(read(safe(root,out['revision_review_model'])),context,'reviewer')
+    if context.get('review_protocol')==SCOPED_REVIEW:
+        _,reasons=scoped_publication(context,scoped_assessment(report,context),b)
+    else:reasons=review_decision(report,context)
     if not reasons:
         raise ValueError('没有需要继续处理的独立润色意见')
     retained=retained_feedback_sources(root,b['state']['author_feedback_file'])
@@ -904,7 +1413,7 @@ def verify_conflict(root,task,*,recover_evidence=False):
                 or len(read(safe(root,folder+'/content-rejections.json')))<2 or not review_decision(report,context)):
             raise ValueError('缺少连续实质返修的真实独立复查')
         measured=context['length'];reason='连续有原文依据的实质修订仍未解决问题，须回到阅读作用与篇幅规划。';quotes=[source['paragraphs'][0]['text']]
-        extras={'review_digest':digest(report),'review_report':wire.expand(report,context),'rejected_candidate':context['candidate']}
+        extras={'review_digest':digest(report),'review_report':expand_review(report,context),'rejected_candidate':context['candidate']}
     elif payload.get('status')=='needs_replan':
         if set(payload)!={'status','source_sha256','edits','reason','evidence'} or payload['edits']!=[]:raise ValueError('冲突响应不合规')
         reason,quotes=payload.get('reason'),payload.get('evidence')
@@ -922,8 +1431,25 @@ def verify_conflict(root,task,*,recover_evidence=False):
 
 def retry_feedback(root,folder,error):
     text=str(error)+'\n保持冻结原文和本书文风，仅纠正本轮问题。\n'
+    if error.target=='agent_sc' and 'dialogue_review_format' in str(error):
+        path = safe(root, folder+'/critic-exchange-repair.json')
+        if path.is_file():
+            repair = read(path)
+            return text+'只补审下列对白组，在 exchange_review 中提交这些组的判断；其他组和其他字段由程序从旧报告保留。\n'+json.dumps({
+                'recheck': repair['recheck'], 'previous_unverified_rows': repair['misfiled'],
+            }, ensure_ascii=False, indent=2)+'\n'
     if error.target!='agent_pl':return text
     binding,source=bound(root,folder)
+    target_policy=binding.get('target_policy',binding['bounds'])
+    if source.get('added_text_review'):
+        tracked = tracked_addition_goals(guard.store().events(root),binding)
+        if tracked:
+            current = safe(root,binding['outputs']['revision_review_input'])
+            targets = {row['paragraph_id'] for row in tracked}
+            edits = [edit for edit in read(current)['edits'] if edit['paragraph_id'] in targets] if current.is_file() else []
+            text += ('\n【表达句子返修】按原编号处理针对的句子及其上下文。保留明确要求留住的接话、指令和有效增写；'
+                     '这里列出的旧候选仅供定位，old 仍逐字取冻结原文。\n'
+                     +json.dumps({'goals':tracked,'affected_edits':edits},ensure_ascii=False,indent=2)+'\n')
     working=pending.current(root,binding,digest)
     if working:
         body=patches.apply_patches(source['source_body'],{'source_sha256':binding['body_sha256'],'edits':working['edits']})
@@ -931,12 +1457,12 @@ def retry_feedback(root,folder,error):
         return text+'\n【待验收工作稿；有效改动由程序保留，未发布】\n'+json.dumps({
             'source_sha256':binding['body_sha256'],'retained_edits':working['edits'],
             'working_candidate_sha256':working['candidate_sha256'],
-            'length_edit_budget':patches.length_edit_budget(quality.count_prose(body),binding['bounds'])},ensure_ascii=False,indent=2)+(
+            'length_edit_budget':patches.length_edit_budget(quality.count_prose(body),quality.required_bounds(target_policy))},ensure_ascii=False,indent=2)+(
             '\n完整冻结原文见主输入；待验收工作稿等于该原文应用上述保留补丁。只提交剩余问题的新增或更新edits，仍以冻结原文的段落id、old、source_sha256为锚点。未重交的保留改动继续存在；'
             '更新保留改动须使用其完整old范围，不能部分重叠。不得把工作稿新句当old。原始事实与全部目标不变，最终仍完整复核所有累计改动。\n')
     text+=('本轮整组edits仍应用于冻结原文，不累计上一版候选的改动；整组净增删按以下源预算计算，'
            '不能只补候选剩余缺口。不把候选新增句当作old；若问题来自replacement，只修该replacement并完整重交补丁。\n'+
-           json.dumps(patches.length_edit_budget(quality.count_prose(source['source_body']),binding['bounds']),ensure_ascii=False,indent=2)+'\n')
+           json.dumps(patches.length_edit_budget(quality.count_prose(source['source_body']),quality.required_bounds(target_policy)),ensure_ascii=False,indent=2)+'\n')
     patch_path=safe(root,binding['outputs']['revision_patch_path'])
     if patch_path.is_file():
         try:
@@ -945,7 +1471,7 @@ def retry_feedback(root,folder,error):
         except (ValueError,KeyError,TypeError):pass
         else:
             diagnostic={'task_id':binding['task_id'],'source_sha256':binding['body_sha256'],
-                'rejected_edits':payload['edits'],'candidate_length':quality.measurement(candidate.encode(),binding['chapter_number'],binding['bounds'])}
+                'rejected_edits':payload['edits'],'candidate_length':quality.measurement(candidate.encode(),binding['chapter_number'],target_policy)}
             save(safe(root,folder+'/last-rejected-patch.json'),diagnostic)
             return text+'\n【最新未通过补丁；未发布，仅用于修订其replacement】\n'+json.dumps(diagnostic,ensure_ascii=False,indent=2)
     path=safe(root,folder+'/review-input.json')
@@ -967,12 +1493,17 @@ def main():
     parser.add_argument('--learning-context',default='learning/context/polish.md')
     parser.add_argument('--feedback',default=None)
     parser.add_argument('--dialogue-check',action='store_true')
-    parser.add_argument('--dialogue-check-version',type=int,choices=(1,2,3,4,5,6,7,8),default=1)
+    parser.add_argument('--dialogue-check-version',type=int,choices=range(1,packet.COMPACT_EXCHANGE_REVIEW_VERSION+1),default=1)
+    parser.add_argument('--scoped-review',action='store_true')
+    parser.add_argument('--advisory-length',action='store_true')
+    parser.add_argument('--review-scope',choices=('current_issues','whole_chapter'),default='current_issues')
     parser.add_argument('--critique',default='cache/sc/critique.json');parser.add_argument('--review-stdin',action='store_true')
     args=parser.parse_args();root=Path.cwd()
     try:
         if args.action=='prepare':out=prepare(root,args.chapter,os.environ.get('TASK_ID',''),args.target,args.context,args.learning_context,args.feedback,
-                                             dialogue_check=args.dialogue_check,dialogue_check_version=args.dialogue_check_version)
+                                             dialogue_check=args.dialogue_check,dialogue_check_version=args.dialogue_check_version,
+                                             scoped_review=args.scoped_review,whole_chapter_review=args.review_scope=='whole_chapter',
+                                             advisory=args.advisory_length)
         elif args.action=='writer-input':out=writer_input(root,args.dir,args.critique)
         elif args.action=='candidate':out=candidate(root,args.dir)
         else:commit(root,args.dir,sys.stdin.read() if args.review_stdin else None);out={}

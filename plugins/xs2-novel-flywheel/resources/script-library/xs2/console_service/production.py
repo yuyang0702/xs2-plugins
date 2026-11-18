@@ -9,8 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 import re
 
-STAGES = ("novel-advisor", "build", "character", "story-plan", "outline", "mvp", "polish", "reader-sim", "post-hoc", "export")
-PRODUCTION = ("mvp", "polish", "reader-sim", "post-hoc", "export")
+STAGES = ("novel-advisor", "build", "character", "story-plan", "outline", "mvp", "polish", "post-hoc", "export")
+PRODUCTION = STAGES[5:]
 ARTIFACTS = {
     "novel-advisor": "learning/advisor_report.json", "build": "meta/world_foundation.md",
     "character": "meta/character_profiles.md", "story-plan": "meta/story_plan.md",
@@ -260,11 +260,8 @@ def parameters(state, definition):
         values.update(conflict_plan_mode="short_full", chapter_ending_mode="book_final")
     elif values.get("conflict_plan_mode") not in {"serial_opening", "serial_chapter", "serial_arc"}:
         values["conflict_plan_mode"] = "serial_chapter"
-    if any(variable["key"] == "polish_pass" for variable in definition.get("variables", [])):
-        receipt = state.get('lengthRepairFeedback') or {}
-        values['polish_pass'] = ('length_only' if isinstance(receipt, dict)
-            and receipt.get('path') == str(values.get('author_feedback_file') or '').strip()
-            and receipt.get('chapter_number') == chapter(state) and receipt.get('path') else 'content')
+    if workflow == 'polish':
+        values['polish_pass'] = 'content'
     result = {}
     for variable in definition.get("variables", []):
         key = variable["key"]
@@ -300,17 +297,22 @@ def parameters(state, definition):
 
 
 def launch_check(root, state, stage, support=None):
+    if stage == 'reader-sim':
+        raise ValueError('读者模式已移除，请使用质量审核。')
     state.pop('productionLaunchContext',None)
     run_ledger().recover(root)
     longrun().check_budget(root)
     if continuous(state):serial().bootstrap(root,state)
     if stage not in STAGES or stage == "novel-advisor":
         raise ValueError("请先在小说顾问中确认方向，再启用正文自动创作。")
-    if stage in ('reader-sim','post-hoc','export'):
+    if stage in ('post-hoc','export'):
+        body = length_quality().safe_path(root, f'story/{chapter(state)}/chapter.md')
+        if not body.is_file() or not body.read_text(encoding='utf-8-sig').strip():
+            raise ValueError('缺少本章有效正文，无法审核或导出。')
         source=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
         spec=importlib.util.spec_from_file_location('launch_composition_budget',source)
         composer=importlib.util.module_from_spec(spec);spec.loader.exec_module(composer)
-        quota=composer.current(root,chapter(state))
+        quota=composer.reference(root,chapter(state))
         state['activeCompositionBudget']=({'chapter':chapter(state),'nominal_target':state.get('values',{}).get('target_word_count',''),
             'target':f"{quota['minimum']}-{quota['maximum']}"} if quota else None)
     if stage == "mvp":
@@ -327,8 +329,6 @@ def launch_check(root, state, stage, support=None):
         check = support.preflight(root, chapter(state))
         if not check.get("ready"):
             raise ValueError(check.get("message") or "请先完成本章规划与前文审核。")
-    if stage in {"post-hoc", "export"} and reader_report(root, state)["verdict"] != "pass":
-        raise ValueError("本章读者评估尚未通过，不能自动审核或导出。")
     if continuous(state):run_control().admit(root,state,stage)
     record_stage(root, state, stage, 'stage_launch')
     _stage_launch_context(root,state,stage)
@@ -445,6 +445,32 @@ def _character_provider_recovery(root, state, task):
                                                    'source_task_id': task['task_id']}}}
 
 
+def _audited_draft(root,state):
+    ref=(state.get('refs') or {}).get('mvp') or {}
+    if not ref.get('workflow_id') or not ref.get('task_id'):
+        return None
+    guard=execution_guard()
+    draft=guard.terminal_native_task(root,ref['workflow_id'],ref['task_id'])
+    if (not draft or draft['status']!='completed' or any((draft.get('node_states') or {}).get(key,{}).get('status')!='completed'
+            for key in ('script_guard_finish','script_render_si'))):
+        return None
+    directory=Path(root)/'cache/draft-guard'/ref['task_id']
+    receipt_path=directory/'final-receipt.json';audit=directory/'expression-audit.json'
+    number=chapter(state)
+    body_path=Path(root)/f'story/{number}/chapter.md'
+    if not all(path.is_file() for path in (receipt_path,audit,body_path)):
+        return None
+    local=guard.load('production_audited_draft',Path(__file__).resolve().parents[1]/'local_revision/local_revision.py')
+    receipt=json.loads(receipt_path.read_text(encoding='utf-8-sig'));raw=body_path.read_bytes()
+    text=raw.decode('utf-8-sig').rstrip().replace('\r\n','\n')
+    if (receipt.get('phase')!='expression' or text!=receipt.get('body')
+            or hashlib.sha256(text.encode()).hexdigest()!=receipt.get('body_sha256')
+            or hashlib.sha256(audit.read_bytes()).hexdigest()!=receipt.get('audit_sha256')
+            or receipt.get('book_contract_sha256')!=local.book.digest(local.book.resolve(root))):
+        return None
+    return draft,directory,hashlib.sha256(raw).hexdigest()
+
+
 def _keep_audited_draft(root, state, task):
     number=chapter(state)
     if (state.get('mode')!='short' or state.get('readerRepairCount') or 'mvp' not in state.get('completed',[])
@@ -463,31 +489,14 @@ def _keep_audited_draft(root, state, task):
     local=guard.load('production_keep_audited_draft',Path(__file__).resolve().parents[1]/'local_revision/local_revision.py')
     if local.feedback_layers(root,state.get('values',{}).get('author_feedback_file'))[0].strip():
         return None
-    ref=(state.get('refs') or {}).get('mvp') or {}
-    if not ref.get('workflow_id') or not ref.get('task_id'):
+    verified=_audited_draft(root,state)
+    if verified is None:
         return None
-    draft=guard.terminal_native_task(root,ref['workflow_id'],ref['task_id'])
-    if (not draft or draft['status']!='completed' or any((draft.get('node_states') or {}).get(key,{}).get('status')!='completed'
-            for key in ('script_guard_finish','script_render_si'))):
-        return None
-    directory=Path(root)/'cache/draft-guard'/ref['task_id']
-    receipt_path=directory/'final-receipt.json';audit=directory/'expression-audit.json'
-    body_path=Path(root)/f'story/{number}/chapter.md'
-    if not all(path.is_file() for path in (receipt_path,audit,body_path)):
-        return None
-    receipt=json.loads(receipt_path.read_text(encoding='utf-8-sig'));raw=body_path.read_bytes()
-    text=body_path.read_text(encoding='utf-8-sig').rstrip()
-    bounds=length_quality().target_range(state.get('values',{}).get('target_word_count'))
-    if (receipt.get('phase')!='expression' or text!=receipt.get('body')
-            or hashlib.sha256(text.encode()).hexdigest()!=receipt.get('body_sha256')
-            or hashlib.sha256(audit.read_bytes()).hexdigest()!=receipt.get('audit_sha256')
-            or receipt.get('book_contract_sha256')!=local.book.digest(local.book.resolve(root))
-            or bounds and not bounds[0]<=length_quality().count_prose(text)<=bounds[1]):
-        return None
-    decision={'status':'retained_audited_draft','draft_task_id':ref['task_id'],'failed_task_id':task['task_id'],
-              'body_sha256':hashlib.sha256(raw).hexdigest()}
+    draft,_,digest=verified
+    decision={'status':'retained_audited_draft','draft_task_id':draft['task_id'],'failed_task_id':task['task_id'],
+              'body_sha256':digest}
     record_stage(root,state,'polish','stage_retained_audited_draft',task)
-    return {'action':'advance','stage':'reader-sim','reset':list(PRODUCTION[2:]),
+    return {'action':'advance','stage':'post-hoc','reset':list(PRODUCTION[2:]),
             'updates':{'polishDecisions':{**(state.get('polishDecisions') or {}),number:decision}}}
 
 
@@ -610,10 +619,10 @@ def recovery_action(state, stage, task, *, root=None):
         if (failed=={'script_validate_observation'} and 'RETRY_STOP: evidence：[archive_evidence]' in evidence_error
                 and ref.get('task_id')==task['task_id'] and ref.get('workflow_id')
                 and execution_guard().terminal_native_task(root,ref['workflow_id'],ref['task_id'])):
-            number=chapter(state);report=reader_report(root,state);body=report['body_sha256']
+            number=chapter(state);body=run_ledger().digest(root,f'story/{number}/chapter.md')
             key=f'{number}/{body}';previous=state.get('archiveEvidenceRecoveries') or {}
             source=Path(root)/f"cache/story-support/reviews/{task['task_id']}/{number}/review-source.json"
-            if key not in previous and report['verdict']=='pass' and source.is_file():
+            if body and key not in previous and source.is_file():
                 frozen=json.loads(source.read_text(encoding='utf-8-sig'))
                 if frozen.get('task_id')==task['task_id'] and frozen.get('body_sha256')==body:
                     return {'action':'advance','stage':stage,'reset':['post-hoc','export'],
@@ -707,56 +716,30 @@ def next_action(root, state, stage):
 
 
 def _next_action(root, state, stage):
+    values=state.get('values',{})
+    short_single=(state.get('mode')=='short' and values.get('writer_type')!='muti')
+    if stage=='mvp' and short_single and not values.get('author_feedback_file'):
+        verified=_audited_draft(root,state)
+        if verified is not None:
+            draft,directory,digest=verified
+            binding_path=directory/'binding.json'
+            binding=json.loads(binding_path.read_text(encoding='utf-8')) if binding_path.is_file() else {}
+            if binding.get('task_id')==draft['task_id'] and binding.get('combined_precheck') is True:
+                decision={'status':'retained_audited_draft','draft_task_id':draft['task_id'],
+                          'body_sha256':digest,'reason':'combined_precheck'}
+                return {'action':'advance','stage':'post-hoc','updates':{'automaticCheckpoint':None,
+                    'polishDecisions':{**(state.get('polishDecisions') or {}),chapter(state):decision}}}
     if stage == 'polish':
-        result = length_quality().assess(root, chapter(state), state.get('values', {}).get('target_word_count', ''))
-        cycle, count, total = _length_cycle(state)
-        progress = {'lengthRepairCycle': cycle, 'lengthRepairCount': count, 'lengthRepairTotal': total,
-                    'lengthRepairStrategy': length_quality().LENGTH_REPAIR_STRATEGY}
-        if state.get('lengthRepairStrategy') == 'fragment-v5' and length_quality().LENGTH_REPAIR_STRATEGY == 'fragment-v6':
-            progress['lengthRepairMigration'] = {'from': 'fragment-v5', 'to': 'fragment-v6', 'cycle': cycle,
-                                               'total_before': total, 'reason': '按真实缺口冻结连续多段源窗口，替代单句过量扩写契约'}
-        if state.get('writerModel') or 'lengthRepairModel' in state:
-            progress['lengthRepairModel'] = state.get('writerModel') or ''
-        if result['status'] in {'short', 'long'}:
-            limit = max(1, min(3, int(state.get('autoLengthRepairLimit') or 2)))
-            if count >= limit:
-                content_limit = max(1, min(5, int(state.get('autoRepairLimit') or 2)))
-                if (int(state.get('readerRepairCount') or 0) < content_limit
-                        and not state.get('assessmentOnly') and not state.get('repairReviewOnly')):
-                    # A reader report is still strictly length-gated. Let the
-                    # existing planner choose a better content repair instead
-                    # of repeating the rejected local window or requiring UI surgery.
-                    source = length_quality().original_feedback(root, state)
-                    return {'action': 'advance', 'stage': 'reader-sim',
-                            'reset': ['reader-sim', 'post-hoc', 'export'],
-                            'updates': {**progress, 'lengthCheck': result, 'lengthRepairFeedback': {},
-                                        'values': {**state.get('values', {}), 'author_feedback_file': source}}}
-                return {'action': 'pause', 'reason': f"字数自动校正已达上限，实测{result['actual']}实字，目标{result['lower']}—{result['upper']}；未放行审核和导出。",
-                        'updates': {**progress, 'lengthCheck': result}}
-            feedback = length_quality().correction_feedback(root, {**state, 'lengthRepairCount': count}, result)
-            return {'action': 'advance', 'stage': 'polish', 'reset': list(PRODUCTION[1:]),
-                    'updates': {**progress, 'lengthRepairCount': count + 1, 'lengthRepairTotal': total + 1, 'lengthCheck': result,
-                                'lengthRepairFeedback': feedback,
-                                'values': {**state.get('values', {}), 'author_feedback_file': feedback['path']}}}
-        length_quality().prepare_guidance(root, chapter(state), state.get('values', {}).get('target_word_count', ''))
-        source = length_quality().original_feedback(root, state)
-        return {'action': 'advance', 'stage': 'reader-sim', 'updates': {**progress, 'lengthCheck': result,
+        quality = length_quality()
+        number = chapter(state)
+        target = state.get('values', {}).get('target_word_count', '')
+        result = quality.assess(root, number, target, advisory=True)
+        quality.prepare_guidance(root, number, target, advisory=True)
+        source = quality.original_feedback(root, state)
+        return {'action': 'advance', 'stage': 'post-hoc', 'updates': {'lengthCheck': result,
                 'lengthRepairFeedback': {}, 'values': {**state.get('values', {}), 'author_feedback_file': source}}}
-    if stage == "reader-sim":
-        report = reader_report(root, state)
-        if state.get("assessmentOnly"):
-            return {"action": "finish", "reason": "本章读者评估已完成。", "updates": {"assessmentOnly": False}}
-        if report.get('requires_scope_confirmation'):
-            return {"action": "pause", "reason": "整篇审稿仍有超出或未明确属于本次修改范围的问题，请先确认修改范围。"}
-        if state.get("repairReviewOnly") and report["verdict"] != "pass":
-            return {"action": "pause", "reason": "本次返修复评尚未通过，请查看报告后决定后续操作。", "updates": {"repairReviewOnly": False}}
-        if report["verdict"] != "pass":
-            limit = max(1, min(5, int(state.get("autoRepairLimit") or 2)))
-            if int(state.get("readerRepairCount") or 0) >= limit:
-                return {"action": "pause", "reason": "已达到本章自动返修次数上限，请查看正文与读者报告。"}
-            return {"action": "repair"}
     if stage == "post-hoc" and state.get("repairReviewOnly"):
-        return {"action": "finish", "reason": "返修复评通过，故事档案已同步。", "updates": {"repairReviewOnly": False}}
+        return {"action": "finish", "reason": "本章审核完成，故事档案已同步。", "updates": {"repairReviewOnly": False}}
     if stage == "export":
         started = int(state.get("autoChapterStarted") or 1)
         limit = max(1, int(state.get("autoChapterLimit") or 1))
@@ -797,7 +780,7 @@ def repair_feedback_sources(root,state):
 def repair_ready(state, feedback_path):
     cycle = int(state.get("readerRepairCount") or 0) + 1
     _, _, total = _length_cycle(state)
-    return {"action": "advance", "stage": "polish", "reset": ["polish", "reader-sim", "post-hoc", "export"],
+    return {"action": "advance", "stage": "polish", "reset": list(PRODUCTION[1:]),
             "updates": {"values": {**state.get("values", {}), "author_feedback_file": feedback_path},
                         "readerRepairCount": cycle, "lengthRepairCount": 0,
                         "lengthRepairCycle": cycle, "lengthRepairTotal": total, "lengthRepairStrategy": length_quality().LENGTH_REPAIR_STRATEGY,

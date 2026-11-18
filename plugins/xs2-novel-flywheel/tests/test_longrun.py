@@ -246,26 +246,12 @@ def test_native_interrupted_node_recovery_preserves_completed_work_and_history()
     assert task.node_states['writer'].attempt_count>=1 and task.node_states['writer'].attempt_history
 
 
-def test_rescoping_a_copy_requires_fresh_baseline_reader_before_archive():
+def test_rescoping_a_copy_moves_directly_to_baseline_archive():
     module=helper('driver');cursor={'phase':'baseline_plan'}
-    action=module.baseline_action(cursor,{},None)
-    assert action['stage']=='reader-sim' and cursor['phase']=='baseline_reader'
-
-
-def test_baseline_revision_uses_existing_scope_and_repair_policy():
-    from types import SimpleNamespace
-    module=helper('driver');cursor={'phase':'baseline_reader','stage':'reader-sim'}
-    for expected in ({'action':'repair'},{'action':'pause','reason':'outside scope'}):
-        policy=SimpleNamespace(reader_report=lambda *_:{'verdict':'revise'},
-                               next_action=lambda *_:expected)
-        assert module.baseline_action(cursor,{},policy,'book')==expected
-        assert cursor['phase']=='baseline_reader'
-    cursor['stage']='polish'
-    assert module.baseline_action(cursor,{},None,'book') is None
-    cursor['stage']='reader-sim'
-    policy=SimpleNamespace(reader_report=lambda *_:{'verdict':'pass'})
-    assert module.baseline_action(cursor,{},policy,'book')['stage']=='post-hoc'
+    action=module.baseline_action(cursor)
+    assert action=={'action':'advance','stage':'post-hoc','reset':['post-hoc','export']}
     assert cursor['phase']=='baseline_archive'
+    assert module.baseline_action(cursor) is None
 
 
 def test_repair_packet_reuses_complete_book_rules_not_style_only(tmp_path):
@@ -358,8 +344,9 @@ def test_repair_planner_reuses_expression_rules_instead_of_padding_with_actions(
 def test_model_pass_does_not_erase_open_manual_source_observation(tmp_path):
     module=setup(tmp_path,target_new_characters=1);commit_chapter(tmp_path,'0002')
     source='story/0002/chapter.md';digest=support.digest(tmp_path,source)
-    support.write(tmp_path,'story/0002/reader_report.json',{'verdict':'pass','body_sha256':digest})
-    module.accept_chapter(tmp_path,'0002',{'task_id':'export','status':'completed'})
+    accepted=module.accept_chapter(tmp_path,'0002',{'task_id':'export','status':'completed'})
+    assert 'reader_sha256' not in accepted
+    support.write(tmp_path,'story/0002/reader_report.json',{'verdict':'reject','body_sha256':digest})
     request={'chapter':'0002','source_hashes':{source:digest},'sources':{source:support.read(tmp_path,source)}}
     result={'verdict':'pass','issues':[],'checks':[{'dimension':dimension,'status':'pass',
         'reason':'fixture source review','evidence':[{'source_id':source,'quote':'决定留下救人'}]}
@@ -385,6 +372,19 @@ def test_maintenance_stop_waits_for_requested_committed_boundary_and_is_not_repl
     assert driver.boundary_stop_request(tmp_path,cursor,'export','0002')==request
     assert driver.boundary_stop_request(tmp_path,{'last_stop_request_id':request['id']},'export','0002') is None
     assert support.load(tmp_path,'observability/stop-request.json')==request
+
+
+def test_legacy_reader_stop_waits_for_post_hoc_and_is_not_replayed(tmp_path):
+    request = {'id': 'reader-stop', 'after_stage': 'reader-sim', 'chapter': '0002', 'reason': '维护'}
+    support.write(tmp_path, 'observability/stop-request.json', request)
+    driver = helper('driver')
+
+    assert driver.boundary_stop_request(tmp_path, {}, 'polish', '0002') is None
+    assert driver.boundary_stop_request(tmp_path, {}, 'post-hoc', '0003') is None
+    assert driver.boundary_stop_request(tmp_path, {}, 'post-hoc', '0002') == request
+    consumed = {'last_stop_request_id': request['id']}
+    assert driver.boundary_stop_request(tmp_path, consumed, 'post-hoc', '0002') is None
+    assert support.load(tmp_path, 'observability/stop-request.json') == request
 
 
 def test_report_distinguishes_process_recovery_and_controlled_restart(tmp_path):

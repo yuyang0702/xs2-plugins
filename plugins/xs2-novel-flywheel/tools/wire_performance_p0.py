@@ -10,7 +10,9 @@ packet=importlib.util.module_from_spec(spec);spec.loader.exec_module(packet)
 wire_spec=importlib.util.spec_from_file_location('wire_review_protocol',RES/'script-library/xs2/prose_policy/review_wire.py')
 wire=importlib.util.module_from_spec(wire_spec);wire_spec.loader.exec_module(wire)
 prompt_path=RES/'prompts.json';prompt_raw=prompt_path.read_bytes();prompts=json.loads(prompt_raw.decode('utf-8-sig'))
-for section in prompts['agents']['xs2-local-revision-reviewer']['sections']:
+polish=json.loads((RES/'workflows/polish/definition.json').read_text(encoding='utf-8-sig'))
+legacy_sections=prompts['agents']['xs2-local-revision-reviewer']['sections'] if polish.get('version',0)<34 else []
+for section in legacy_sections:
     suffix='；local-review-v2由程序绑定真实输入哈希，change_reviews按edit_index逐项交effect/reason，完整before/after由程序从真实补丁展开'
     section['content']=re.sub(r'(?:v1)*复制当前三个sha字段(?:'+re.escape(suffix)+r')*',lambda _: 'v1复制当前三个sha字段'+suffix,section['content'])
     if 'v2中也须逐项判断' not in section['content']:
@@ -26,6 +28,11 @@ for workflow in ('polish','mvp','reader-sim'):
     if workflow in ('mvp','polish') and 'composition_reused' not in keys:
         data['variables'].append({'key':'composition_reused','name':'composition_reused','type':'text','source_type':'output','default':'no','hidden':True,'required':False})
     for node in data['nodes']:
+        if (workflow=='polish' and data.get('version',0)>=34
+                and node['id'] in ('agent_sc','agent_pl','agent_local_review')):
+            continue
+        if workflow=='reader-sim' and data.get('version',0)>=24:
+            continue
         replacements={'revision_source_input':'revision_source_model','revision_input':'revision_editor_model',
             'revision_review_input':'revision_review_model'} if node['id'] in ('agent_sc','agent_pl','agent_local_review') else {}
         if node['id'] in ('agent_blind_reader','agent_context_reader','agent_reader'):

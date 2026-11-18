@@ -14,6 +14,7 @@ FOCUSED_WRITER_VERSION=2
 SHARED_REVIEW_VERSION=1
 COMPACT_REVIEW_VERSION=2
 COMPACT_CRITIC_VERSION=1
+COMPACT_EXCHANGE_REVIEW_VERSION=9
 SHARED_PROSE='candidate-shared-v1'
 COMPACT_PARAGRAPHS='paragraph-map-v1'
 GUIDANCE=('正文按paragraphs顺序完整提供，before与suffix保留原始空白；不是摘要或节选。'
@@ -53,6 +54,20 @@ def dialogue_exchanges(paragraphs):
             'turn_ids': span, 'paragraph_ids': [row['id'] for row in paragraphs[first:last + 1]],
         }
     return turns, exchanges
+
+
+def confirmed_dialogue(turns, exchanges, non_turn_ids):
+    """Keep the frozen candidate IDs while excluding quotations the critic classified as non-speech."""
+    if (not isinstance(non_turn_ids, list)
+            or any(not isinstance(key, str) or key not in turns for key in non_turn_ids)
+            or len(set(non_turn_ids)) != len(non_turn_ids)):
+        raise ValueError('非对白编号须逐一来自当前冻结正文，不得重复。')
+    excluded = set(non_turn_ids)
+    return (
+        {key: row for key, row in turns.items() if key not in excluded},
+        {key: {**row, 'turn_ids': [turn_id for turn_id in row['turn_ids'] if turn_id not in excluded]}
+         for key, row in exchanges.items()},
+    )
 
 
 def digest(value):return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -221,6 +236,9 @@ def focused_goals(goals,body,view):
         if 'turns' in goal:row['turns']=copy.deepcopy(goal['turns'])
         if 'focus' in goal:row['focus']=goal['focus']
         if 'target' in goal:row['target']=copy.deepcopy(goal['target'])
+        if 'scene_focus' in goal:
+            row['scene_focus']=copy.deepcopy(goal['scene_focus'])
+            row['evidence']=copy.deepcopy(goal['excerpts'])
         if 'preserve' in goal:row['preserve']=copy.deepcopy(goal['preserve'])
         if 'anchors' in goal:row['anchors']=copy.deepcopy(goal['anchors'])
         if 'exchange_id' in goal:row['exchange_id']=goal['exchange_id']
@@ -232,13 +250,18 @@ def local(data,role):
     focused=data.get('writer_view_version')==FOCUSED_WRITER_VERSION
     if role=='writer' and focused:
         fields=('source_body','source_sha256','book_contract','book_contract_sha256',
-                'author_feedback','automatic_revision_advice','writer_references','length_edit_budget','fixed_edit')
+                'author_feedback','automatic_revision_advice','writer_references','length_edit_budget','fixed_edit','growth_guidance')
         result={key:copy.deepcopy(data[key]) for key in fields if key in data}
         goal_plans=((data.get('composition_plan') or {}).get('plan') or {}).get('goal_plans')
         if goal_plans:
             result['composition_plan']={'plan':{'goal_plans':copy.deepcopy(goal_plans)}}
     else:
         result=copy.deepcopy(data)
+    for field in ('goals','scene_goals'):
+        for goal in result.get(field, []):
+            if isinstance(goal,dict) and 'scene_anchor' in goal:
+                goal.pop('scene_anchor')
+                goal.pop('scene_preserve_counts',None)
     confirmed_facts_only = role == 'draft-auditor' and result.pop('facts_from_confirmed_sources', False)
     if confirmed_facts_only:
         result.pop('source_body', None)
@@ -281,11 +304,16 @@ def local(data,role):
         result['_model_view']['guidance']+=' 候选paragraphs是段号到原文的映射；按段号顺序阅读。段前空白取before_overrides对应值，否则取default_before；篇末空白为suffix。'
     if compact_critic:
         result['_model_view']['guidance']+=' confirmed_context若含parts，按顺序阅读；ref是本输入中的字段路径，line_endings为lf时只转换原有换行。'
-    if role == 'critic' and data.get('dialogue_check_version', 1) >= 6:
+    dialogue_version = data.get('dialogue_check_version', 1)
+    if role == 'critic' and dialogue_version >= 6:
         turns, exchanges = dialogue_exchanges(data['paragraphs'])
-        result['dialogue_exchanges'] = exchanges
-        result['dialogue_turns'] = {key: {'paragraph_id': row['paragraph_id'], 'ordinal': row['ordinal']}
-                                    for key, row in turns.items()}
+        if dialogue_version >= COMPACT_EXCHANGE_REVIEW_VERSION:
+            result['dialogue_exchanges'] = {key: row['turn_ids'] for key, row in exchanges.items()}
+            result['dialogue_turns'] = {key: [row['paragraph_id'], row['ordinal']] for key, row in turns.items()}
+        else:
+            result['dialogue_exchanges'] = exchanges
+            result['dialogue_turns'] = {key: {'paragraph_id': row['paragraph_id'], 'ordinal': row['ordinal']}
+                                        for key, row in turns.items()}
     result['_precision_guidance']=precision().GUIDANCE
     if data.get('precision_review_version')==2:
         result['_precision_guidance']=precision().DEFAULT_PROSE+'\n'+result['_precision_guidance']

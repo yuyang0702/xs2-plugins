@@ -70,6 +70,48 @@ def test_parallel_join_rejects_mutated_sources_and_preflight(tmp_path):
     with pytest.raises(ValueError):m.join(tmp_path,out['reader_review_binding'],out['reader_review_binding_sha'],h['reader_blind_report_sha'],h['reader_preflight_sha'])
 
 
+def test_validated_context_issue_survives_reconciliation_and_keeps_its_polish_id(tmp_path):
+    from test_local_revision import module
+
+    m, out, hashes = inputs(tmp_path, True)
+    preflight = final()
+    finding = {'id': 'context-1', 'category': 'post_action_restatement', 'location': '开头',
+               'priority': 'medium', 'excerpts': ['她没见过验单。', '买方说不同意就付给陆。'],
+               'impact': '复述刚出现的信息。', 'goal': '合并开头的重复解释。'}
+    preflight['expression_review'].update(verdict='revise', issues=[finding])
+    preflight['revision_scope']['assessments'] = [
+        {'issue_id': 'context-1', 'status': 'editable', 'reason': '在作者允许改动的开头。'}]
+    write(tmp_path, out['reader_preflight_raw_path'], preflight)
+    hashes.update(m.commit_context(tmp_path, out['reader_review_binding'], out['reader_review_binding_sha']))
+    write(tmp_path, out['reader_context_report_path'], final())
+    report = m.commit(tmp_path, out['reader_review_binding'], out['reader_review_binding_sha'],
+                      hashes['reader_blind_report_sha'], hashes['reader_preflight_sha'])
+    rows = {row['id']: row for row in report['issues']}
+    assert rows['context-1']['editability'] == 'editable'
+    assert rows['blind-1']['editability'] == 'outside_scope'
+    assert [(row['id'], row['goal']) for row in module().goals({'reader_report': report}, {})] == [
+        ('context-1', '合并开头的重复解释。')]
+
+
+def test_context_issue_cannot_disappear_with_an_unrelated_resolution_quote():
+    from test_reader_review_p0 import BODY
+
+    m = review()
+    issue = {'id': 'context-1', 'source': 'expression_review', 'priority': 'medium', 'editability': 'editable',
+             'location': '开头', 'impact': '意图被直译', 'goal': '让读者看到动作',
+             'excerpts': ['她没见过验单。']}
+    preflight = {'issues': [issue], 'revision_scope': {'summary': '允许修改', 'assessments': []}}
+    report = final()
+    report['context_resolutions'] = [{'issue_id': 'context-1', 'reason': '正文已经给出动作依据。',
+                                      'excerpts': ['陆同意分付。']}]
+    with pytest.raises(ValueError, match='所在的原文'):
+        m.retain_context_findings(copy.deepcopy(report), preflight, blind(), BODY)
+    report['context_resolutions'][0]['excerpts'] = ['她没见过验单。']
+    resolved = m.retain_context_findings(report, preflight, blind(), BODY)
+    assert resolved['expression_review']['issues'] == []
+    assert resolved['context_resolutions'][0]['issue_id'] == 'context-1'
+
+
 def test_fast_publication_cannot_swap_the_validated_context_report(tmp_path):
     m,out,h=inputs(tmp_path,False)
     m.join(tmp_path,out['reader_review_binding'],out['reader_review_binding_sha'],h['reader_blind_report_sha'],h['reader_preflight_sha'])
@@ -83,6 +125,61 @@ def test_independent_context_cannot_invent_blind_resolutions(tmp_path):
     context=final();context['blind_resolutions']=[{'issue_id':'guessed','reason':'猜测初审','excerpts':['她没见过验单。']}]
     write(tmp_path,out['reader_preflight_raw_path'],context)
     with pytest.raises(m.InvalidReviewReport):m.commit_context(tmp_path,out['reader_review_binding'],out['reader_review_binding_sha'])
+
+
+def contextual_findings(root, general, expression):
+    m, out, _ = inputs(root, False)
+    context = final()
+    context.update(verdict='revise', issues=[general])
+    context['expression_review'].update(verdict='revise', issues=[expression])
+    context['revision_scope']['assessments'] = [
+        {'issue_id': 'context-1', 'status': 'outside_scope', 'reason': '只允许改开头'}]
+    write(root, out['reader_preflight_raw_path'], context)
+    return m, out
+
+
+def test_context_publication_derives_empty_blind_resolutions(tmp_path):
+    m, out, _ = inputs(tmp_path, False)
+    context = final()
+    context['revision_scope']['assessments'] = []
+    for row in context['expression_checks']:
+        del row['issue_ids']
+    write(tmp_path, out['reader_preflight_raw_path'], context)
+    m.commit_context(tmp_path, out['reader_review_binding'], out['reader_review_binding_sha'])
+    report = json.loads((tmp_path / out['reader_preflight_path']).read_text(encoding='utf-8'))
+    assert report['blind_resolutions'] == []
+    assert all(row['issue_ids'] == [] for row in report['expression_checks'])
+
+
+def test_colliding_context_ids_cannot_borrow_scope_for_another_finding(tmp_path):
+    expression = {'id': 'context-1', 'location': '结尾', 'priority': 'medium',
+                  'excerpts': ['陆同意分付。'], 'impact': '重复结论', 'goal': '合并说明'}
+    general = {**expression, 'impact': '凭据断裂', 'goal': '补进前置铺垫'}
+    m, out = contextual_findings(tmp_path, general, expression)
+    with pytest.raises(m.InvalidReviewReport, match=r'expression_review\.issues\[0\]'):
+        m.commit_context(tmp_path, out['reader_review_binding'], out['reader_review_binding_sha'])
+
+
+def test_structurally_identical_context_issue_has_one_scoped_canonical_finding(tmp_path):
+    issue = {'id': 'context-1', 'location': '结尾', 'priority': 'medium',
+             'excerpts': ['陆同意分付。'], 'impact': '重复结论', 'goal': '合并说明'}
+    m, out = contextual_findings(tmp_path, issue, issue)
+    m.commit_context(tmp_path, out['reader_review_binding'], out['reader_review_binding_sha'])
+    report = json.loads((tmp_path / out['reader_preflight_path']).read_text(encoding='utf-8'))
+    assert report['verdict'] == 'revise' and report['requires_scope_confirmation']
+    assert [(row['id'], row['source'], row['editability']) for row in report['issues']] == [
+        ('context-1', 'expression_review', 'outside_scope')]
+
+
+def test_duplicate_context_dimension_identifies_missing_and_repeated_dimensions(tmp_path):
+    m, out, _ = inputs(tmp_path, False)
+    context = final()
+    context['revision_scope']['assessments'] = []
+    context['blind_resolutions'] = []
+    context['expression_checks'][-1] = copy.deepcopy(context['expression_checks'][-2])
+    write(tmp_path, out['reader_preflight_raw_path'], context)
+    with pytest.raises(m.InvalidReviewReport, match=r'expression_checks.*scene_conflict_progression.*aftermath_transition'):
+        m.commit_context(tmp_path, out['reader_review_binding'], out['reader_review_binding_sha'])
 
 
 def test_missing_parallel_credentials_cannot_downgrade_to_legacy_review(tmp_path):
@@ -116,6 +213,7 @@ def test_reader_workflow_has_native_parallel_branches_and_conditional_reconcilia
     nodes={n['id']:n for n in raw['nodes']}
     assert '{{reader_blind_report}}' not in nodes['agent_context_reader']['first_message']
     assert '{{book_contract_file}}' in nodes['agent_context_reader']['first_message']
-    assert '本轮须提交逐维度expression_checks' in nodes['agent_context_reader']['first_message']
-    assert '{{reader_blind_report}}' in nodes['agent_reader']['first_message']
+    assert '{{reader_fact_sources}}' in nodes['agent_context_reader']['first_message']
+    assert 'expression_checks' not in nodes['agent_context_reader']['node_params']['json_output_schema']['properties']
+    assert '{{reader_fact_conflicts}}' in nodes['agent_reader']['first_message']
     assert '{{reader_review_binding}}' in nodes['script_reader_join']['node_params']['script_argv']

@@ -67,6 +67,46 @@ def test_followup_and_process_restart_keep_useful_patch_without_repeating_it(tmp
     m.verify_attempt(tmp_path,task)
 
 
+def test_mixed_growth_retries_with_the_original_issue_and_keeps_the_useful_text(tmp_path):
+    m, out = setup(tmp_path)
+    folder = out['revision_dir']
+    useful = '留给她半杯，剩下的正好泡一块饼。'
+    repeated = '这也就是说，第二段在重复说明。'
+    before = '第二段重复说明。'
+    patch(m,out,tmp_path,before + repeated + useful)
+    m.candidate(tmp_path,folder)
+    report = json.loads(approved(m,out,tmp_path))
+    report['added_text_reviews'][0].update(useful=[useful],repetitions=[
+        {'previous':before,'quote':repeated,'reason':'重复读者已经得到的意思。'}])
+    report['expression_review'].update(verdict='revise',issues=[{
+        'id':'ending-note','category':'semantic_redundancy','location':'结尾','priority':'low',
+        'excerpts':['潮水会回来。'],'impact':'可再收紧一句','goal':'保留有效回环。'}])
+    put(tmp_path,out['revision_review_path'],report)
+    with pytest.raises(m.Retry) as retry:
+        m.commit(tmp_path,folder,json.dumps(report))
+    assert retry.value.target == 'agent_pl'
+    assert (tmp_path/'story/0001/chapter.md').read_bytes() == BODY.encode()
+    assert not (tmp_path/folder/'working.json').exists()
+
+    m = module()
+    feedback = m.retry_feedback(tmp_path,folder,retry.value)
+    assert useful in feedback and repeated in feedback
+    patch(m,out,tmp_path,before + useful)
+    m.candidate(tmp_path,folder)
+    context = m.read(tmp_path/out['revision_review_input'])
+    issue, = context['addition_goals']
+    assert issue['id'] in feedback and issue in context['goals']
+    report = json.loads(approved(m,out,tmp_path))
+    with pytest.raises(ValueError,match='逐项复核'):
+        m.review_decision(report,context)
+    report['issue_outcomes'] = [{'id':issue['id'],'status':'resolved','reason':'删去复述，保留分杯。',
+                                 'excerpts':[useful]}]
+    put(tmp_path,out['revision_review_path'],report)
+    m.commit(tmp_path,folder,json.dumps(report))
+    text = (tmp_path/'story/0001/chapter.md').read_text(encoding='utf-8')
+    assert useful in text and repeated not in text and '潮水会回来。' in text
+
+
 def test_fact_rejected_edits_are_not_retained(tmp_path):
     m,out=rejected_but_improved(tmp_path,fact=True)
     source=json.loads((tmp_path/out['revision_input']).read_text(encoding='utf8'))

@@ -80,7 +80,7 @@ def test_stage_completion_retains_legacy_tasks_and_checks_upstream_invalidation(
     assert initial['lifecycle']['export'] == 'unknown'
     tasks['polish'] = {'status': 'running', 'started_at': '2026-10-07T11:00:00'}
     actual = service.progress.project_progress(tmp_path, state, tasks)
-    assert actual['percent'] == 56
+    assert actual['percent'] == 62
     assert '润色正文处理中' in actual['label']
     assert not actual['export_current']
     assert actual['can_download']
@@ -97,7 +97,10 @@ def test_chapter_detail_requires_positive_chapter_binding_but_export_is_bookwide
     tasks['post-hoc']['parameter_values'] = {'chapter_number': '0002'}
     result = service.progress.project_progress(tmp_path, state, tasks, {stage: usage for stage in stages})
     by_stage = {row['id']: row for row in result['stages']}
-    for stage in ('mvp', 'polish', 'reader-sim'):
+    assert 'reader-sim' not in by_stage
+    assert 'assessment' not in result['lifecycle']
+    assert 'reader_verdict' not in result
+    for stage in ('mvp', 'polish'):
         assert 'task' not in by_stage[stage]
     assert by_stage['post-hoc']['task']['usage'] == usage
     assert by_stage['export']['task']['usage'] == usage

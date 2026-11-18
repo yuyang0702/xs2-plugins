@@ -20,9 +20,26 @@ def compact(report):
     return result
 
 
-def test_compact_decodes_to_full_same_judgment_and_preserves_raw_response(tmp_path):
+def v2_schema_fixture():
+    # Exercise the previous transport independently of the installed workflow.
+    legacy={'type':'object','properties':{
+        'protocol':{'const':'local-review-v2'},
+        'expression_review':{'type':'object','required':['verdict','summary','issues'],
+            'properties':{'verdict':{'enum':['pass','revise']},'summary':{'type':'string'},'issues':{'type':'array'}}},
+        'expression_checks':{'type':'array','items':{'type':'object','required':['status','issue_ids'],
+            'properties':{'status':{'enum':['pass','issue','not_applicable']},'issue_ids':{'type':'array'}}}},
+    },'required':['protocol','expression_review','expression_checks']}
+    return module().schema(legacy)
+
+
+@pytest.mark.parametrize('with_preservation', [False, True])
+def test_compact_decodes_to_full_same_judgment_and_preserves_raw_response(tmp_path,with_preservation):
     m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
-    legacy=json.loads(approved(m,out,tmp_path));wire=compact(legacy)
+    legacy=json.loads(approved(m,out,tmp_path))
+    if with_preservation:
+        legacy['change_reviews'][0]['preservation']={
+            'status':'not_applicable','source_excerpt':'','candidate_excerpt':'','reason':'只删去冗余说明。'}
+    wire=compact(legacy)
     context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf-8'))
     assert module().expand(wire,context)==legacy
     assert 'candidate_sha256' not in wire and 'before_excerpt' not in wire['change_reviews'][0]
@@ -42,8 +59,7 @@ def test_omitted_expression_issues_requires_explicit_pass_and_no_flagged_check(t
     if defect=='revise':report['expression_review']['verdict']='revise'
     if defect=='issue_status':report['expression_checks'][0]['status']='issue'
     if defect=='issue_id':report['expression_checks'][0]['issue_ids']=['unresolved']
-    definition=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf-8'))
-    params=next(n['node_params'] for n in definition['nodes'] if n['id']=='agent_local_review')
+    params={'output_selection':'completion_tool_message','json_output_schema':v2_schema_fixture()}
     selected,error=select_agent_output([{'type':'user','content':'审查候选'},
         {'type':'assistant','content':json.dumps(report,ensure_ascii=False)}],params)
     if defect:
@@ -57,6 +73,26 @@ def test_omitted_expression_issues_requires_explicit_pass_and_no_flagged_check(t
         assert receipt['accepted']
         assert json.loads((tmp_path/out['revision_review_path']).read_text(encoding='utf-8'))==report
         assert json.loads((tmp_path/out['revision_review_expanded']).read_text(encoding='utf-8'))==legacy
+
+
+def test_compact_report_omits_issue_ids_only_when_check_has_no_issue(tmp_path):
+    from jsonschema import Draft202012Validator
+
+    m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
+    legacy=json.loads(approved(m,out,tmp_path));report=compact(legacy)
+    context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf-8'))
+    del report['expression_review']['issues']
+    for check in report['expression_checks']:
+        del check['issue_ids']
+    validator=Draft202012Validator(v2_schema_fixture())
+    validator.validate(report)
+    assert module().expand(report,context)==legacy
+    assert 'issue_ids' not in report['expression_checks'][0]
+    report['expression_review']['issues']=[]
+    report['expression_checks'][0]['status']='issue'
+    assert not validator.is_valid(report)
+    with pytest.raises(ValueError,match='问题编号'):
+        m.review_decision(report,context)
 
 
 @pytest.mark.parametrize('defect',['fact','expression','regressed','missing_edit','missing_check','invented_evidence','wrong_edit','missing_verdict'])

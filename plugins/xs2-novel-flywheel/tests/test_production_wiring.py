@@ -76,7 +76,10 @@ def test_every_paid_role_is_downstream_of_preflight_and_its_budget(stage):
             assert {'script_validate_observation','script_validate_cached_observation'} == {
                 e['source'] for e in d['edges'] if e['target']=='script_budget_agent_arb'}
         assert incoming==['script_budget_'+n['id']]
-        assert '【数字的叙事作用】' in n['first_message']
+        if stage in {'build', 'character', 'story-plan'} or n['agent_type'] in {
+            'novel-single-writer', 'novel-multi-scene-writer',
+        }:
+            assert '【数字的叙事作用】' not in n['first_message']
 
 
 @pytest.mark.parametrize('stage', ('mvp', 'post-hoc'))
@@ -94,7 +97,7 @@ def test_single_new_review_protocol_and_source_bound_ledger_alias_schema():
     d=json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf-8-sig'))
     reviewer=next(n for n in d['nodes'] if n['id']=='agent_local_review')
     schema=reviewer['node_params']['json_output_schema']
-    assert 'anyOf' not in schema and schema['properties']['protocol']['const']=='local-review-v2'
+    assert 'anyOf' not in schema and schema['properties']['protocol']['const']=='local-review-v3'
     writer=next(n for n in d['nodes'] if n['id']=='agent_pl')
     def find(value):
         if isinstance(value,dict):

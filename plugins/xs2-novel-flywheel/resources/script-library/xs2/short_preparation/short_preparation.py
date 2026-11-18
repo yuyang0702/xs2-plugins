@@ -289,7 +289,7 @@ def _short_reference(text):
 def _composition_intent(root, chapter):
     if not _path(root, f'planning/length/{chapter}.json').is_file():
         return ''
-    quota = _library('composition_plan/composition_plan.py').current(root, chapter)
+    quota = _library('composition_plan/composition_plan.py').reference(root, chapter)
     if not quota:
         return ''
     composition = quota['plan']
@@ -305,7 +305,7 @@ def _composition_intent(root, chapter):
 
 def single_writer_brief(root, chapter, effective, task_id, overrides, author):
     sections = []
-    seen = {re.sub(r'\s+', ' ', str(author.get('human_intent', '')).strip())}
+    seen = set()
 
     def include(title, text):
         text = text.strip()
@@ -348,7 +348,10 @@ def single_writer_brief(root, chapter, effective, task_id, overrides, author):
                         ('meta/character_profiles.md', '人物事实与行动动机'),
                         ('meta/character_voice.md', '人物声线'),
                         ('meta/character_voice_adaptations.md', '本书对白适配')):
-        include(title, _select_headings(effective.get(name, ''), other_character))
+        text = _select_headings(effective.get(name, ''), other_character)
+        if name == 'meta/character_profiles.md':
+            text = re.sub(r'^### 作者情节边界[ \t]*$', '### 人物卡记录的剧情边界', text, flags=re.M)
+        include(title, text)
 
     def world_context(text):
         if not text.lstrip().startswith('# 短篇世界基础'):
@@ -357,7 +360,11 @@ def single_writer_brief(root, chapter, effective, task_id, overrides, author):
         def omit(level, title):
             return level >= 3 and (title in {'叙事规则', '表达限制'} or title.removesuffix('可知') in offstage)
 
-        return _select_headings(text, omit)
+        world = _select_headings(text, omit)
+        # The generated count-evidence instructions belong to verification.
+        return '\n'.join(line for line in world.splitlines()
+                         if not (line.lstrip().startswith('- 若引用现场话语中的字数或数量，')
+                                 and '纯汉字原话' in line and '计数保持未知' in line))
 
     include('当前世界事实', effective.get('meta/current_world.md', ''))
     include('本章世界条件与所知', world_context(effective.get('meta/world_foundation.md', '')))
@@ -387,10 +394,13 @@ def single_writer_brief(root, chapter, effective, task_id, overrides, author):
                                                 if goal.get(key)} for goal in goals]
         if scoped:
             include('本书叙述与表达约定', _json(scoped))
-    for field in ('premise', 'source_idea', 'advisor_guidance', 'world_intent'):
+    for field, title in (
+        ('premise', '作者确认要求'), ('world_intent', '作者确认要求'), ('human_intent', '作者确认要求'),
+        ('source_idea', '原始创意'), ('advisor_guidance', '创作建议'),
+    ):
         value = str(author.get(field) or '').strip()
         if value and not any(value in part for part in sections):
-            include('作者确认要求', value)
+            include(title, value)
     return '\n\n'.join(sections)
 
 
@@ -454,7 +464,8 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None, single_wr
     if task_id and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}', task_id):
         raise ValueError('轻量正文准备需要有效的任务标识')
     context_path = f'cache/short/{task_id}.md' if task_id else 'cache/short/production_context.md'
-    context_text = '# 独立短篇写作上下文\n\n' + context + '\n'
+    guidance = _library('prose_policy/creative_latitude.py').CONTEXT_GUIDANCE
+    context_text = '# 独立短篇写作上下文\n\n' + guidance + '\n\n' + context + '\n'
     outputs = {f'story/{chapter}/single_chapter_guide.md': guide,
                     f'story/{chapter}/world_state.md': '# 生成前世界基线\n\n' + world_state,
                     f'story/{chapter}/world_events.md': '# 本章事件状态\n\n本章尚未发生；按大纲待写，不能把计划当成已确认事实。\n',

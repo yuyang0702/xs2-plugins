@@ -5,6 +5,65 @@ from test_learning_reading_objectives import source_candidates
 from test_reference_distill import run,PLUGIN_ROOT
 
 
+def test_window_preserves_evidenced_entries_while_an_individual_sample_is_repaired(tmp_path):
+    payload = source_candidates(tmp_path)
+    basis = payload['candidates'][0]
+    topic = basis | {'dimension': 'topic', 'mechanism': '用异常引出值得追问的选题'}
+    layout = basis | {'dimension': 'layout', 'mechanism': '用短段让动作自己停顿'}
+    voice = basis | {'dimension': 'voice', 'mechanism': '从人物发问看语气',
+                     'dialogue_samples': [{'turns': []}]}
+    # Model-provided source hashes may be omitted. Verified evidence still binds to the frozen window.
+    payload = {'window_id': payload['window_id'], 'candidates': [topic, layout, voice],
+               'conflict_patterns': [{'name': '缺前提的冲突链'}]}
+    raw = tmp_path / 'learning/cache/raw.json'
+    raw.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+
+    def validate_reply():
+        return run(tmp_path, 'validate-window', '--input', 'learning/cache/raw.json', '--window-id', 'window-0001')
+
+    first = validate_reply()
+    assert first.returncode == 0, first.stderr
+    assert 'candidate-03.dialogue-01' in first.stdout and 'conflict-01' in first.stdout
+    assert '用异常引出值得追问的选题' not in first.stdout
+    assert '用短段让动作自己停顿' not in first.stdout
+    assert not (tmp_path / 'learning/cache/window-0001.validated.json').exists()
+
+    # Re-running the check on the same response keeps the same round and validated records.
+    assert validate_reply().stdout == first.stdout
+    repaired = {'window_id': payload['window_id'], 'repair_round': 1, 'repairs': [
+        {'repair_id': 'candidate-03.dialogue-01', 'value': None, 'reason': '现有定位没有连续对白'},
+        {'repair_id': 'conflict-01', 'value': None, 'reason': '现有证据不支持冲突链'},
+        {'repair_id': 'candidate-01', 'value': layout | {'mechanism': '旧条目不能被本轮替换'}},
+    ]}
+    raw.write_text(json.dumps(repaired, ensure_ascii=False), encoding='utf-8')
+    finish = validate_reply()
+    assert finish.returncode == 0, finish.stderr
+    assert '<WF_REJECT_UPSTREAM' not in finish.stdout
+    result = json.loads((tmp_path / 'learning/cache/window-0001.validated.json').read_text(encoding='utf-8'))
+    assert [row['dimension'] for row in result['candidates']] == ['topic', 'layout', 'voice']
+    assert result['candidates'][0]['mechanism'] == topic['mechanism']
+    assert 'dialogue_samples' not in result['candidates'][2]
+    assert result['conflict_patterns'] == []
+    assert len(result['unresolved']) == 2
+    assert run(tmp_path, 'merge').returncode == 0
+    data = json.loads((tmp_path / 'learning/candidates.json').read_text(encoding='utf-8'))
+    assert {row['dimension'] for row in data['candidates']} == {'topic', 'layout', 'voice'}
+
+
+def test_new_split_of_identical_input_cannot_merge_stale_window_results(tmp_path):
+    source_candidates(tmp_path)
+    argv = ('validate-window', '--input', 'learning/cache/raw.json', '--window-id', 'window-0001')
+    assert run(tmp_path, *argv).returncode == 0
+    assert run(tmp_path, 'merge').returncode == 0
+    split = run(tmp_path, 'split', '--input', 'references/source.txt', '--source-mode', 'short_full',
+                '--learning-direction', 'zhihu_short')
+    assert split.returncode == 0, split.stderr
+    stale = run(tmp_path, 'merge')
+    assert stale.returncode != 0 and '窗口结果过期' in stale.stderr
+    assert run(tmp_path, *argv).returncode == 0
+    assert run(tmp_path, 'merge').returncode == 0
+
+
 def test_model_shape_error_returns_to_analyst_and_preserves_raw(tmp_path):
     raw=source_candidates(tmp_path);raw['candidates'][0]['source_pov']='first_person'
     p=tmp_path/'learning/cache/raw.json';p.write_text(json.dumps(raw,ensure_ascii=False),encoding='utf8');before=p.read_bytes()
@@ -73,6 +132,9 @@ def test_scheduler_retries_only_analyst_and_stops_at_limit(tmp_path,monkeypatch,
                 assert '证据编号' in (tmp_path/'learning/cache/window-0001.feedback.md').read_text(encoding='utf8')
             value=json.loads(json.dumps(raw))
             if len(calls)==1 or persistent:value['candidates'][0]['evidence']=[{'window_id':'window-0001','evidence_id':'window-0001-e9999','reason':'须原文复核'}]
+            if len(calls) > 1:
+                value = {'window_id': value['window_id'], 'repair_round': len(calls) - 1,
+                         'repairs': [{'repair_id': 'candidate-01', 'value': value['candidates'][0]}]}
             (tmp_path/'learning/cache/window-0001.raw.json').write_text(json.dumps(value,ensure_ascii=False),encoding='utf8')
             return NodeResult(status='completed')
     class CLI(BaseNodePlugin):
@@ -105,8 +167,9 @@ def test_scheduler_retries_only_analyst_and_stops_at_limit(tmp_path,monkeypatch,
             if result!='retry_waiting':return result
     result=asyncio.run(run_loop())
     if persistent:
-        assert result=='failed' and len(calls)==3
-        assert not (tmp_path/'learning/cache/window-0001.validated.json').exists()
+        assert result=='completed' and len(calls)==3
+        approved = json.loads((tmp_path/'learning/cache/window-0001.validated.json').read_text(encoding='utf-8'))
+        assert not approved['candidates'] and len(approved['unresolved']) == 1
     else:
         assert result=='completed' and len(calls)==2
         assert (tmp_path/'learning/cache/window-0001.validated.json').exists()

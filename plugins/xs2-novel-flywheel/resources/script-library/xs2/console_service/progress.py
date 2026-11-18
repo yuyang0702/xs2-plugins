@@ -10,10 +10,10 @@ from . import production
 
 STAGES = [('build', '建立世界观'), ('character', '创建角色'), ('story-plan', '规划故事'),
           ('outline', '生成大纲'), ('mvp', '生成正文'), ('polish', '润色正文'),
-          ('reader-sim', '读者评估'), ('post-hoc', '质量审核'), ('export', '导出成品')]
+          ('post-hoc', '质量审核'), ('export', '导出成品')]
 ACTIVE = {'pending', 'preparing', 'pre_running', 'running', 'retry_waiting', 'resume_pending', 'waiting_approval'}
 TERMINAL = {'completed', 'failed', 'interrupted', 'stopped', 'cancelled'}
-CHAPTER_STAGES = {'mvp', 'polish', 'reader-sim', 'post-hoc'}
+CHAPTER_STAGES = {'mvp', 'polish', 'post-hoc'}
 BODY = 'story/{chapter}/chapter.md'
 EXPORT = 'export/manuscript.md'
 
@@ -57,15 +57,6 @@ def _text(path):
         return ''
 
 
-def _reader_path(root, chapter):
-    scoped = f'story/{chapter}/reader_report.json'
-    if _file(root, scoped):
-        return scoped
-    legacy = 'quality/reader_report.json'
-    report = _json(_file(root, legacy))
-    return legacy if chapter_id(report.get('chapter_number') or '1') == chapter else scoped
-
-
 def _export_status(root, chapter, body):
     artifact = _file(root, EXPORT)
     manifest_path = _file(root, 'export/manifest.json')
@@ -95,15 +86,8 @@ def chapter_lifecycle(root, state, chapter):
         plan = 'planned' if isinstance(hashes, dict) and not story.changed_sources(root, hashes) else 'stale'
     else:
         plan = 'planned' if _text(guide) or story.chapter_outline(root, chapter, _text(outline_path)) else 'missing'
-    report = _file(root, _reader_path(root, chapter))
-    review = 'missing'
-    if report:
-        try:
-            review = production.reader_report(root, {**state, 'values': {**state.get('values', {}), 'chapter_number': chapter}})['verdict']
-        except (KeyError, OSError, ValueError):
-            review = 'unverified'
     return {
-        'chapter': chapter, 'plan': plan, 'draft': 'present' if _text(body) else 'missing', 'assessment': review,
+        'chapter': chapter, 'plan': plan, 'draft': 'present' if _text(body) else 'missing',
         'confirmation': 'stale' if chapter in stale else 'verified' if any(row['chapter'] == chapter for row in valid) else 'missing',
         'export': _export_status(root, chapter, body),
     }
@@ -178,7 +162,7 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
         if not chapter_bound and (task_chapter or chapter != project_chapter):
             task, reference = {}, {'mismatched_chapter': True}
         status = task.get('status', '')
-        rel = _reader_path(root, chapter) if stage == 'reader-sim' else production.ARTIFACTS[stage].format(chapter=chapter)
+        rel = production.ARTIFACTS[stage].format(chapter=chapter)
         exists = _file(root, rel)
         complete = bool(exists and (status == 'completed' or not reference and stage in state.get('completed', [])))
         ended = _timestamp(task.get('completed_at'))
@@ -200,18 +184,13 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
         stages.append(row)
     completed = sum(item['completed'] for item in stages)
     exported = stages[-1]['completed']
-    report = _json(_file(root, _reader_path(root, chapter)))
-    if chapter_id(report.get('chapter_number', chapter)) != chapter:
-        report = {}
     label = current or ('导出步骤已完成' if exported else next(
         (item['label'] + '未完成' for item in stages if not item['completed']), '尚未开始'))
     result = {'percent': round(completed / len(stages) * 100), 'completed_count': completed,
               'total_count': len(stages), 'label': label, 'stages': stages, 'chapter_count': len(bodies),
-              'can_download': bool(export), 'export_current': exported, 'reader_verdict': report.get('verdict', '')}
+              'can_download': bool(export), 'export_current': exported}
     if include_details:
         result['lifecycle'] = chapter_lifecycle(root, state, chapter)
-        assessment = result['lifecycle']['assessment']
-        result['reader_verdict'] = assessment if assessment in {'pass', 'revise', 'reject'} else ''
         if chapter == project_chapter and isinstance(state.get('autoPauseReason'), str) and state['autoPauseReason']:
             result['pause_reason'] = state['autoPauseReason']
     return result

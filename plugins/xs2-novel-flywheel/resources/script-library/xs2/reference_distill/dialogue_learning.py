@@ -9,6 +9,39 @@ MAX_EXCHANGE_SPAN = 1400
 CONTEXT_MARGIN = 300
 SOURCE_BOUNDARY = re.compile(r"^===== SOURCE (?:CHAPTER|FILE).*?=====$", re.M)
 QUOTED_SPEECH = re.compile(r'“[^“”]*”|「[^「」]*」|『[^『』]*』|"[^"\n]*"')
+SPEECH_VERB = r'(?:说|问|道|答|喊|嘀咕|反问|反驳|抱怨|低语|开口|冷笑)'
+TAG_LIMIT = 160
+TAG_BREAK = '\r\n。！？!?；;：:“”「」『』"'
+LEADING_TAG = re.compile(rf'(?P<tag>[^{TAG_BREAK}]+?)(?P<end>[：:，,])$')
+TRAILING_TAG = re.compile(rf'^[，, \t]*(?P<tag>[^{TAG_BREAK}，,]+?)(?P<end>[。！？.!?，,]|(?=[\r\n])|\Z)')
+SPEECH_MODIFIER = (
+    r'(?:轻声|低声|高声|大声|小声|厉声|沉声|冷冷地|愣愣地|忽然|突然|又|也|才|接着|'
+    r'没好气地|恶狠狠地|咬牙(?:切齿)?|鄙夷|怒喝|找补|指着[我你他她]|'
+    r'嘴上|闷闷地|这样|缓缓地|慢慢地|轻轻地|重重地|笑着)'
+)
+ADDRESSEE = r'(?:(?!说|问|道|答|喊|叫|请|让|听|转述)[^\W\d_]){1,12}?'
+SPEECH_PREDICATE = re.compile(
+    rf'(?:(?:对着?|朝着?|向){ADDRESSEE})?{SPEECH_MODIFIER}*'
+    rf'(?:{SPEECH_VERB}|[问答][我你他她]|告诉我|回应|插话|打断)(?:道|了)?'
+)
+# These actions can precede a speech predicate without introducing a new
+# grammatical subject. Unrecognized continuations stay tentative.
+CONTINUED_ACTION = re.compile(
+    r'(?:这才|才|连忙|突然|忽然|又|也|死死|缓缓|轻轻|重重)*'
+    r'(?:惊觉|收敛|移开|闭(?:了闭)?眼|气极反笑|抬眼|皱眉|摇头|点头|回过头|'
+    r'盯着|看向|擦了|(?:一时|有点)(?:发蒙|蒙|愣|怔|茫然)|'
+    r'(?:将|把)[^\s，,。！？!?；;：:]{1,12}?(?:攥在|握在|放在|放下))[^，,。！？!?；;：:]{0,30}'
+)
+COLON_PREDICATE = re.compile(
+    r'(?:也?生气|抓狂|(?:声音|语气)(?:变了|一沉|转柔|转冷)|'
+    r'心情(?:似乎|仿佛|显然)?(?:有[些所]|一点点)?(?:好转|低落|平静下来)|'
+    r'强迫自己(?:镇定|冷静)下来|'
+    rf'指着{ADDRESSEE}|挑了挑眉)'
+)
+NARRATOR_LABEL = re.compile(r'叙述者|叙事者|视角人物|主人公|主角')
+UNRESOLVED_PRONOUNS = {'你', '你们', '他', '她', '它', '他们', '她们', '它们', '对方', '那个人'}
+SUBJECT_QUALIFIER = re.compile(r'^[^\W\d_]{1,16}?(?:里的|中的|里头的|口的|边的|旁的|那头的|这头的)')
+SUBJECT_SWITCH = re.compile(r'(?:看向|看见|盯着|听见?|让|催|逼|问|叫|说|喊|请|告诉)')
 
 
 def dialogue_context(raw, start, end):
@@ -35,21 +68,147 @@ def _rules(value, label):
     return [_text(item, label) for item in value]
 
 
-def _explicit_speaker(raw, quote, speaker, proof):
-    line_start = raw.rfind('\n', 0, quote.start()) + 1
-    line_end = raw.find('\n', quote.end())
-    if line_end < 0:
-        line_end = len(raw)
-    who = re.escape(speaker)
-    # An explicit subject whose turn starts after the name and a colon, or a
-    # same-line speech tag following the quote, can support the attribution.
-    before_pattern = rf'(?:^|[。？！!?；;”」』])[ \t]*({who})[^，,。！？!?；;：“”「」『』:]{{0,30}}[:：][ \t]*$'
-    after_pattern = rf'^[，, \t]*({who})(?:低声|轻声|大声|小声|又|接着|才)?(?:说|问|道|答|喊|嘀咕|反问)(?:[。！？，,.!?]|[ \t]*$)'
-    before = re.search(before_pattern, raw[line_start:quote.start()])
-    after = re.search(after_pattern, raw[quote.end():line_end])
-    return any(match and (not proof or proof['source_start'] <= offset + match.start(1)
-                          and offset + match.end(1) <= proof['source_end'])
-               for match, offset in ((before, line_start), (after, quote.end())))
+def _tag_subjects(tag, start, proof, expected, speaker, *, colon, literal):
+    # Walk back from the speech predicate. An explicit subject after a comma
+    # supersedes the subject of the preceding action.
+    continuation = []
+    for clause in reversed(list(re.finditer(r'[^，,]+', tag))):
+        text = clause[0].lstrip()
+        position = start + clause.end() - len(text)
+        if proof is None or proof['source_start'] <= position:
+            qualifier = SUBJECT_QUALIFIER.match(text) if not literal else None
+            prefix = qualifier[0] if qualifier and not SUBJECT_SWITCH.search(qualifier[0]) else ''
+            for identity in expected:
+                subject = prefix + identity if prefix and text.startswith(prefix + identity) else identity
+                if not text.startswith(subject) or (speaker and subject != speaker and not subject.endswith('的' + speaker)):
+                    continue
+                predicate = text[len(subject):].strip()
+                actions = [predicate, *reversed(continuation)]
+                if any(not CONTINUED_ACTION.fullmatch(action) for action in actions[:-1]):
+                    continue
+                last = actions[-1]
+                if SPEECH_PREDICATE.fullmatch(last) or (
+                    colon and (COLON_PREDICATE.fullmatch(last) or len(actions) == 1 and not last)
+                ):
+                    yield subject
+        continuation.append(text.strip())
+
+
+def _adjacent_tags(raw, quote, lower, upper):
+    start = max(lower, quote.start() - TAG_LIMIT)
+    before = raw[start:quote.start()].rstrip()
+    # A comma can reintroduce a split utterance after its speech tag.
+    match = LEADING_TAG.search(before)
+    if match:
+        position = start + match.start('tag')
+        complete = position > start or position == 0 or raw[position - 1] in TAG_BREAK
+        if complete and (match['end'] in '：:' or before[:match.start()].endswith(('，」', '，”', '，』', ',"'))):
+            yield match['tag'], position, match['end'] in '：:'
+
+    end = min(upper, quote.end() + TAG_LIMIT)
+    following = raw[quote.end():end]
+    after = following.lstrip()
+    match = TRAILING_TAG.match(after)
+    if not match:
+        return
+    gap = len(following) - len(after)
+    on_next_line = '\n' in following[:gap]
+    if not match['end'] and (on_next_line or (match.end() == len(after) and end < len(raw))):
+        return
+    rest = after[match.end():].lstrip()
+    if (on_next_line or match['end'] in ('，', ',')) and rest[:1] in ('“', '「', '『', '"'):
+        if quote.group()[-2:-1] not in ('，', ','):
+            return
+    yield match['tag'], quote.end() + gap + match.start('tag'), False
+
+
+def _verified_speaker(raw, quotes, proof, speaker, speaker_label, source_speaker, lower, upper):
+    # New replies supply the original subject. Archived replies can still be
+    # checked using their literal name/role or a marked first-person narrator.
+    expected = [source_speaker or speaker or speaker_label]
+    if not (source_speaker or speaker) and speaker_label and NARRATOR_LABEL.search(speaker_label):
+        expected.append('我')
+    expected = [identity for identity in expected if identity not in UNRESOLVED_PRONOUNS]
+    verified = []
+    for quote in quotes:
+        subjects = set()
+        for tag, start, colon in _adjacent_tags(raw, quote, lower, upper):
+            tag = tag.rstrip()
+            if proof and start + len(tag) > proof['source_end']:
+                continue
+            subjects.update(_tag_subjects(tag, start, proof, expected, speaker, colon=colon,
+                                          literal=source_speaker is not None))
+        if len(subjects) != 1:
+            return None
+        verified.append(subjects.pop())
+    return verified[0] if all(subject == verified[0] for subject in verified) else None
+
+
+def _has_speech_tag(raw, quote, lower, upper):
+    line_start = raw.rfind('\n', lower, quote.start()) + 1
+    line_start = max(lower, line_start)
+    before = raw[line_start:quote.start()]
+    starts_line = not before.strip()
+    if starts_line and line_start > lower:
+        before = raw[lower:line_start].rstrip().rsplit('\n', 1)[-1]
+    if re.search(rf'{SPEECH_VERB}(?:我|他|她|道|了)?[：:][ \t]*$', before):
+        return True
+    line_end = raw.find('\n', quote.end(), upper)
+    after = raw[quote.end():upper if line_end < 0 else line_end]
+    after_pattern = rf'^[，, \t]*[^，,。？！!?；;：“”「」『』"\s]{{1,24}}?{SPEECH_VERB}'
+    if re.match(after_pattern + r'(?:[。！？，,.!?：:]|[ \t]*$)', after):
+        return True
+    if starts_line and not after.strip() and line_end >= 0:
+        following = raw[line_end + 1:upper].lstrip().split('\n', 1)[0]
+        return bool(re.fullmatch(after_pattern + r'[。！？.!?][ \t]*', following))
+    return False
+
+
+def _checked_quote(value, checked_proof, speech, *, complete=False):
+    text = _text(value.get('text'), '原句', 300)
+    proof = checked_proof(value.get('evidence'))
+    excerpt = proof['excerpt']
+    offset = excerpt.find(text)
+    if offset < 0 or excerpt.find(text, offset + 1) >= 0:
+        raise ValueError('对白原句须在所选证据中准确且唯一出现')
+    start = proof['source_start'] + offset
+    end = start + len(text)
+    quote = next((q for q in speech if (q.start() < start and end < q.end())
+                  or (q.start() == start and end == q.end())), None)
+    if quote is None:
+        raise ValueError('对白证据不是可核对的直接引语，无法确认时请省略样本')
+    quoted_text = quote.group()[1:-1]
+    if start == quote.start():
+        text = quoted_text.strip()
+        start += 1 + len(quoted_text) - len(quoted_text.lstrip())
+        end = start + len(text)
+    if not text or (complete and text != quoted_text.strip()):
+        raise ValueError('对白片段须为一整段可核对的直接引语')
+    return {'text': text, 'source_start': start, 'source_end': end}, quote
+
+
+def _checked_non_dialogue_quotes(entries, omitted, speech, raw, lower, upper, checked_proof):
+    if not isinstance(entries, list) or len(entries) > 12:
+        raise ValueError('对白样本的非对白引号须为至多12项的数组')
+    result = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError('非对白引号须为对象')
+        evidence = entry.get('evidence')
+        proof = checked_proof(evidence)
+        matched = [q for q in speech if proof['source_start'] <= q.start() and q.end() <= proof['source_end']]
+        if len(matched) != 1 or matched[0] not in omitted:
+            raise ValueError('非对白证据须对应交谈中一个尚未选用的完整引号')
+        quote = matched[0]
+        # A supplied reason cannot turn clearly attributed speech into narration.
+        if _has_speech_tag(raw, quote, lower, upper):
+            raise ValueError('对白样本不能跳过中间回应')
+        omitted.remove(quote)
+        reason = entry.get('reason', evidence.get('reason'))
+        result.append({'evidence': proof, 'reason': _text(reason, '非对白判断依据')})
+    if omitted:
+        raise ValueError('对白样本不能跳过中间回应')
+    return result
 
 
 def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
@@ -97,34 +256,47 @@ def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
         for turn in turns:
             if not isinstance(turn, dict):
                 raise ValueError('对白轮次必须为对象')
-            speaker = _text(turn.get('speaker'), '说话人', 80)
-            text = _text(turn.get('text'), '原句', 300)
-            proof = checked_proof(turn.get('evidence'))
-            start, excerpt = proof['source_start'], proof['excerpt']
-            offset = excerpt.find(text)
-            if offset < 0 or excerpt.find(text, offset + 1) >= 0:
-                raise ValueError('对白原句须在所选证据中准确且唯一出现')
-            start += offset
-            end = start + len(text)
-            quote = next((q for q in speech if q.start() < start and end < q.end()), None)
-            if quote is None:
-                raise ValueError('对白证据不是可核对的直接引语，无法确认时请省略样本')
-            if quotes and quote.start() < quotes[-1].end():
-                raise ValueError('对白轮次须按原文顺序且不能重叠')
-            quotes.append(quote)
-            record = {'speaker': speaker, 'text': text, 'source_start': start,
-                      'source_end': end, 'intent': _text(turn.get('intent'), '回应作用')}
+            speaker_label = _text(turn['speaker_label'], '说话人标签', 80) if 'speaker_label' in turn else None
+            speaker = _text(turn['speaker'], '说话人', 80) if 'speaker' in turn else None
+            source_speaker = _text(turn['source_speaker'], '说话人原文称呼', 80) if 'source_speaker' in turn else None
+            if not (speaker or speaker_label or source_speaker):
+                raise ValueError('对白轮次须有可核对的说话人或暂定角色标签')
+            segmented = 'segments' in turn
+            segments = turn.get('segments', [turn])
+            if (not isinstance(segments, list) or (segmented and not 2 <= len(segments) <= 8)
+                    or any(not isinstance(segment, dict) for segment in segments)):
+                raise ValueError('对白片段须为2至8项的对象数组')
+            evidence = []
+            turn_quotes = []
+            for segment in segments:
+                location, quote = _checked_quote(segment, checked_proof, speech, complete=segmented)
+                if quotes and quote.start() < quotes[-1].end():
+                    raise ValueError('对白轮次须按原文顺序且不能重叠')
+                quotes.append(quote)
+                turn_quotes.append(quote)
+                evidence.append(location)
+            if segmented and ('text' in turn or 'evidence' in turn):
+                legacy, _ = _checked_quote(turn, checked_proof, speech)
+                if legacy != evidence[0]:
+                    raise ValueError('对白轮次的首段原句与原有证据不一致')
+            record = {'speaker': speaker or speaker_label or source_speaker, **evidence[0],
+                      'intent': _text(turn.get('intent'), '回应作用')}
+            if speaker_label is not None:
+                record['speaker_label'] = speaker_label
+            if segmented:
+                record['segments'] = evidence
             for field, label in (('trigger', '触发'), ('reaction', '后续反应')):
                 proof_key = field + '_evidence'
                 if field not in turn and proof_key not in turn:
                     continue
                 record[field] = _text(turn.get(field), label)
                 proof = checked_proof(turn.get(proof_key))
-                if ((field == 'trigger' and proof['source_start'] >= quote.start())
-                        or (field == 'reaction' and proof['source_end'] <= quote.end())):
+                if ((field == 'trigger' and proof['source_start'] >= turn_quotes[0].start())
+                        or (field == 'reaction' and proof['source_end'] <= turn_quotes[-1].end())):
                     raise ValueError(f'对白样本{label}证据须来自该轮前后对应的原文')
                 record[proof_key] = proof
             attribution_proof = None
+            attribution = None
             if 'attribution' in turn or 'attribution_evidence' in turn:
                 attribution = turn.get('attribution')
                 if attribution not in ('observed', 'tentative'):
@@ -133,8 +305,16 @@ def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
                 if attribution == 'observed' or 'attribution_evidence' in turn:
                     attribution_proof = checked_proof(turn.get('attribution_evidence'))
                     record['attribution_evidence'] = attribution_proof
-            if not _explicit_speaker(raw, quote, speaker, attribution_proof):
+            grounded = None
+            if attribution == 'observed' or (attribution is None and speaker and source_speaker is None):
+                grounded = _verified_speaker(raw, turn_quotes, attribution_proof, speaker, speaker_label,
+                                             source_speaker, lower, upper)
+            if grounded:
+                record['speaker'] = grounded
+            else:
                 record['attribution'] = 'tentative'
+                if not (speaker or speaker_label):
+                    record['speaker_label'] = source_speaker
             checked.append(record)
         if len({t['speaker'] for t in checked}) < 2:
             raise ValueError('对白样本须包含不同人物的回应')
@@ -145,8 +325,9 @@ def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
             raise ValueError('对白样本至少有一轮须与当前窗口相交')
         if any(first < stop and begin < last for begin, stop in markers):
             raise ValueError('对白轮次须来自同一个来源单元')
-        if len(quotes) != sum(first <= q.start() and q.end() <= last for q in speech):
-            raise ValueError('对白样本不能跳过中间回应')
+        omitted = {q for q in speech if first <= q.start() and q.end() <= last} - set(quotes)
+        non_dialogue = _checked_non_dialogue_quotes(sample.get('non_dialogue_quotes', []), omitted, speech,
+                                                    raw, lower, upper, checked_proof)
 
         # Bind the same exchange to the same context even when reanalyzed in an
         # overlapping window. Import markers bound distinct source units.
@@ -165,18 +346,24 @@ def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
         stop = raw.rfind('\n', last, scene_end) if scene_end < len(raw) else -1
         stop = stop if stop >= 0 else scene_end
         context = raw[begin:stop]
-        if any(t['speaker'] not in context for t in checked):
+        if any('speaker' in turn and record['speaker'] not in context for turn, record in zip(turns, checked)):
             raise ValueError('对白说话人缺少邻近原文依据，不能猜测人物姓名')
         annotations = [t[key] for t in checked
                        for key in ('trigger_evidence', 'reaction_evidence', 'attribution_evidence') if key in t]
+        annotations.extend(item['evidence'] for item in non_dialogue)
         relationship_proof = None
         if 'relationship_evidence' in sample:
             relationship_proof = checked_proof(sample['relationship_evidence'])
             annotations.append(relationship_proof)
         if any(not scene_start <= p['source_start'] < p['source_end'] <= scene_end for p in annotations):
             raise ValueError('对白分析证据须位于同一次交谈的邻近语境')
-        identity = [source_hash,
-                    [(t['source_start'], t['source_end'], t['speaker']) for t in checked]]
+        turn_ids = []
+        for turn in checked:
+            positions = [turn['source_start'], turn['source_end'], turn['speaker']]
+            if 'segments' in turn:
+                positions.append([(s['source_start'], s['source_end']) for s in turn['segments'][1:]])
+            turn_ids.append(positions)
+        identity = [source_hash, turn_ids]
         tentative = any(t.get('attribution') == 'tentative' for t in checked)
         record = {'sample_id': 'dialogue-' + _digest(identity)[:24],
                   'source_sha256': identity[0],
@@ -188,6 +375,8 @@ def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
                   'limits': _rules(sample.get('limits'), '使用边界')}
         if relationship_proof:
             record['relationship_evidence'] = relationship_proof
+        if non_dialogue:
+            record['non_dialogue_quotes'] = non_dialogue
         if record['sample_id'] not in {r['sample_id'] for r in result}:
             result.append(record)
     return result
@@ -197,19 +386,21 @@ def combine_samples(items):
     result = {}
     def proof(s):
         return [s.get('source_sha256'),s.get('context'),
-                [{k:t.get(k) for k in ('speaker','text','source_start','source_end')} for t in s['turns']]]
+                [{k:t.get(k) for k in ('speaker','text','source_start','source_end','segments')} for t in s['turns']]]
     def annotation(s):
         response = {'scene_type':s.get('scene_type'),'relationship':s.get('relationship'),
                 'turn_intents':[t.get('intent') for t in s['turns']],
                 'transferable_moves':s.get('transferable_moves'),'limits':s.get('limits')}
         annotations = [{key: value for key, value in turn.items()
-                        if key in ('trigger', 'reaction', 'attribution', 'trigger_evidence',
+                        if key in ('speaker_label', 'trigger', 'reaction', 'attribution', 'trigger_evidence',
                                    'reaction_evidence', 'attribution_evidence')} for turn in s['turns']]
         if any(annotations):
             response['turn_annotations'] = annotations
             response['status'] = s.get('status')
         if 'relationship_evidence' in s:
             response['relationship_evidence'] = s['relationship_evidence']
+        if 'non_dialogue_quotes' in s:
+            response['non_dialogue_quotes'] = s['non_dialogue_quotes']
         return response
     for item in items:
         for sample in item.get('dialogue_samples', []):

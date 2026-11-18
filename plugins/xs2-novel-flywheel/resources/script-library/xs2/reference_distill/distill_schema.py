@@ -16,18 +16,32 @@ def schema():
         'dependentRequired': {'end_evidence_id': ['evidence_id']},
         'anyOf':[{'required':['evidence_id']},{'required':['excerpt']}]}
     quote_proof = {'$ref': '#/$defs/dialogueProof'}
-    turn = {'type': 'object', 'required': ['speaker', 'text', 'intent', 'evidence'], 'properties': {
-        'speaker': text, 'text': text, 'intent': text, 'evidence': quote_proof,
+    quote_segment = {'type': 'object', 'required': ['text', 'evidence'],
+                     'properties': {'text': text, 'evidence': quote_proof}}
+    turn = {'type': 'object', 'required': ['intent'], 'properties': {
+        'speaker': text, 'speaker_label': text, 'source_speaker': {**text, 'maxLength': 80},
+        'text': text, 'intent': text, 'evidence': quote_proof,
+        'segments': {'type': 'array', 'minItems': 2, 'maxItems': 8, 'items': quote_segment},
         'trigger': text, 'trigger_evidence': quote_proof, 'reaction': text, 'reaction_evidence': quote_proof,
         'attribution': {'enum': ['observed', 'tentative']}, 'attribution_evidence': quote_proof},
-        'dependentRequired': {'trigger': ['trigger_evidence'], 'trigger_evidence': ['trigger'],
+        'allOf': [{'anyOf': [{'required': ['speaker']}, {'required': ['speaker_label']},
+                             {'required': ['source_speaker']}]},
+                  {'anyOf': [{'required': ['text', 'evidence']}, {'required': ['segments']}]}],
+        'dependentRequired': {'text': ['evidence'], 'evidence': ['text'],
+                              'trigger': ['trigger_evidence'], 'trigger_evidence': ['trigger'],
                               'reaction': ['reaction_evidence'], 'reaction_evidence': ['reaction'],
-                              'attribution_evidence': ['attribution']},
+                              'attribution_evidence': ['attribution'],
+                              'source_speaker': ['attribution', 'attribution_evidence']},
         'if': {'required': ['attribution'], 'properties': {'attribution': {'const': 'observed'}}},
         'then': {'required': ['attribution_evidence']}}
     dialogue = {'type': 'object', 'required': ['scene_type', 'relationship', 'turns', 'transferable_moves', 'limits'],
                 'properties': {'scene_type': text, 'relationship': text, 'relationship_evidence': quote_proof,
                                'turns': {'type': 'array', 'minItems': 2, 'maxItems': 8, 'items': turn},
+                               'non_dialogue_quotes': {'type': 'array', 'maxItems': 12, 'items': {
+                                   'type': 'object', 'required': ['evidence'],
+                                   'properties': {'evidence': quote_proof, 'reason': text},
+                                   'anyOf': [{'required': ['reason']},
+                                             {'properties': {'evidence': {'required': ['reason']}}}]}},
                                'transferable_moves': {**texts(6), 'minItems': 1},
                                'limits': {**texts(6), 'minItems': 1}}}
     candidate={'type':'object','required':['mechanism','transfer_guidance','constraints','confidence','evidence'],
@@ -48,10 +62,16 @@ def schema():
     conflict = {'type': 'object', 'required': ['application_scope'],
                 'properties': {'application_scope': {'enum': ['short_full', 'serial_opening',
                                                              'serial_chapter', 'serial_arc', 'general']}}}
-    return {'type':'object','required':['window_id','candidates'],
+    repair = {'type': 'object', 'required': ['repair_id', 'value'],
+              'properties': {'repair_id': text, 'value': {'type': ['object', 'array', 'null']}, 'reason': text},
+              'if': {'properties': {'value': {'type': 'null'}}}, 'then': {'required': ['reason']}}
+    return {'type':'object','required':['window_id'],
+        'oneOf': [{'required': ['candidates']}, {'required': ['repair_round', 'repairs']}],
         '$defs': {'dialogueProof': {**proof, 'required': ['window_id']}},
         'properties':{
         'window_id':text,'source_sha256':{'type':'string','pattern':'^[a-f0-9]{64}$'},
+        'repair_round': {'type': 'integer', 'minimum': 1, 'maximum': 2},
+        'repairs': {'type': 'array', 'maxItems': 68, 'items': repair},
         'candidates':{'type':'array','maxItems':12,'items':candidate},
         'style_observations':{'type':'array','maxItems':12,'items':observation},
         'conflict_patterns':{'type':'array','maxItems':8,'items':conflict}}}

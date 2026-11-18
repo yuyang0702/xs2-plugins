@@ -60,12 +60,13 @@ def wire():
         '已证实人民币作用域允许元/块等同；其他单位用unit_aliases:[{alias:"别名",unit:"主单位",source_quote:"一主单位等于一别名"}]声明。'
         '不同币种、资源品阶、未知兑换率不能猜测等同，不要求小说用词迎合解析器。')
     path=RES/'prompts.json';prompts=json.loads(path.read_text(encoding='utf-8-sig'))
+    drafting_roles = {'novel-single-writer', 'novel-multi-scene-writer', 'novel-character-semantic-review'}
     for agent,config in prompts['agents'].items():
         if any(token in agent for token in ('writer','polish','revision','reader','review','auditor','scene','composition')):
             sections=config.get('sections',[])
             for section in sections:section['content']=section['content'].replace('\n'+guidance,'')
             target=next((s for s in sections if '{{custom_append}}' not in s['content']),None)
-            if target is not None:target['content']+='\n'+guidance
+            if target is not None and agent not in drafting_roles:target['content']+='\n'+guidance
         if agent=='xs2-local-revision-reviewer':
             for section in config.get('sections',[]):
                 section['content']=section['content'].replace('v1复制当前三个sha字段','当前仅提交local-review-v2，三个sha字段由程序绑定，不由模型复制')
@@ -102,7 +103,23 @@ def wire():
             data['edges']+=[{'source':'__start__','target':'script_production_start'},{'source':'script_production_finish','target':'__end__'}]
         for node in list(data['nodes']):
             if node['node_type']!='agent':continue
-            if '【数字的叙事作用】' not in node.get('first_message',''):node['first_message']=guidance+'\n'+node.get('first_message','')
+            budget_id='script_budget_'+node['id']
+            if budget_id not in ids:
+                for edge in data['edges']:
+                    if edge['target']==node['id']:edge['target']=budget_id
+                data['nodes'].append(script(budget_id,stage,'budget',chapter,node['id']))
+                data['edges'].append({'source':budget_id,'target':node['id']})
+            # Scoped review workflows own their prompt and output contract.
+            scoped=((stage=='reader-sim' and data['version']>=24)
+                    or (stage=='polish' and data['version']>=34 and node['id'] in (
+                        'agent_sc','agent_pl','agent_local_review'))
+                    or (stage=='mvp' and data['version']>=40 and node['id'].startswith('agent_guard_')))
+            if scoped:continue
+            message = node.get('first_message', '')
+            if stage in {'build', 'character', 'story-plan'} or node.get('agent_type') in drafting_roles:
+                node['first_message'] = message.removeprefix(guidance+'\n')
+            elif '【数字的叙事作用】' not in message:
+                node['first_message'] = guidance+'\n'+message
             if node['id'] in ('agent_composition_plan','agent_composition_review'):
                 node['first_message']=node['first_message'].replace('{{composition_request_file}}','{{composition_request_model}}').replace('{{composition_review_input}}','{{composition_review_model}}')
                 if '【规划无损视图】' not in node['first_message']:
@@ -131,12 +148,6 @@ def wire():
                 if '【定点补审】' not in node['first_message']:
                     node['first_message']='【定点补审】\n{{revision_review_repair}}\n若为空对象，执行完整独立复查；有targeted-report-repair-v1时，只重新判断allowed_fields并完整返回同一协议，其余字段逐字保留。不得自动改目标ID、编证据或把失败改通过；发现其他字段有实质错误时明确提出完整复审，程序会取消局部复用。\n'+node['first_message']
             if schema:edit_schema(node['node_params']['json_output_schema'])
-            budget_id='script_budget_'+node['id']
-            if budget_id not in ids:
-                for edge in data['edges']:
-                    if edge['target']==node['id']:edge['target']=budget_id
-                data['nodes'].append(script(budget_id,stage,'budget',chapter,node['id']))
-                data['edges'].append({'source':budget_id,'target':node['id']})
         agent_ids={n['id'] for n in data['nodes'] if n['node_type']=='agent'}
         for scheme in data.get('execution_schemes',[]):
             selected=scheme.get('selected_node_ids',[])

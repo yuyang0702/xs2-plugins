@@ -164,8 +164,27 @@ def test_all_length_gates_share_signed_effective_quota_but_explicit_override_sta
     q=quality()
     assert q.resolve_target(tmp_path,'3500-4000')==(2000,3000)
     assert q.resolve_target(tmp_path,'6000-7000')==(6000,7000)
+    body = ('字' * 1999).encode()
+    for target in ('3500-4000', '2000-3000'):
+        measured = q.measurement(body, '0002', q.resolve_length(tmp_path, target, chapter='0002'))
+        assert (measured['lower'], measured['status']) == (2000, 'short')
+        assert not q.is_blocking(measured)
+    explicit = q.measurement(body, '0002', q.resolve_length(tmp_path, '6000-7000', chapter='0002'))
+    assert explicit['lower'] == 6000 and q.is_blocking(explicit)
     put(tmp_path,'planning/length/0002.json',{'minimum':1,'maximum':9999})
     with pytest.raises(ValueError):q.resolve_target(tmp_path,'3500-4000')
+
+
+def test_signed_quota_preserves_a_task_specific_hard_range_for_later_readers(tmp_path):
+    from test_length_quality import quality
+    m, _, plan, review = prepared(tmp_path)
+    req = m.prepare(tmp_path, '0002', 'override', '2000-3000')
+    plan['request_digest'] = req['request_digest']
+    review.update(request_digest=req['request_digest'], plan_digest=m.identity(plan))
+    m.accept(tmp_path, 'override', plan, review)
+    q = quality()
+    result = q.assess(tmp_path, '0002', '3500-4000')
+    assert result['lower'] == 2000 and q.is_blocking(result)
 
 
 def test_scene_writers_receive_approved_reading_functions_as_intent(tmp_path):
@@ -232,13 +251,13 @@ def test_writer_system_roles_allow_the_structured_replan_exit():
     assert '金额parts/change' not in node['first_message']
 
 
-def test_reader_model_receives_effective_budget_without_changing_nominal_author_state(tmp_path):
+def test_archive_receives_effective_budget_without_changing_nominal_author_state(tmp_path):
     from test_length_quality import policy
     m,r,p,v=prepared(tmp_path);m.accept(tmp_path,'plan-test',p,v)
     state=json.loads((tmp_path/'.novel-project.json').read_text())
-    production=policy();production.launch_check(tmp_path,state,'reader-sim')
+    production=policy();production.launch_check(tmp_path,state,'post-hoc')
     variables=[{'key':'target_word_count','type':'text','source_type':'input','default':'3500-4000'}]
-    assert production.parameters(state,{'workflow_id':'reader-sim','variables':variables})['target_word_count']=='2000-3000'
+    assert production.parameters(state,{'workflow_id':'post-hoc','variables':variables})['target_word_count']=='2000-3000'
     assert state['values']['target_word_count']=='3500-4000'
     assert production.parameters(state,{'workflow_id':'mvp','variables':variables})['target_word_count']=='3500-4000'
 

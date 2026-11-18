@@ -2,7 +2,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 import pytest
-from test_length_quality import PLUGIN, policy, quality, write
+from test_length_quality import PLUGIN, policy, quality, write, install_legacy_length_feedback
 from test_fragment_length import setup
 from test_focused_length import definition
 
@@ -32,7 +32,7 @@ def test_focused_actual_user_message_is_isolated_and_has_body_once(tmp_path):
     write(tmp_path,'cache/story-support/context.md',shared)
     feedback='保留已经交付的事实。\n执行要求：按上述意见修改完整正文，不以计划代替正文；维护既定事实、人物、视角与本书风格。只处理本章，短篇收束全文，长篇普通章不提前完结全书。读者复评要检查修改是否落实，独立判断，不因采用方案而默认通过。\n'
     write(tmp_path,'quality/author.md',feedback)
-    state.update(policy().next_action(tmp_path,state,'polish')['updates']);write(tmp_path,'.novel-project.json',json.dumps(state,ensure_ascii=False))
+    install_legacy_length_feedback(tmp_path, state);write(tmp_path,'.novel-project.json',json.dumps(state,ensure_ascii=False))
     outputs=quality().prepare_execution(tmp_path,'0001','130-160','length_only')
     call,node,values,wf=actual_message(tmp_path,state,outputs)
     prompt=call['task_description'];source=raw.decode('utf-8-sig').replace('\r\n','\n')
@@ -50,16 +50,3 @@ def test_normal_actual_user_message_remains_original_renderer(tmp_path):
     expected=asyncio.run(resolve_placeholders(node.first_message,values,wf.variables,str(tmp_path)))
     assert call['task_description']==expected
     assert outputs['length_execution_context']==''
-
-
-def test_v3_initial_draft_contract_migrates_once_but_markerless_limit_does_not(tmp_path):
-    write(tmp_path,'story/0001/chapter.md','衣'*3206)
-    state={'readerRepairCount':0,'lengthRepairCycle':0,'lengthRepairCount':3,'lengthRepairTotal':3,'lengthRepairStrategy':'fragment-v3',
-           'autoLengthRepairLimit':3,'values':{'chapter_number':'0001','target_word_count':'4800-5200'}}
-    action=policy().next_action(tmp_path,state,'polish');assert action['action']=='advance';state.update(action['updates'])
-    assert state['lengthRepairStrategy']==quality().LENGTH_REPAIR_STRATEGY=='fragment-v6' and state['lengthRepairTotal']==4
-    for _ in range(2):state.update(policy().next_action(tmp_path,state,'polish')['updates'])
-    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim'
-    assert state['lengthRepairTotal']==6 and state['readerRepairCount']==0
-    state.pop('lengthRepairStrategy')
-    assert policy().next_action(tmp_path,state,'polish')['stage']=='reader-sim'

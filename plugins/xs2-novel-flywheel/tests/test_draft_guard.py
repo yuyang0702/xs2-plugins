@@ -19,18 +19,88 @@ def save(path,value):
     path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
 
 
-def run(m,root,monkeypatch,capsys,action,phase='facts',expression_format='body',inspect_first=False):
+def run(m,root,monkeypatch,capsys,action,phase='facts',expression_format='body',inspect_first=False,target='1-500',combined_precheck=False,advisory_length=False):
     monkeypatch.chdir(root);monkeypatch.setenv('TASK_ID','task-guard')
-    argv=['guard',action,'--phase',phase,'--multi-dir','cache/multi/task-guard','--target','1-500','--pov','third_person','--expression-format',expression_format]
-    monkeypatch.setattr('sys.argv',argv+(['--inspect-first'] if inspect_first else []))
+    argv=['guard',action,'--phase',phase,'--multi-dir','cache/multi/task-guard','--target',target,'--pov','third_person','--expression-format',expression_format]
+    monkeypatch.setattr('sys.argv',argv+(['--inspect-first'] if inspect_first else [])
+                        +(['--combined-precheck'] if combined_precheck else [])
+                        +(['--advisory-length'] if advisory_length else []))
     m.main();return capsys.readouterr().out
 
 
-def prepared(root,monkeypatch,capsys,expression_format='body',source_body='未经修订的原始试稿',inspect_first=False):
+def prepared(root,monkeypatch,capsys,expression_format='body',source_body='未经修订的原始试稿',inspect_first=False,target='1-500',combined_precheck=False,advisory_length=False):
     m=module();multi=root/'cache/multi/task-guard';save(multi/'plan.json',{'scenes':[{'id':1},{'id':2}],'continuity':contract()})
     (multi/'planning-sources.md').write_text(SOURCES,encoding='utf-8')
     save(root/'cache/si/chapter.json',{'body':source_body})
-    run(m,root,monkeypatch,capsys,'prepare',expression_format=expression_format,inspect_first=inspect_first);return m,root/'cache/draft-guard/task-guard'
+    run(m,root,monkeypatch,capsys,'prepare',expression_format=expression_format,inspect_first=inspect_first,
+        target=target,combined_precheck=combined_precheck,advisory_length=advisory_length)
+    return m,root/'cache/draft-guard/task-guard'
+
+
+@pytest.mark.parametrize('ownership,advisory_length',[('author',False),('planner',False),('author',True)])
+def test_combined_precheck_keeps_advice_out_of_hard_length_and_expression_repair(tmp_path,monkeypatch,capsys,ownership,advisory_length):
+    body, report = evidence()
+    target = '140-500'
+    save(tmp_path/'meta/length_policy.json',{'schema':1,'ownership':ownership})
+    save(tmp_path/'.novel-project.json',{'values':{'target_word_count':target}})
+    m,d=prepared(tmp_path,monkeypatch,capsys,expression_format='patches',source_body=body,inspect_first=True,
+                 target=target,combined_precheck=True,advisory_length=advisory_length)
+    report['book_contract_sha256']=m.read(d/'binding.json')['book_contract_sha256']
+    report['checks']['repetition']=True
+    report['issues']=[{'id':'advisory-pacing','category':'repetition','advisory':True,
+                       'excerpts':['买方同意。'],'reason':'也可以在这里让节奏稍慢。','goal':'由作者取舍停顿时长。'}]
+    save(d/'facts-audit.json',report)
+    assert 'guard_facts_needs_repair:no' in run(m,tmp_path,monkeypatch,capsys,'precheck',target=target,advisory_length=advisory_length)
+    assert m.read(d/'expression-audit.json')==report
+    expression=run(m,tmp_path,monkeypatch,capsys,'precheck','expression',target=target,advisory_length=advisory_length)
+    if ownership=='author' and not advisory_length:
+        assert 'guard_expression_needs_repair:yes' in expression
+        assert not (d/'final-receipt.json').exists()
+        assert '也可以在这里让节奏稍慢' not in (d/'expression-feedback.md').read_text(encoding='utf-8')
+    else:
+        assert 'guard_expression_needs_repair:no' in expression
+        assert m.read(d/'final-receipt.json')['body']==body
+        assert 'short' in json.dumps(m.read(d/'expression-advice.json'))
+    assert [issue['id'] for issue in m.read(d/'expression-advice.json')['issues']]==['advisory-pacing']
+
+
+def test_combined_precheck_can_return_to_valid_base_when_expression_patch_loses_effect(tmp_path,monkeypatch,capsys):
+    main,_=evidence()
+    old='他没开口，只把椅子往门前挪了一寸。'
+    extra='他这是准备堵门了。'
+    body=main+'\n\n'+old+'\n\n'+extra
+    m,d=prepared(tmp_path,monkeypatch,capsys,expression_format='patches',source_body=body,inspect_first=True,
+                 combined_precheck=True)
+    _,report=evidence(body)
+    report['book_contract_sha256']=m.read(d/'binding.json')['book_contract_sha256']
+    report['checks']['repetition']=True
+    report['issues']=[{'id':'already-seen','category':'post_action_restatement','excerpts':[old,extra],
+                       'reason':'动作已表现堵门。','goal':'保留挪椅子的动作，删去跟随的说明。',
+                       'scene_focus':{'quote':extra,'preserve':[old]}}]
+    save(d/'facts-audit.json',report)
+    assert 'guard_facts_needs_repair:no' in run(m,tmp_path,monkeypatch,capsys,'precheck')
+    assert 'guard_expression_needs_repair:yes' in run(m,tmp_path,monkeypatch,capsys,'precheck','expression')
+    goal=m.expression_goals(d)[0]
+    edit={'paragraph_id':goal['paragraph_id'],'old':extra,'occurrence':1,'replacement':'椅子让门开不了。','group_id':goal['id']}
+    save(d/'expression-draft.json',{'source_sha256':m.body_digest(body),'edits':[edit]})
+    assert 'WF_REJECT' not in run(m,tmp_path,monkeypatch,capsys,'candidate','expression')
+    latest=m.read(d/'expression-audit-input.json')
+    candidate=latest['candidate_body']
+    _,report=evidence(candidate)
+    report['checks']['repetition']=True
+    report.update(book_contract_sha256=m.read(d/'binding.json')['book_contract_sha256'],edits_sha256=latest['edits_sha256'],
+                  change_reviews=[{'edit_index':0,'effect':'equivalent','before_excerpt':extra,
+                                   'after_excerpt':edit['replacement'],'reason':'新句仍然解释堵门。'}],
+                  added_text_reviews=[{'edit_index':i,'useful':[],'repetitions':[]} for i in latest['growth_edit_indices']],
+                  issue_outcomes=[{'id':goal['id'],'status':'remaining','excerpts':[edit['replacement']],
+                                   'reason':'已由挪椅子明白的意思仍被说明。'}])
+    save(d/'expression-audit.json',report)
+    assert 'WF_REJECT' not in run(m,tmp_path,monkeypatch,capsys,'commit','expression')
+    receipt=m.read(d/'final-receipt.json')
+    assert receipt['body']==body
+    assert receipt['retained_original'] is True
+    assert [i['id'] for i in m.read(d/'expression-advice.json')['issues'] if i.get('id')]==[goal['id']]
+    run(m,tmp_path,monkeypatch,capsys,'finish')
 
 
 def clean_expression_checks():
@@ -76,6 +146,36 @@ def test_inspect_first_sends_only_grounded_issue_to_writer(tmp_path,monkeypatch,
     save(d/'facts-audit.json',report)
     assert 'target="agent_guard_facts_inspect"' in run(m,tmp_path,monkeypatch,capsys,'precheck')
     assert not (d/'facts-approved.json').exists()
+
+
+def test_short_expression_candidate_is_audited_before_hard_length_publication(tmp_path,monkeypatch,capsys):
+    core,_=evidence()
+    repeated='同一层说明没有变化。'*15
+    body=core+'\n\n'+repeated
+    target='140-500'
+    save(tmp_path/'meta/length_policy.json',{'schema':1,'ownership':'author'})
+    m,d=prepared(tmp_path,monkeypatch,capsys,expression_format='patches',source_body=body,inspect_first=True,target=target)
+    def step(action,phase):
+        return run(m,tmp_path,monkeypatch,capsys,action,phase,target=target)
+    _,report=evidence(body)
+    report['book_contract_sha256']=m.read(d/'binding.json')['book_contract_sha256']
+    save(d/'facts-audit.json',report)
+    assert 'guard_facts_needs_repair:no' in step('precheck','facts')
+    paragraph=m.revision.paragraphs(body)[-1]['id']
+    save(d/'expression-draft.json',{'source_sha256':m.body_digest(body),'edits':[
+        {'paragraph_id':paragraph,'old':repeated,'occurrence':1,'replacement':''}]})
+    assert m.length.count_prose(core)<140
+    assert 'WF_REJECT' not in step('candidate','expression')
+    audit=m.read(d/'expression-audit-input.json')
+    assert audit['candidate_body']==core
+    _,report=evidence(core)
+    report.update(book_contract_sha256=m.read(d/'binding.json')['book_contract_sha256'],
+                  edits_sha256=audit['edits_sha256'],expression_checks=clean_expression_checks(),
+                  change_reviews=[{'edit_index':0,'effect':'improved','reason':'删除重复说明，保留交易过程。','before_excerpt':repeated,'after_excerpt':''}])
+    report['checks']['repetition']=True
+    save(d/'expression-audit.json',report)
+    assert 'target="agent_guard_expression_repair"' in step('commit','expression')
+    assert not (d/'final-receipt.json').exists()
 
 
 def test_expression_inspection_binds_transcribed_planning_to_both_sources(tmp_path,monkeypatch,capsys):
@@ -138,7 +238,8 @@ def test_expression_audit_binds_each_edit_and_requires_a_net_improvement(tmp_pat
             'candidate_excerpt': replacement if result != 'false-preservation' else '原稿已经没有这一句。',
             'reason': reason,
         }
-    save(d/'expression-audit.json',{**report,'edits_sha256':packet['edits_sha256'],'change_reviews':[change]})
+    save(d/'expression-audit.json',{**report,'edits_sha256':packet['edits_sha256'],'change_reviews':[change],
+         'added_text_reviews':[{'edit_index':i,'useful':[],'repetitions':[]} for i in packet['growth_edit_indices']]})
     output=run(m,tmp_path,monkeypatch,capsys,'commit','expression')
     if result=='improved':
         assert 'WF_REJECT' not in output
@@ -401,7 +502,8 @@ def test_real_scheduler_orders_fact_then_expression_and_reaudits_replaced_candid
     assert not wf.validate()
     good,_=evidence()
     bad=good.replace('她付一两二钱纸债','她付一两整银又二十文纸债')
-    _,d=prepared(tmp_path,monkeypatch,capsys,expression_format='patches',source_body=bad if retry else good,inspect_first=True)
+    _,d=prepared(tmp_path,monkeypatch,capsys,expression_format='patches',source_body=bad if retry else good,
+                 inspect_first=True,combined_precheck=True,advisory_length=True)
     calls=[]
     class Agent(BaseNodePlugin):
         node_type='agent'
@@ -418,7 +520,7 @@ def test_real_scheduler_orders_fact_then_expression_and_reaudits_replaced_candid
                 if '一两整银又二十文' in current:
                     report['money_observations'][1]['paid']={'text':'一两整银又二十文','occurrence':1}
                     report['event_observations'][4]['quote']={'text':'她付一两整银又二十文纸债','occurrence':1}
-                if phase=='expression':report['checks']['repetition']=True
+                if phase=='expression' or key=='agent_guard_facts_inspect':report['checks']['repetition']=True
                 save(d/f'{phase}-audit.json',report)
             return NodeResult(status='completed')
     class Script(BaseNodePlugin):
@@ -451,7 +553,8 @@ def test_real_scheduler_orders_fact_then_expression_and_reaudits_replaced_candid
             if state.status=='retry_waiting':task.node_states[key]=activate_scheduled_retry(state)
     assert outcome=='completed'
     assert calls[0]=='agent_guard_facts_inspect'
-    assert calls[-1]=='agent_guard_expression_inspect'
+    assert calls[-1]==('agent_guard_expression_inspect' if retry else 'agent_guard_facts_inspect')
+    assert len(calls)==(6 if retry else 1)
     assert calls.count('agent_guard_facts_repair')==(2 if retry else 0)
     assert calls.count('agent_guard_facts_audit')==(2 if retry else 0)
     assert 'agent_guard_expression_repair' not in calls

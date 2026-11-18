@@ -120,6 +120,19 @@ def test_quiet_scene_can_pass_without_manufactured_decisions():
     assert r.validate_blind({'verdict': 'pass', 'summary': '安静收尾成立', 'issues': [], 'decisions': []}, '她把灯点上。')['verdict'] == 'pass'
 
 
+def test_blind_line_finding_binds_target_and_addressee_to_original():
+    body = '他伸手去推门。\n\n“这个流程应该中止。”'
+    row = {'id':'blind-1','kind':'expression','category':'scripted_dialogue','location':'门边',
+           'priority':'medium','excerpts':['他伸手去推门。','这个流程应该中止。'],
+           'impact':'台词只向读者播报流程。','goal':'让阻拦在现场发生。',
+           'scene_focus':{'quote':'这个流程应该中止。','addressee':'正在推门的人'}}
+    report = {'verdict':'revise','summary':'有一处流程台词。','issues':[row],'decisions':[]}
+    assert review().validate_blind(report,body)['issues'][0]['scene_focus']==row['scene_focus']
+    row['scene_focus']['quote']='不存在于正文。'
+    with pytest.raises(ValueError,match='出现位置'):
+        review().validate_blind(report,body)
+
+
 def test_out_of_scope_quality_issue_stays_visible_and_blocks_automatic_repair():
     r = review(); source = final(); before = copy.deepcopy(source)
     result = r.merge_review(source, blind(), BODY)
@@ -209,7 +222,7 @@ def test_committing_checks_frozen_body_feedback_and_blind_report(tmp_path):
     assert not (tmp_path / 'story/0001/reader_report.json').exists()
 
 
-def test_production_pauses_before_planning_repairs_outside_author_scope(tmp_path):
+def test_retired_reader_report_cannot_schedule_repairs(tmp_path):
     from test_length_quality import policy
     r = review(); book(tmp_path)
     report = r.merge_review(final(), blind(), BODY)
@@ -219,7 +232,7 @@ def test_production_pauses_before_planning_repairs_outside_author_scope(tmp_path
     write(tmp_path, 'story/0001/reader_report.json', report)
     state = {'mode': 'short', 'values': {'chapter_number': '0001'}, 'autoRepairLimit': 2}
     decision = policy().next_action(tmp_path, state, 'reader-sim')
-    assert decision['action'] == 'pause' and '范围' in decision['reason']
+    assert decision['action'] == 'pause'
 
 
 @pytest.mark.parametrize('list_alternatives', [False, True])
@@ -231,12 +244,15 @@ def test_actual_initial_agent_receives_only_frozen_input_and_has_no_file_tools(t
     from src.workflow.nodes.base import NodeContext
     from src.workflow.runtime_models import NodeExecutionState
     from src.agent.definition import _config_to_definition, resolve_agent_tools
-    r = review(); book(tmp_path); outputs = r.prepare(tmp_path, '0001', 'task-a')
+    r = review(); book(tmp_path); outputs = r.prepare(tmp_path, '0001', 'task-a', parallel=True, protocol=2)
     definition = literary_graph(json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8')))
     wf = WorkflowDef.from_dict(definition)
     node = next(n for n in wf.nodes if n.id == 'agent_blind_reader')
     captured = {}
     response = blind()
+    response.pop('expression_checks')
+    response.pop('verdict')
+    response['coverage'] = {'first_exchange':['p0001'], 'key_turn':['p0001']}
     if list_alternatives:
         response['decisions'][0]['alternatives'] = ['拒绝分付', '接受分付']
     class Manager:
@@ -274,17 +290,6 @@ def test_causal_alternatives_reject_empty_or_invalid_choices(alternatives):
         review().validate_blind(data, BODY)
 
 
-def test_assessment_only_finishes_without_repairing_out_of_scope_findings(tmp_path):
-    from test_length_quality import policy
-    r = review(); book(tmp_path)
-    report = r.merge_review(final(), blind(), BODY)
-    report['review_binding'] = {'task_id':'manual-fixture','scope_source':r._scope_source(tmp_path),
-                               'body_sha256':report.get('body_sha256')}
-    write(tmp_path, 'story/0001/reader_report.json', report)
-    state = {'mode':'short','assessmentOnly':True,'values':{'chapter_number':'0001'}}
-    assert policy().next_action(tmp_path, state, 'reader-sim')['action'] == 'finish'
-
-
 def test_contextual_expression_issue_is_classified_before_scope_validation():
     data = final()
     data['revision_scope']['assessments'] = []
@@ -309,7 +314,7 @@ def test_published_scope_is_invalidated_when_author_changes_permission(tmp_path)
     write(tmp_path, 'feedback.md', '现在只能改开头，结款不许动')
     state = {'mode':'short','values':{'chapter_number':'0001'}}
     with pytest.raises(ValueError, match='范围|要求|变化'):
-        policy().next_action(tmp_path, state, 'reader-sim')
+        policy().reader_report(tmp_path, state)
 
 
 @pytest.mark.parametrize('area', ['verdict', 'fact_review'])
@@ -342,7 +347,7 @@ def test_contextual_expression_verdict_can_refer_to_preserved_initial_findings()
     assert r.gate_review(merged, BODY)==merged
 
 
-@pytest.mark.parametrize('case',['findings','pass','retry_context'])
+@pytest.mark.parametrize('case',['findings','fact_conflict','pass','retry_context'])
 def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_path, monkeypatch,case):
     """Model boundary uses fixtures; scheduler, rendered inputs, CLIs and publication are real."""
     import asyncio
@@ -358,6 +363,7 @@ def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_pat
     from src.workflow.variable_resolution import resolve_placeholders
     from test_length_quality import policy
     book(tmp_path)
+    write(tmp_path,'meta/world_foundation.md','听到付款选项以后，陆可以同意分付。')
     original = (tmp_path/'story/0001/chapter.md').read_bytes()
     raw=literary_graph(json.loads((PLUGIN/'resources/workflows/reader-sim/definition.json').read_text(encoding='utf-8')))
     wf=WorkflowDef.from_dict(raw); assert not wf.validate()
@@ -374,16 +380,28 @@ def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_pat
             if node=='agent_blind_reader':
                 assert 'SECRET_' not in kwargs['task_description']
                 output=blind()
-                if case!='findings':output.update(verdict='pass',issues=[],decisions=[])
+                output.pop('expression_checks')
+                output.pop('verdict')
+                output['coverage'] = {'first_exchange':['p0001'], 'key_turn':['p0001']}
+                if case not in ('findings','fact_conflict'):
+                    output.update(issues=[],decisions=[])
+                else:
+                    output['issues'][0]['contradiction'] = {'claim':'陆同意分付。','against':'买方说不同意就付给陆。'}
             elif node=='agent_context_reader':
                 assert 'SECRET_SCOPE' in kwargs['task_description']
                 assert 'blind-1' not in kwargs['task_description']
-                output=final();output['revision_scope']['assessments']=[];output['blind_resolutions']=[]
+                assert '听到付款选项以后，陆可以同意分付。' in kwargs['task_description']
+                output={'summary':'资料对照完成。','issues':[],
+                        'revision_scope':{'mode':'restricted','summary':'只允许改开头'}}
+                if case=='fact_conflict':
+                    output['fact_support']=[{'claim':'陆同意分付。','source_path':'meta/world_foundation.md',
+                                              'source_quote':'听到付款选项以后，陆可以同意分付。',
+                                              'reason':'在告知付款选择以后交涉成立。'}]
                 if case=='retry_context' and calls.count(node)==1:output['blind_resolutions']=[{'issue_id':'guessed'}]
             else:
                 assert 'SECRET_SCOPE' in kwargs['task_description']
                 assert 'blind-1' in kwargs['task_description']
-                output=final()
+                output={'blind_resolutions':[]}
             self.sessions[node]=SimpleNamespace(record=[{'type':'user','content':kwargs['task_description']},
                 {'type':'assistant','content':json.dumps(output,ensure_ascii=False)}])
             kwargs['on_auto_complete'](node,'done','success','')
@@ -428,11 +446,11 @@ def test_full_reader_graph_runs_actual_plugin_clis_without_touching_body(tmp_pat
     assert calls.index('script_story_context') < calls.index('agent_blind_reader') < calls.index('script_reader_join')
     assert calls.count('agent_blind_reader')==1
     assert calls.count('agent_context_reader')==(2 if case=='retry_context' else 1)
-    assert calls.count('agent_reader')==(1 if case=='findings' else 0)
+    assert calls.count('agent_reader')==(1 if case=='fact_conflict' else 0)
     frozen=json.loads(next((tmp_path/'cache/reader-review').rglob('parallel-sources.json')).read_text(encoding='utf8'))
     assert frozen['context_path']=='cache/story-support/context.md'
     report=json.loads((tmp_path/'story/0001/reader_report.json').read_text(encoding='utf-8'))
-    assert report['verdict']==('revise' if case=='findings' else 'pass')
-    assert report['requires_scope_confirmation']==(case=='findings')
+    assert report['verdict']==('revise' if case in ('findings','fact_conflict') else 'pass')
+    assert report['requires_scope_confirmation']==(case in ('findings','fact_conflict'))
     assert report['review_binding']['task_id']=='task-reader-integration'
     assert (tmp_path/'story/0001/chapter.md').read_bytes()==original

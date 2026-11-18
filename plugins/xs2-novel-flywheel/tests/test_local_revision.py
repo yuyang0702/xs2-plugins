@@ -39,10 +39,110 @@ def approved(m,out,root):
         'review_input_sha256':context['review_input_sha256'],'compatible':True,'issues':[],
         'expression_review':{'verdict':'pass','summary':'含义未重复，风格保留。','issues':[]},
         'expression_checks':checks(m.expression),'issue_outcomes':[],
+        'added_text_reviews':[{'edit_index':i,'useful':[],'repetitions':[]} for i in context.get('growth_edit_indices',[])],
         'change_reviews':[{'edit_index':i,'effect':'improved','before_excerpt':e['old'],
             'after_excerpt':e['replacement'],'reason':'合并无增量的说明，保留全知声线。'} for i,e in enumerate(context['edits'])]}
     for c in report['expression_checks']:c['excerpts']=['第一段保留。']
     put(root,out['revision_review_path'],report);return json.dumps(report,ensure_ascii=False)
+
+
+def scoped_setup(root, *, stale=False, authored=False, whole=False, tampered=False, raw=None):
+    m = module()
+    raw = raw if raw is not None else '“人呢？”\n\n她碰了碰窗框。“还没回来。”\n\n屋里还燃着灯。'.encode()
+    path = root/'story/0001/chapter.md'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_bytes(raw)
+    if authored:
+        put(root, 'author.md', '保留两句对白。必须让她先望向窗外。')
+        put(root, '.novel-project.json', {'values': {'author_feedback_file': 'author.md'}})
+    elif not (root/'.novel-project.json').exists():
+        put(root,'.novel-project.json',{'values':{'human_intent':'创作一个调查旧门窗的故事。'}})
+    reader = m.load('test_polish_reader', m.HERE/'reader_review/reader_review.py')
+    frozen = m.book.resolve(root)
+    readout=reader.prepare(root,'0001','reader-same-body',parallel=True,protocol=2)
+    binding=m.read(root/readout['reader_review_binding'])
+    if tampered:put(root,readout['reader_blind_input'],{'manuscript':'伪造底稿。'})
+    source_sha = 'stale' if stale else m.sha(raw)
+    original_row='她碰了碰窗框。' in raw.decode()
+    goal={'id':'context-door','source':'expression_review','kind':'expression','priority':'medium',
+          'editability':'editable','impact':'可能只是在重报消息。',
+          'excerpts':['她碰了碰窗框。','还没回来。'] if original_row else ['第二段重复说明。'],
+          'goal':'核对这一拍有无真实回应。','preserve':['还没回来。','她碰了碰窗框。'] if original_row else ['第一段保留。']}
+    put(root, 'story/0001/reader_report.json', {
+        'reader_review_version': 2, 'chapter_number': '0001', 'body_sha256': source_sha,
+        'book_contract_sha256': m.book.digest(frozen), 'verdict': 'revise',
+        'review_binding': {key: binding[key] for key in ('task_id','scope_source','body_sha256','input_sha256')},
+        'revision_scope': {'mode': 'unrestricted'},
+        'issues': [goal],
+    })
+    out = m.prepare(root, '0001', 'scoped-polish', '1-5000', scoped_review=True, whole_chapter_review=whole)
+    return m,out,raw
+
+
+def scoped_report(m, root, out, edits, *, action='keep'):
+    source = m.read(root/out['revision_source_input'])
+    put(root, out['revision_patch_path'], {'source_sha256': source['source_sha256'], 'edits': edits})
+    m.candidate(root, out['revision_dir'])
+    context = m.read(root/out['revision_review_input'])
+    report = {'protocol': 'local-review-v3', 'compatible': True, 'issues': [],
+              'change_reviews': [{'edit_index': i, 'effect': effect, 'reason': '她的停顿有具体作用。'}
+                                 for i,effect in enumerate(('improved','regressed')[:len(edits)])],
+              'issue_outcomes': [{'id': goal['id'], 'status': action, 'reason': '动作改变了这句话的语气。',
+                                  'excerpts': ['还没回来。']} for goal in context['goals']],
+              'added_text_reviews': [{'edit_index': i, 'useful': [], 'repetitions': []}
+                                     for i in context.get('growth_edit_indices', [])]}
+    put(root, out['revision_review_path'], report)
+    return json.dumps(report,ensure_ascii=False)
+
+
+def test_scoped_polish_reuses_grounded_same_body_goal_without_critic(tmp_path):
+    m,out,raw = scoped_setup(tmp_path)
+    assert out['revision_critique_mode'] == 'confirmed'
+    m.writer_input(tmp_path, out['revision_dir'], 'cache/sc/unused.json')
+    editor = m.read(tmp_path/out['revision_editor_model'])
+    goal, = editor['goals']
+    assert goal['id'] == 'context-door'
+    assert goal['paragraph_ids'] == ['p0002']
+    assert goal['evidence'] == ['她碰了碰窗框。','还没回来。']
+    assert goal['preserve'] == ['还没回来。','她碰了碰窗框。']
+    report = scoped_report(m, tmp_path, out, [])
+    receipt = m.commit(tmp_path, out['revision_dir'], report)
+    assert receipt['changed_spans'] == 0 and receipt['open_issues'] == []
+    assert (tmp_path/'story/0001/chapter.md').read_bytes() == raw
+
+
+@pytest.mark.parametrize('mode',['stale','authored','whole','tampered'])
+def test_scoped_polish_uses_critic_for_stale_report_or_manual_scope(tmp_path, mode):
+    _,out,_ = scoped_setup(tmp_path, **{mode: True})
+    assert out['revision_critique_mode'] == 'critic'
+
+
+def test_scoped_polish_keeps_safe_independent_patch_and_reports_actual_open_goal(tmp_path):
+    m,out,raw = scoped_setup(tmp_path)
+    m.writer_input(tmp_path, out['revision_dir'], 'cache/sc/unused.json')
+    edits = [
+        {'paragraph_id':'p0002','old':'她碰了碰窗框。','occurrence':1,'replacement':'她碰了碰窗框，顿了顿。','independent':True},
+        {'paragraph_id':'p0003','old':'屋里还燃着灯。','occurrence':1,'replacement':'灯早灭了。','independent':True},
+    ]
+    report = scoped_report(m, tmp_path, out, edits, action='remaining')
+    receipt = m.commit(tmp_path, out['revision_dir'], report)
+    assert receipt['changed_spans'] == 1
+    assert [row['id'] for row in receipt['open_issues']] == ['context-door']
+    assert (tmp_path/'story/0001/chapter.md').read_bytes() == raw.replace(
+        '她碰了碰窗框。'.encode(), '她碰了碰窗框，顿了顿。'.encode())
+    task = {'task_id':'scoped-polish','parameter_values':{'revision_dir':out['revision_dir'],'revision_review_result':report}}
+    assert m.verify_attempt(tmp_path,task) == receipt
+
+
+def test_scoped_polish_refuses_to_close_a_mandatory_author_goal_as_keep(tmp_path):
+    m,out,raw = scoped_setup(tmp_path, authored=True)
+    put(tmp_path, 'critique.json', {'issues': [{'severity':'high','evidence_status':'verified',
+        'evidence':['她碰了碰窗框。'], 'suggestion':'让她先望向窗外。', 'required_source':'必须让她先望向窗外。'}]})
+    m.writer_input(tmp_path, out['revision_dir'], 'critique.json')
+    report = scoped_report(m, tmp_path, out, [])
+    with pytest.raises(m.Retry,match='原有'):
+        m.commit(tmp_path,out['revision_dir'],report)
+    assert (tmp_path/'story/0001/chapter.md').read_bytes() == raw
 
 
 def test_exact_local_publication_keeps_untouched_bytes_and_recovers_after_publication(tmp_path):
@@ -52,20 +152,21 @@ def test_exact_local_publication_keeps_untouched_bytes_and_recovers_after_public
     m.commit(tmp_path,out['revision_dir'],expected)
 
 
-def test_checklist_exchange_repair_requires_a_change_beyond_layout():
+def test_checklist_exchange_passes_exact_layout_change_to_independent_review():
     m=module()
     body='“开不开？”\n\n“不开。钥匙不在我手里。”\n\n“钥匙在哪？”'
     source={'paragraphs':m.patches.paragraphs(body)}
     goal={'id':'dialogue-1','focus':'checklist_exchange','goal':'让他顾上对方不肯开门的反应。',
           'target':{'paragraph_id':'p0002','quote':'不开。钥匙不在我手里。'}}
     edit={'paragraph_id':'p0002','old':'不开。钥匙不在我手里。','occurrence':1,'replacement':'不开。\n\n钥匙不在我手里。'}
-    with pytest.raises(ValueError,match='仍保留目标原话'):
-        m.check_dialogue_goals([edit],[goal],source)
+    m.check_dialogue_goals([edit],[goal],source)
+    with pytest.raises(ValueError,match='原句不在'):
+        m.check_dialogue_goals([{**edit,'old':'模型补进去的原话'}],[goal],source)
     edit['replacement']='门后头不是你要找的人。'
     m.check_dialogue_goals([edit],[goal],source)
 
 
-def test_continuous_dialogue_cannot_be_skipped_and_layout_cannot_resolve_it():
+def test_continuous_dialogue_requires_a_scoped_patch_even_with_unchanged_speech():
     m = module()
     body = '“谁来过？”\n\n她停了手。\n\n“送货的。”\n\n“他什么时候走的？”\n\n“刚走。”'
     source = {'source_body': body, 'paragraphs': m.patches.paragraphs(body), 'dialogue_check_version': 6}
@@ -92,8 +193,9 @@ def test_continuous_dialogue_cannot_be_skipped_and_layout_cannot_resolve_it():
     assert goal['target']['quote'] == '他什么时候走的？'
     old = source['paragraphs'][3]['text']
     edit = {'paragraph_id': 'p0004', 'old': old, 'occurrence': 1, 'replacement': '“他，什么时候走的？”'}
-    with pytest.raises(ValueError, match='整段对白'):
-        m.check_dialogue_goals([edit], [goal], source)
+    m.check_dialogue_goals([edit], [goal], source)
+    with pytest.raises(ValueError, match=goal['id']):
+        m.check_dialogue_goals([], [goal], source)
     edit['replacement'] = '“你没让他进门吧？”'
     m.check_dialogue_goals([edit], [goal], source)
 
@@ -166,7 +268,7 @@ def test_scene_revision_binds_the_exchange_and_reviews_grouped_actions(tmp_path)
     assert not m.review_decision(report,context)
 
 
-def test_narration_review_covers_the_scene_and_rejects_cosmetic_repair():
+def test_narration_review_covers_the_scene_and_passes_exact_pause_change_to_review():
     m = module()
     body = '他掀了盖。\n\n又把手擦了擦。\n\n盖底的水是热的。'
     source = {'source_body':body,'paragraphs':m.patches.paragraphs(body),'dialogue_check_version':7}
@@ -179,8 +281,9 @@ def test_narration_review_covers_the_scene_and_rejects_cosmetic_repair():
     assert goal['focus'] == 'narration'
     assert goal['paragraph_ids'] == ['p0001','p0002','p0003']
     edit = {'paragraph_id':'p0002','old':'又把手擦了擦。','occurrence':1,'replacement':'又，把手擦了擦。','group_id':goal['id']}
-    with pytest.raises(ValueError, match='表面'):
-        m.check_scene_goals([edit], [goal], source)
+    m.check_scene_goals([edit], [goal], source)
+    with pytest.raises(ValueError, match='范围'):
+        m.check_scene_goals([{**edit,'paragraph_id':'p0004'}], [goal], source)
     edit['replacement'] = '盖底的水淌到指缝，他松了手。'
     m.check_scene_goals([edit], [goal], source)
 
@@ -599,7 +702,7 @@ def test_dialogue_exchange_rejects_unrelated_or_unordered_quotes():
         m.dialogue_goals(source,[row])
 
 
-def test_dialogue_review_v2_requires_both_checks_and_changes_the_targeted_line(tmp_path):
+def test_dialogue_review_v2_requires_both_checks_and_an_edit_in_the_target_exchange():
     m=module()
     body='“别揪着这事不——”\n\n“我没揪。”\n\n她把收据递了过去。\n\n“东西能自己走回去？”'
     source={'source_body':body,'paragraphs':m.patches.paragraphs(body),'dialogue_check_version':2}
@@ -612,15 +715,14 @@ def test_dialogue_review_v2_requires_both_checks_and_changes_the_targeted_line(t
     no_pressure={'focus':'situational_speech','status':'not_applicable','reason':'没有可对照的忙碌说明。','goal':'','turns':[]}
     goals=m.dialogue_goals(source,[echo,no_pressure])
     assert goals[0]['target']==echo['turns'][1]
-    unrelated_edit={'paragraph_id':'p0001','old':'别揪着这事不——','occurrence':1,'replacement':'你先等等——'}
-    with pytest.raises(ValueError,match='目标原话'):
+    unrelated_edit={'paragraph_id':'p0004','old':'东西能自己走回去？','occurrence':1,'replacement':'东西没拿回来。'}
+    with pytest.raises(ValueError,match=goals[0]['id']):
         m.check_dialogue_goals([unrelated_edit],goals,source)
     target=echo['turns'][1]['quote']
     edit={'paragraph_id':'p0002','old':target,'occurrence':1,'replacement':'你先把箱子抬下来。'}
     m.check_dialogue_goals([edit],goals,source)
     edit['replacement']='我没揪。你先把箱子抬下来。'
-    with pytest.raises(ValueError,match='目标原话'):
-        m.check_dialogue_goals([edit],goals,source)
+    m.check_dialogue_goals([edit],goals,source)
 
 
 def test_dialogue_review_v3_anchors_checklist_and_one_sided_speech(tmp_path):
@@ -679,3 +781,96 @@ def test_dialogue_v4_accepts_identical_words_at_distinct_source_turns():
     review['turns'][1]=review['turns'][0].copy()
     with pytest.raises(ValueError,match='不可重叠'):
         m.dialogue_goals(source,[*checks,review])
+
+
+def test_compact_exchange_keeps_frozen_ids_when_quoted_labels_are_not_speech():
+    m = module()
+    body = ('他盯着屏上的“核验中”。\n\n“那留下的人呢？”\n\n'
+            '我记得他用了个“也”。\n\n“按名册办。”\n\n———\n\n'
+            '屏幕仍是“核验中”。\n\n他听见了广播：“走。”')
+    source = {'source_body': body, 'paragraphs': m.patches.paragraphs(body), 'dialogue_check_version': 9}
+    checks = [{'focus': focus, 'status': 'not_applicable', 'reason': '无此类情境。', 'goal': '', 'turns': []}
+              for focus in ('literal_echo', 'situational_speech', 'scripted_delivery', 'voice_contrast')]
+    revision = {'exchange_id': 'exchange-1', 'phase': 'opening', 'target_turn': 1,
+                'reason': '没有接住追问。', 'goal': '让决定回应谁得留下。', 'preserve': ['仍然按名册办。']}
+    legacy_review = {'passed': ['exchange-2'], 'revisions': [revision]}
+    assert m.dialogue_goals(source, checks, legacy_review)[0]['target']['quote'] == '那留下的人呢？'
+    review = {**legacy_review, 'non_turn_ids': ['d0001', 'd0003', 'd0005']}
+    goal, = m.dialogue_goals(source, checks, review)
+    assert goal['id'] == 'dialogue-exchange-1'
+    assert [turn['quote'] for turn in goal['turns']] == ['那留下的人呢？', '按名册办。']
+    assert goal['target']['paragraph_id'] == 'p0004'
+    with pytest.raises(ValueError, match='非对白'):
+        m.dialogue_goals(source, checks, {**review, 'non_turn_ids': ['d0999']})
+    reported = {**checks[2], 'status': 'pass', 'turns': [{'turn_id': 'd0003'}]}
+    with pytest.raises(ValueError, match='非对白'):
+        m.dialogue_goals(source, [*checks[:2], reported, checks[3]], review)
+    with pytest.raises(ValueError, match='至少两处'):
+        m.dialogue_goals(source, checks, {**review, 'passed': [], 'revisions': [
+            revision, {**revision, 'exchange_id': 'exchange-2'}]})
+
+
+@pytest.mark.parametrize('kind', ['dialogue', 'scene'])
+def test_action_only_revision_needs_same_id_and_changed_exchange_evidence(tmp_path, kind):
+    m = module()
+    body = ('持牌者盯着我：“那留下的人呢？”\n\n'
+            '我一时没接上话。\n\n我把手从名册上移开，作了决定：“按现有登记放行，他上船，你留下。”\n\n'
+            '持牌者留在雨棚下。')
+    put(tmp_path, 'story/0001/chapter.md', body)
+    out = m.prepare(tmp_path, '0001', 'action-only', '1-5000', dialogue_check=True, dialogue_check_version=9)
+    checks = [{'focus': focus, 'status': 'not_applicable', 'reason': '无此类情境。', 'goal': '', 'turns': []}
+              for focus in ('literal_echo', 'situational_speech', 'scripted_delivery', 'voice_contrast')]
+    critique = {'issues': [], 'dialogue_checks': checks,
+                'exchange_review': {'passed': ['exchange-1'], 'revisions': []},
+                'scene_checks': [{'focus': 'narration', 'status': 'not_applicable', 'reason': '无单独问题。',
+                                  'goal': '', 'anchors': []}]}
+    goal_id = 'dialogue-exchange-1' if kind == 'dialogue' else 'scene-1'
+    goal = '让核验员先面对留下的人，再按名册放行。'
+    if kind == 'dialogue':
+        critique['exchange_review'] = {'passed': [], 'revisions': [
+            {'exchange_id': 'exchange-1', 'phase': 'opening', 'target_turn': 1, 'reason': '没有接住追问。',
+             'goal': goal, 'preserve': ['保留追问和逐人告知的结果。']}]}
+    else:
+        critique['scene_checks'] = [{'focus': 'narration', 'status': 'revise', 'reason': '只交代她停了。',
+             'goal': goal, 'preserve': ['保留追问和逐人告知的结果。'],
+             'anchors': [{'paragraph_id': f'p{i:04d}'} for i in range(1,4)]}]
+    put(tmp_path, 'critique.json', critique)
+    m.writer_input(tmp_path, out['revision_dir'], 'critique.json')
+    editor = m.read(tmp_path / out['revision_input'])
+    assert [row['id'] for row in editor['goals']] == [goal_id]
+    edit = {'paragraph_id': 'p0002', 'old': '我一时没接上话。', 'occurrence': 1,
+            'replacement': '我望着持牌者，等他抬起眼。', 'group_id': goal_id}
+    payload = {'source_sha256': editor['source_sha256'], 'edits': [edit]}
+    put(tmp_path, out['revision_patch_path'], payload)
+    m.candidate(tmp_path, out['revision_dir'])
+    context = m.read(tmp_path / out['revision_review_input'])
+    assert m.packet.dialogue_exchanges(m.patches.paragraphs(body)) == m.packet.dialogue_exchanges(
+        m.patches.paragraphs(context['candidate']))
+    report = json.loads(approved(m, out, tmp_path))
+    for check in report['expression_checks']:
+        check['excerpts'] = ['持牌者留在雨棚下。']
+    outcome = {'id': goal_id, 'status': 'resolved', 'excerpts': [
+        '我望着持牌者，等他抬起眼。', '按现有登记放行，他上船，你留下。'],
+        'reason': '停下来等持牌者看过来，核验员才当面回答，告知范围和决定仍与名册一致。'}
+    report['issue_outcomes'] = [outcome]
+    assert m.review_decision(report, context) == []
+    outcome['excerpts'] = ['那留下的人呢？', '按现有登记放行，他上船，你留下。']
+    assert m.review_decision(report, context) == []
+    outcome['excerpts'] = ['按现有登记放行，他上船，你留下。', '持牌者留在雨棚下。']
+    assert m.review_decision(report, context)
+    outcome['excerpts'] = ['那留下的人呢？', '按现有登记放行，他上船，你留下。']
+    report['change_reviews'][0]['preservation'] = {
+        'status': 'lost', 'source_excerpt': '那留下的人呢？', 'candidate_excerpt': '按现有登记放行，他上船，你留下。',
+        'reason': '问话原有的质疑作用受损。'}
+    assert any('质疑作用受损' in reason for reason in m.review_decision(report, context))
+    report['change_reviews'][0].pop('preservation')
+    report['change_reviews'][0]['effect'] = 'equivalent'
+    assert m.review_decision(report, context)
+    outcome['id'] = 'renumbered'
+    with pytest.raises(ValueError, match='逐项复核'):
+        m.review_decision(report, context)
+    outcome['id'] = goal_id
+    report['change_reviews'][0]['effect'] = 'improved'
+    put(tmp_path, out['revision_review_path'], report)
+    m.commit(tmp_path, out['revision_dir'], json.dumps(report, ensure_ascii=False))
+    assert (tmp_path/'story/0001/chapter.md').read_bytes() == context['candidate'].encode()

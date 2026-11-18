@@ -214,6 +214,11 @@ def test_semantic_review_production_contract_separates_draft_provenance_and_auth
                                   'novel-polisher', 'novel-professional-polisher', 'novel-self-critic', 'xs2-reader-sim'])
 def test_dialogue_contract_preserves_required_speech_and_local_repair_evidence(agent):
     sections = document('prompts.json')['agents'][agent]['sections']
+    if agent == 'novel-single-writer':
+        prompt = '\n'.join(section['content'] for section in sections if section['enabled'])
+        assert '作者明确的情节' in prompt
+        assert '必要证词、条件、数量和承诺仍须清楚' in prompt
+        return
     contract = next(s['content'] for s in sections if s['name'] == 'dialogue_learning_contract')
     for term in ('必要的公开要求', '有限证词', '上一句话', '自我诊断', '字数范围'):
         assert term in contract

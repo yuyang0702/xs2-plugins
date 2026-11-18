@@ -24,6 +24,11 @@ EXPRESSION_FILES=('facts-approved.json','facts-audit.json','expression-input.jso
                   'expression-draft.json','expression-audit.json')
 
 
+def expression_files(directory):
+    name = 'expression-addition-goals.json'
+    return (*EXPRESSION_FILES, name) if (directory/name).is_file() else EXPRESSION_FILES
+
+
 def shared():
     spec=importlib.util.spec_from_file_location('draft_review_shared',Path(__file__).with_name('recovery_checkpoint.py'))
     value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
@@ -32,6 +37,16 @@ def shared():
 def guard():
     spec=importlib.util.spec_from_file_location('draft_review_guard',Path(__file__).parents[1]/'draft_guard/draft_guard.py')
     value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
+
+def blocking_review(g, directory, audit, body, contract, phase, *, retained_original=False):
+    issues=g.audit_candidate(directory,audit,body,contract,phase,precheck=retained_original)
+    if not g.read(directory/'binding.json').get('combined_precheck'):
+        return issues
+    repairs,_=g.propose_repairs(issues)
+    if retained_original:
+        return [issue for issue in repairs if issue['category'] in g.policy.HARD]
+    return repairs
 
 
 def read(root,path):return json.loads(shared()._path(root,path).read_text(encoding='utf-8-sig'))
@@ -53,7 +68,7 @@ def _resume_expression_commit(g, directory, task, body, source, binding, contrac
             return False
         report=g.read(directory/'expression-audit.json')
         return (report.get('book_contract_sha256')==binding['book_contract_sha256']
-                and not g.audit_candidate(directory,report,body,contract,'expression'))
+                and not blocking_review(g,directory,report,body,contract,'expression'))
     except (OSError,ValueError,TypeError,KeyError):
         return False
 
@@ -117,7 +132,7 @@ def prepare(root,state,task,chapter):
                 or approved.get('book_contract_sha256')!=book_sha or approved.get('source_sha256')!=binding['source_sha256']
                 or approved.get('contract_sha256')!=binding['contract_sha256']
                 or approved.get('audit_sha256')!=common._digest(folder/'facts-audit.json')
-                or g.policy.audit_issues(audit,body,contract,'facts')):
+                or blocking_review(g,folder,audit,body,contract,'facts')):
             raise ValueError('已核验事实稿的原文或审核凭据不一致')
         inputs.extend(directory+'/'+name for name in ('facts-approved.json','facts-audit.json'))
     inputs += [multi+'/plan.json',multi+'/planning-sources.md']
@@ -135,7 +150,8 @@ def prepare(root,state,task,chapter):
         selected=EXPRESSION_COMMIT
         identity.append('expression-commit')
         seed_data['resume_expression_commit']=task['task_id']
-        inputs.extend(f'{directory}/{name}' for name in EXPRESSION_FILES if f'{directory}/{name}' not in inputs)
+        inputs.extend(f'{directory}/{name}' for name in expression_files(common._path(root,directory))
+                      if f'{directory}/{name}' not in inputs)
     seed=f'cache/recovery/draft-review/{common._value_digest(identity)[:24]}/body.json'
     seed_text=json.dumps(seed_data,ensure_ascii=False,indent=2)+'\n';file=common._path(root,seed)
     if file.exists() and file.read_text(encoding='utf-8')!=seed_text:raise ValueError('已有恢复种子被修改，不能覆盖')
@@ -208,6 +224,11 @@ def verify(root,state,task,require_tail=True):
     required=set(selected)
     if not require_tail:required.difference_update(('sync_up_si','script_check_originality'))
     def completed(key):return task.get('node_states',{}).get(key,{}).get('status')=='completed'
+    directory='cache/draft-guard/'+task['task_id']
+    binding=read(root,directory+'/binding.json')
+    if (binding.get('combined_precheck') and completed('script_guard_facts_accept')
+            and read(root,directory+'/facts-approved.json').get('combined_precheck')):
+        required.discard('agent_guard_expression_inspect')
     if required.intersection(PRECHECK_AGENTS):
         for phase in PHASES:
             accept=f'script_guard_{phase}_accept'
@@ -218,8 +239,7 @@ def verify(root,state,task,require_tail=True):
                 required.discard(accept)
     if not all(completed(key) for key in required):
         raise ValueError('审稿恢复的全部事实、表达与发布门禁尚未完成')
-    directory='cache/draft-guard/'+task['task_id'];receipt=read(root,directory+'/final-receipt.json')
-    binding=read(root,directory+'/binding.json');contract=read(root,directory+'/contract.json')
+    receipt=read(root,directory+'/final-receipt.json');contract=read(root,directory+'/contract.json')
     audit=read(root,directory+'/expression-audit.json');body=receipt.get('body','')
     expected=read(root,checkpoint['multi_dir']+'/plan.json')['continuity'];contract_sha=g.policy.contract_digest(expected)
     if (not body or receipt.get('phase')!='expression' or receipt.get('body_sha256')!=g.body_digest(body)
@@ -230,7 +250,8 @@ def verify(root,state,task,require_tail=True):
             or binding.get('pov')!=state.get('values',{}).get('narrative_pov')
             or binding.get('task_id')!=task['task_id'] or binding.get('source_sha256')!=g.body_digest(read(root,checkpoint['source_file'])['body'])
             or receipt.get('audit_sha256')!=common._digest(common._path(root,directory+'/expression-audit.json'))
-            or g.audit_candidate(common._path(root,directory),audit,body,contract,'expression')
+            or blocking_review(g,common._path(root,directory),audit,body,contract,'expression',
+                               retained_original=receipt.get('retained_original',False))
             or read(root,'cache/si/chapter.json').get('body')!=body or read(root,'cache/si/body.json').get('body')!=body):
         raise ValueError('恢复成稿与新任务最终核验凭据不一致')
     expected=(body.rstrip()+'\n').replace('\n',os.linesep).encode('utf-8')

@@ -25,6 +25,119 @@ def test_in_range_local_revision_does_not_suggest_midpoint_padding():
     assert budget['suggested_net_change']==0
 
 
+def test_mixed_growth_has_a_stable_sentence_issue_and_preserves_the_useful_addition():
+    m = helper()
+    heat = '壶口的热气淡了。'
+    repeated = '耗去的热气谁也要不回来。'
+    choice = '现在分，得看每一碗能泡开多少干粮。'
+    reply = '“少泡多少？”'
+    source = heat + '\n\n' + reply
+    edit = {'paragraph_id': 'p0001', 'old': heat, 'occurrence': 1,
+            'replacement': heat + repeated + choice}
+    report = [{'edit_index': 0, 'useful': [choice], 'repetitions': [
+        {'previous': heat, 'quote': repeated, 'reason': '重新解释已经写出的热气流失'}]}]
+    issues = m.review_additions(source, [edit], report)
+    issue, = issues
+    assert issue['category'] == 'post_action_restatement'
+    assert issue['excerpts'] == [heat, repeated]
+    assert issue['preserve'] == [choice]
+    assert issues == m.review_additions(source, [edit], report)
+    repaired = [{**edit, 'replacement': heat + choice}]
+    candidate = m.apply_patches(source, {'source_sha256': m.digest(source), 'edits': repaired})
+    assert reply in candidate
+    outcome = {'id': issue['id'], 'status': 'resolved', 'excerpts': [choice], 'reason': '删去复述，留下分水决定'}
+    assert m.review_addition_outcomes(source, repaired, issues, [outcome]) == []
+    with pytest.raises(ValueError, match='原编号'):
+        m.review_addition_outcomes(source, repaired, issues, [{**outcome, 'id': 'another-id'}])
+    assert m.review_addition_outcomes(source, [edit], issues, [outcome])
+    assert m.review_addition_outcomes(source, [{**edit, 'replacement': heat}], issues,
+                                      [{**outcome, 'excerpts': [heat]}])
+
+
+def test_growth_review_is_complete_and_cannot_use_an_invented_or_later_quote():
+    m = helper()
+    edit = {'paragraph_id': 'p0001', 'old': '有风。', 'occurrence': 1,
+            'replacement': '有风。风说过了。后面另有一扇门。'}
+    with pytest.raises(ValueError, match='增写'):
+        m.review_additions('有风。', [edit], None)
+    for previous in ('原文没有这句', '后面另有一扇门。'):
+        with pytest.raises(ValueError, match='逐字'):
+            m.review_additions('有风。', [edit], [{'edit_index': 0, 'useful': [], 'repetitions': [
+                {'previous': previous, 'quote': '风说过了。', 'reason': '重复'}]}])
+
+
+def test_mixed_replacement_with_net_cut_still_reviews_new_restatement():
+    m = helper()
+    heat = '壶口的热气比揭盖时淡了些。'
+    repeated = '谁也不能把耗掉的热气再要回来。'
+    choice = '整壶给谁，另一边的事就只能继续等。'
+    old = heat + '有一个可以又长又详细地说清楚的理由，在此反复交代也没有什么作用。' * 2
+    source = old + '\n\n“少泡多少？”'
+    edit = {'paragraph_id': 'p0001', 'old': old, 'occurrence': 1,
+            'replacement': heat + repeated + choice}
+    assert len(edit['replacement']) < len(old)
+    assert m.growth_indices([edit]) == []  # Historical scope stays verifiable.
+    assert m.growth_indices([edit], include_mixed=True) == [0]
+    review = [{'edit_index': 0, 'useful': [choice], 'repetitions': [
+        {'previous': heat, 'quote': repeated, 'reason': '第二句又说明水正在变凉。'}]}]
+    issue, = m.review_additions(source, [edit], review, include_mixed=True)
+    repair = [{**edit, 'replacement': heat + choice}]
+    assert not m.review_addition_outcomes(source, repair, [issue], [{
+        'id': issue['id'], 'status': 'resolved', 'excerpts': [choice], 'reason': '留下分水的代价。'}])
+
+
+def test_mixed_replacement_catches_an_extra_copy_even_after_a_large_cut():
+    m = helper()
+    retained = '船已经靠岸。'
+    old = retained + '他们原本还有许多事情需要在雨停后逐件重新商量。'
+    edit = {'paragraph_id': 'p0001', 'old': old, 'occurrence': 1, 'replacement': retained * 2}
+    assert m.growth_indices([edit], include_mixed=True) == [0]
+
+
+def test_scene_line_repair_needs_its_own_change_and_preserves_explicit_keep():
+    m = helper()
+    speech = '我得先把这项核验停下来。'
+    question = '“那留下的人呢？”'
+    restatement = '我知道他要明确答复。'
+    order = '“十七码先别放，名单对不上。”'
+    source = f'“先别走。{speech}”\n\n{question}\n\n{restatement}\n\n{order}他把闸门合上。'
+    first = {'id':'line-1','scene_focus':{'quote':speech,'addressee':'等船的人'},'excerpts':['先别走。',speech]}
+    second = {'id':'line-2','scene_focus':{'quote':restatement,'preserve':[question]},
+              'excerpts':[question,restatement]}
+    goals = [m.bind_scene_goal(source, [], source, issue, source.index(issue['scene_focus']['quote']))
+             for issue in (first, second)]
+    edits = [{'paragraph_id':'p0001','old':speech,'occurrence':1,'replacement':''}]
+    edited = m.apply_patches(source, {'source_sha256':m.digest(source),'edits':edits})
+    outcome = {'id':'line-1','status':'resolved','reason':'拦下就够了。','excerpts':['“先别走。”']}
+    assert not m.scene_outcome_problem(source, edits, edited, goals[0], outcome)
+    assert m.scene_outcome_problem(source, edits, edited, goals[1], {**outcome,'id':'line-2'})
+
+    edits += [{'paragraph_id':'p0003','old':restatement,'occurrence':1,'replacement':''}]
+    edited = m.apply_patches(source, {'source_sha256':m.digest(source),'edits':edits})
+    outcome = {'id':'line-2','status':'resolved','reason':'省去解说，追问直接接下一步动作。','excerpts':[question,order]}
+    assert not m.scene_outcome_problem(source, edits, edited, goals[1], outcome)
+    edits += [{'paragraph_id':'p0002','old':question,'occurrence':1,'replacement':'他没出声。'}]
+    edited = m.apply_patches(source, {'source_sha256':m.digest(source),'edits':edits})
+    assert m.scene_outcome_problem(source, edits, edited, goals[1], {**outcome,'excerpts':[order]})
+
+
+def test_scene_line_can_gain_a_real_addressee_or_be_retained_after_a_recheck():
+    m = helper()
+    quote = '十七码先别放，名单对不上。'
+    witness = '我冲那位等船的人说。'
+    source = f'{witness}\n\n“{quote}”'
+    issue = {'id':'audience','scene_focus':{'quote':quote},'excerpts':[witness,quote]}
+    goal = m.bind_scene_goal(source,[],source,issue,source.index(quote))
+    edit = {'paragraph_id':'p0001','old':witness,'occurrence':1,'replacement':'我冲正要开闸的同事说。'}
+    candidate = m.apply_patches(source,{'source_sha256':m.digest(source),'edits':[edit]})
+    outcome = {'id':'audience','status':'resolved','reason':'同事可立刻暂停放行。',
+               'excerpts':[edit['replacement'],quote]}
+    assert not m.scene_outcome_problem(source,[edit],candidate,goal,outcome)
+    assert m.scene_outcome_problem(source,[],source,goal,{**outcome,'excerpts':[witness,quote]})
+    formal = m.bind_scene_goal(candidate,[],candidate,{**issue,'excerpts':outcome['excerpts']},candidate.index(quote))
+    assert not m.scene_outcome_problem(candidate,[],candidate,formal,{**outcome,'status':'not_applicable'})
+
+
 def test_conflict_evidence_binds_label_and_crlf_to_exact_frozen_paragraphs():
     m=helper();source='我把钱收了。\r\n\r\n他还站在那里。\r\n\r\n她转过身。'
     quotes=['p0001—p0002（12实字）：\n我把钱收了。\n\n他还站在那里。','她转过身。']

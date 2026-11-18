@@ -1,7 +1,7 @@
 import copy
 import json
 
-from test_length_quality import policy, quality, write
+from test_length_quality import install_legacy_length_feedback, policy, quality, write
 
 
 MODEL = 'anthropic:claude-opus-5-5'
@@ -40,40 +40,18 @@ def exhausted():
             'lengthRepairStrategy': quality().LENGTH_REPAIR_STRATEGY}
 
 
-def test_author_selected_model_starts_one_bounded_budget_keeps_total_and_originals(tmp_path):
-    p = policy()
-    body = write(tmp_path, 'story/0001/chapter.md', '衣' * 3206)
-    before = body.read_bytes()
-    state = exhausted()
-    assert p.next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
-    state['writerModel'] = MODEL
-    for expected in [1, 2, 3]:
-        action = p.next_action(tmp_path, state, 'polish')
-        assert action['action'] == 'advance'
-        state.update(action['updates'])
-        assert state['lengthRepairCount'] == expected
-        assert state['lengthRepairTotal'] == 6 + expected
-        assert state['lengthRepairModel'] == MODEL
-        assert state['autoLengthRepairLimit'] == 3
-    assert p.next_action(tmp_path, state, 'polish')['stage'] == 'reader-sim'
-    assert body.read_bytes() == before
-
-
 def test_model_budget_does_not_overwrite_previous_attempt_feedback(tmp_path):
-    p = policy()
-    q = quality()
     write(tmp_path, 'story/0001/chapter.md', '衣' * 3206)
     state = exhausted()
     state['lengthRepairCount'] = 0
-    first = p.next_action(tmp_path, state, 'polish')
-    state.update(first['updates'])
+    install_legacy_length_feedback(tmp_path, state)
+    first_receipt = state['lengthRepairFeedback']
     original = tmp_path / state['lengthRepairFeedback']['path']
     content, stamp = original.read_bytes(), original.stat().st_mtime_ns
     state['lengthRepairCount'] = 3
     state['writerModel'] = MODEL
-    second = p.next_action(tmp_path, state, 'polish')
-    assert second['action'] == 'advance'
-    assert second['updates']['lengthRepairFeedback']['path'] != state['lengthRepairFeedback']['path']
+    install_legacy_length_feedback(tmp_path, state)
+    assert state['lengthRepairFeedback']['path'] != first_receipt['path']
     assert original.read_bytes() == content and original.stat().st_mtime_ns == stamp
 
 def test_explicit_book_roles_separate_writer_planner_polisher_and_assessor():

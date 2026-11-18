@@ -271,15 +271,13 @@ def accept_chapter(root,chapter,task):
     s=support();chapter=s.chapter_id(chapter)
     if task.get('status')!='completed' or not task.get('task_id'):raise ValueError('缺少本次导出任务凭据')
     states,stale=s.confirmed(root);snapshot=next((x for x in states if x['chapter']==chapter),None)
-    report=s.load(root,f'story/{chapter}/reader_report.json',{})
     body=f'story/{chapter}/chapter.md';body_sha=s.digest(root,body)
-    if not snapshot or chapter in stale or report.get('verdict')!='pass' or report.get('body_sha256')!=body_sha:
-        raise ValueError('章节须有当前可信归档及通过的读者评估')
+    if not snapshot or chapter in stale or not body_sha:
+        raise ValueError('章节须有当前可信归档')
     from importlib.util import spec_from_file_location,module_from_spec
     spec=spec_from_file_location('longrun_length',HERE.parent/'console_service/length_quality.py')
     length=module_from_spec(spec);spec.loader.exec_module(length)
     row={'chapter':chapter,'body_sha256':body_sha,'archive_commit_id':snapshot.get('archive_commit_id'),
-        'reader_sha256':s.digest(root,f'story/{chapter}/reader_report.json'),
         'characters':length.count_prose(s.read(root,body)),'export_task_id':task['task_id'],'accepted_at':now()}
     with closing(connect(root)) as db,db:
         db.execute('INSERT OR IGNORE INTO chapter_history VALUES(?,?)',(identity(row),encoded(row)))
@@ -325,7 +323,6 @@ def report(root):
     for row in chapters:
         number=row['chapter'];snapshot=valid.get(number)
         if (not snapshot or number in stale or row['body_sha256']!=s.digest(root,f'story/{number}/chapter.md')
-                or row['reader_sha256']!=s.digest(root,f'story/{number}/reader_report.json')
                 or row['archive_commit_id']!=snapshot.get('archive_commit_id')):invalid.append(number)
         elif number not in frozen['baseline_chapters']:current.append(row)
     current_audits={}

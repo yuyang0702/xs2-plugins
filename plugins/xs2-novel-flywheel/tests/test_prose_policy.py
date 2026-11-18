@@ -308,6 +308,8 @@ def test_length_only_reviewer_freezes_effective_context_instead_of_legacy_cache(
     task = "length-policy"
     definition, values = workflow_context(book, "polish", task)
     values.update(polish_pass="length_only", target_word_count="4800-5200")
+    guidance = next(node for node in definition['nodes'] if node['id'] == 'script_length_context')
+    guidance['node_params']['script_argv'].remove('--advisory-length')
     outputs = workflow_script(book, definition, values, "script_length_context", task)
     write(book, "cache/pp/body.json", json.dumps({"body": "阿杏手腕发酸。"}, ensure_ascii=False))
     review = quality().prepare_fragment_review(
@@ -389,9 +391,9 @@ def test_changed_compact_state_is_not_projected_as_a_profile_mirror(book):
     write(book, state, content)
     write(book, "story/0001/chapter.md", "阿杏亲眼看到交易。")
     approve(policy(), book, profile)
-    definition, values = workflow_context(book, "reader-sim", "preserve-state")
-    reader = next(n for n in definition["nodes"] if n["id"] == "agent_reader")
-    message = asyncio.run(resolve(reader["first_message"], values, definition, book))
+    definition, values = workflow_context(book, "post-hoc", "preserve-state")
+    observer = next(n for n in definition["nodes"] if n["id"] == "agent_obs")
+    message = asyncio.run(resolve(observer["first_message"], values, definition, book))
     assert content in message
     assert (book / state).read_bytes() == content.encode("utf-8")
 
