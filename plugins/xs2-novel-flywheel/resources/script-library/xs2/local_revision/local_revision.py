@@ -24,6 +24,7 @@ wire=load('local_revision_wire',HERE/'prose_policy/review_wire.py')
 pending=load('local_revision_pending',HERE/'local_revision/pending_revision.py')
 guard=load('local_revision_execution_guard',HERE/'production_guard/production_guard.py')
 report_repair=load('local_revision_report_repair',HERE/'prose_policy/report_repair.py')
+tone=load('local_revision_tone',HERE/'local_revision/tone_review.py')
 SCOPED_REVIEW='local-review-v3'
 
 
@@ -61,6 +62,8 @@ def read(p):return json.loads(p.read_text(encoding='utf-8-sig'))
 def save(p,data):quality.atomic_text(p,json.dumps(data,ensure_ascii=False,indent=2)+'\n')
 def model_view(data,role):
     view=packet.local(data,role)
+    if role != 'critic':
+        view.pop('tone_review', None)
     if data.get('review_protocol')==SCOPED_REVIEW:
         if role=='writer':
             by_id={row['id']:row for row in data['goals']}
@@ -71,7 +74,43 @@ def model_view(data,role):
         elif role=='reviewer':
             view.pop('reader_report',None)
             view.pop('critique',None)
+            if data.get('whole_review_phase')=='signoff':
+                view['whole_review_phase']='signoff'
+                view['signoff_instructions']=(
+                    '本次是撤回后的整稿签发。通读完整候选并逐场与冻结原稿对比，核对每处修改、删句、新增、前后衔接及作者要求。'
+                    '当前任务以此协议为准：change_reviews 和 added_text_reviews 均填 []。issue_outcomes 覆盖 goals 的全部编号。'
+                    'final- 开头的是必须独立作出的签发判断；逐场说明具体理由，引用该场实际变动处的候选原句或候选段号对象。'
+                    '对于其他目标，填写原目标结论。客观矛盾同时填 issues；实质问题由写手修订。'
+                    '允许保留尚有别种写法、但合乎情节与本书文风的句子。')
+                view['signoff_evidence']=signoff_evidence(data)
     return view
+
+
+def signoff_evidence(context):
+    rows=patches.paragraphs(context['source_body'])
+    edits=context['edits']
+    locators=packet.focused_goals(context['goals'],context['source_body'],packet.prose(context['source_body']))
+    changed={e['paragraph_id'] for e in edits}
+    result={}
+    for goal in locators:
+        ids=set(goal['paragraph_ids'])
+        regions=[]
+        for i,row in enumerate(rows):
+            if row['id'] not in ids:continue
+            text=patches._scoped_paragraph(row,edits)
+            if text.strip():
+                regions.append(text)
+            elif row['id'] in changed:
+                for step in (-1,1):
+                    j=i+step
+                    while 0<=j<len(rows):
+                        neighbor=patches._scoped_paragraph(rows[j],edits)
+                        if neighbor.strip():
+                            regions.append(neighbor)
+                            break
+                        j+=step
+        result[goal['id']]=list(dict.fromkeys(regions))
+    return result
 
 
 def verify_model(actual,data,role):
@@ -281,12 +320,30 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
         if candidates:source['precision_candidates']=candidates
     elif previous_source and 'precision_candidates' in previous_source:
         source['precision_candidates']=previous_source['precision_candidates']
+    before_tone = None
+    if previous_source is not None:
+        # Preserve inputs for attempts frozen before or after this detector was installed.
+        if 'tone_review' in previous_source:
+            source['tone_review'] = previous_source['tone_review']
+    elif scoped_review and not fixed and 'confirmed_reader' not in source:
+        before_tone = tone.scan(body)
+        source['tone_review'] = {
+            **tone.critic_view(before_tone, body, source['paragraphs']),
+            'scene_edit_version':1,
+            **({'whole_signoff_version':1} if whole_chapter_review or not authored.strip() else {}),
+            'scene_commission':tone.SCENE_COMMISSION,
+            'writer_commission':tone.WRITER_COMMISSION,
+            'compare_scene_trials':bool(whole_chapter_review or not authored.strip()),
+            'snapshot_digest': digest(before_tone),
+        }
     binding={'schema':1,'task_id':task_id,'chapter_number':chapter,'body_path':body_path,'body_sha256':sha(raw),
              'book_contract_sha256':frozen['sha256'],'state':state(root),'context_path':context_path,'reference_path':reference_path,'feedback_path':feedback,
              'files':source_files(root,chapter,context_path,reference_path,feedback,(source.get('confirmed_reader') or {}).get('source_paths',())),
              'source_digest':digest(source),'bounds':bounds,'outputs':out}
     if policy_bound:binding['target_policy']=target_policy
     if prior_binding is not None and prior_binding!=binding:raise ValueError('同任务修订来源已有变化，请新建任务')
+    if before_tone is not None:
+        save(safe(root,folder+'/tone-before.json'), before_tone)
     save(safe(root,out['revision_source_input']),source);save(safe(root,out['revision_input']),source)
     save_model(safe(root,out['revision_source_model']),source,'critic')
     quality.atomic_text(safe(root,out['revision_source_file']),body);save(previous,binding)
@@ -706,7 +763,13 @@ def writer_input(root,folder,critique_path):
         p = safe(root, folder+'/critique-accepted.json')
     try:
         if confirmed:targets=confirmed['goals']
-        elif source.get('review_protocol')==SCOPED_REVIEW:targets=scoped_critic_goals(source,critique)
+        elif source.get('review_protocol')==SCOPED_REVIEW:
+            if source.get('tone_review',{}).get('scene_edit_version')==1:
+                verified=tone.verified_scenes(critique.get('scene_pass',[]),source['paragraphs'])
+                if critique.get('scene_pass') and not verified:
+                    raise ValueError('逐场审读意见没有可定位的引文。请引用单段中连续的一小句。')
+                critique={**critique,'scene_pass':verified}
+            targets=scoped_critic_goals(source,critique)
         else:targets=goals(source,critique)
     except ValueError as exc:
         reason='整场表达目标复查：'+str(exc)
@@ -739,6 +802,16 @@ def writer_input(root,folder,critique_path):
             raise Retry('agent_sc',reason) from exc
     data={**source,'critique':critique,'goals':targets,
           'length_edit_budget':patches.length_edit_budget(quality.count_prose(source['source_body']),quality.required_bounds(b.get('target_policy',b['bounds'])))}
+    if source.get('tone_review',{}).get('compare_scene_trials'):
+        scenes=critique.get('scene_pass',[])
+        data['scene_trial_windows']=tone.trial_windows(scenes,source['paragraphs'])
+        for i,scene in enumerate(scenes):
+            alternative=scene.get('alternative')
+            if not isinstance(alternative,str) or not alternative.strip():
+                continue
+            targets.append({'id':f'trial-{i}','source':'scene_trial','level':'advisory',
+                           'paragraph_id':scene['paragraph_id'],'excerpts':[scene['quote']],
+                           'goal':'试写并提交这个场面的另一种演法：'+alternative+' 原场需要保住的作用：'+scene['impact']})
     if source.get('added_text_review'):
         data['growth_guidance']=patches.GROWTH_GUIDANCE
     prior=safe(root,folder+'/editor-binding.json')
@@ -763,15 +836,50 @@ def writer_input(root,folder,critique_path):
     return b['outputs']
 
 
+def critic_source_excerpts(row, body):
+    quotes = row.get('evidence', [])
+    if isinstance(quotes, str):
+        quotes = [quotes]
+    if not isinstance(quotes, list):
+        return []
+    wrapped = {r.get('index') for r in row.get('evidence_repairs', [])
+               if isinstance(r, dict) and r.get('repair') == 'paired_outer_quote'}
+    excerpts = []
+    for index, quote in enumerate(quotes):
+        if not isinstance(quote, str) or not quote.strip():
+            return []
+        if quote in body:
+            excerpts.append(quote)
+            continue
+        if row.get('evidence_status') != 'verified':
+            return []
+        text = quote.strip()
+        if index in wrapped and {'“':'”','‘':'’','"':'"',"'":"'"}.get(text[0]) == text[-1]:
+            text = text[1:-1].strip()
+        # Apply only the normalizer's whitespace equivalence; retain the actual source bytes.
+        words = text.split()
+        match = re.search(r'\s+'.join(re.escape(word) for word in words), body) if words else None
+        if match is None:
+            return []
+        excerpts.append(match.group())
+    return excerpts
+
+
 def scoped_critic_goals(source,critique):
     result=[]
     for index,row in enumerate(critique['issues']):
-        quotes=row.get('evidence',[])
-        if (row.get('severity') not in ('medium','high') or row.get('evidence_status')=='unverified'
-                or not quotes or any(not isinstance(q,str) or not q.strip() or q not in source['source_body'] for q in quotes)):
+        quotes=critic_source_excerpts(row,source['source_body'])
+        impact = row.get('impact')
+        minor_edit = (row.get('severity') == 'low' and source.get('tone_review', {}).get('handoff_version') == 2
+                      and isinstance(impact, str) and bool(impact.strip())
+                      and isinstance(row.get('suggestion'), str) and bool(row['suggestion'].strip()))
+        if ((not minor_edit and row.get('severity') not in ('medium','high')) or row.get('evidence_status')=='unverified'
+                or not quotes):
             continue
         goal={'id':f'critic-{index}','source':'local_critic','level':'advisory',
               'goal':row['suggestion'],'excerpts':quotes,'preserve':row.get('preserve',[])}
+        if minor_edit:
+            goal['goal'] += ' 阅读影响：' + impact.strip()
         required=row.get('required_source')
         if required:
             if required not in source['author_feedback']:
@@ -785,9 +893,18 @@ def scoped_critic_goals(source,critique):
             goal.update(level='hard',source_quote=source_quote)
         if 'scene_focus' in row:
             goal['scene_focus']=row['scene_focus']
-            offset=expression.scene_focus_position(row,source['source_body'])
+            try:
+                offset=expression.scene_focus_position({**row,'excerpts':quotes},source['source_body'])
+            except ValueError:
+                if goal['level']!='advisory' or not source.get('tone_review',{}).get('scene_edit_version'):
+                    raise
+                # A malformed optional focus is not evidence for a rewrite.
+                # Other grounded goals and the original critic record are independent.
+                continue
             goal=patches.bind_scene_goal(source['source_body'],[],source['source_body'],goal,offset)
         result.append(goal)
+    if source.get('tone_review',{}).get('scene_edit_version')==1:
+        result.extend(tone.scene_goals(critique.get('scene_pass',[]),result))
     return result
 
 
@@ -812,8 +929,15 @@ def compose(root,b,source):
     # A prior equivalent judgment grants only removal, never publication. The
     # native append-only event binds the exact proposals and original review.
     events = guard.store().events(root)
+    rechecking_subset=False
     for event in events:
         pruning=event['data']
+        if (event['kind'] in ('scene_trial_prune','scene_trial_selection') and pruning.get('task_id')==b['task_id']
+                and pruning.get('binding_digest')==digest(b) and pruning.get('merged_digest')==digest(merged)):
+            indices=scene_trial_prunes(pruning['review_report'],pruning['review_context'])
+            if indices!=pruning['indices']:raise ValueError('逐场候选的撤回依据与原复核不符')
+            merged=[edit for i,edit in enumerate(merged) if i not in indices]
+            rechecking_subset=True
         if (event['kind']=='equivalent_prune' and pruning.get('task_id')==b['task_id']
                 and pruning.get('binding_digest')==digest(b) and pruning.get('merged_digest')==digest(merged)):
             old=pruning['review_context'];raw=pruning['review_report']
@@ -839,7 +963,7 @@ def compose(root,b,source):
     context={'task_id':b['task_id'],'source_body':source['source_body'],'source_sha256':b['body_sha256'],'candidate':candidate,
              'candidate_sha256':sha(candidate.encode()),'book_contract':source['book_contract'],
              'book_contract_sha256':b['book_contract_sha256'],'confirmed_context':source['confirmed_context'],
-             'author_feedback':source['author_feedback'],'goals':data['goals'],'edits':merged,
+             'author_feedback':source['author_feedback'],'goals':[g for g in data['goals'] if g.get('source')!='scene_trial'],'edits':merged,
              'patch_digest':digest(payload),'evidence_catalog':evidence.catalog(candidate),'length':measured}
     if data.get('writer_view_version')==packet.FOCUSED_WRITER_VERSION:
         context.update(writer_view_version=packet.FOCUSED_WRITER_VERSION,reader_report=source['reader_report'],
@@ -847,6 +971,22 @@ def compose(root,b,source):
     if source.get('precision_review_version')==2:context['precision_review_version']=2
     if 'reviewer_view_version' in data:context['reviewer_view_version']=data['reviewer_view_version']
     if source.get('review_protocol')==SCOPED_REVIEW:context['review_protocol']=SCOPED_REVIEW
+    if source.get('tone_review',{}).get('scene_edit_version')==1:
+        context['deletion_review_version']=1
+    if data.get('scene_trial_windows') and source.get('tone_review',{}).get('whole_signoff_version')==1:
+        context['whole_review_phase']='signoff' if rechecking_subset else 'selection'
+        if rechecking_subset:
+            # Stamp each required scene verdict with the exact candidate. A report
+            # for an earlier subset cannot approve the current join by accident.
+            touched={e['paragraph_id'] for e in merged if e['old']!=e['replacement']}
+            for win in data['scene_trial_windows']:
+                ids=sorted(p for p in touched if int(win['first'][1:])<=int(p[1:])<=int(win['last'][1:]))
+                if ids:
+                    context['goals'].append({'id':'final-'+context['candidate_sha256'][:12]+'-'+win['anchor'],
+                        'source':'scene_signoff','level':'mandatory','paragraph_ids':ids,
+                        'goal':'通读当前整稿，核对本场所有改动和前后衔接。事实、视角、人物声音、删去的作用、重复及新写内容都可签发填 resolved；有具体损失或矛盾填 remaining 并说明。'})
+    if data.get('scene_trial_windows'):
+        context['untried_scene_windows']=tone.untried_windows(data['scene_trial_windows'],merged,first_read=not rechecking_subset)
     if source.get('added_text_review'):
         tracked = tracked_addition_goals(events,b)
         additions = [row for row in tracked if 'scene_anchor' not in row]
@@ -988,6 +1128,7 @@ def scoped_assessment(report,context):
     sources='\n'.join((body,context['confirmed_context'],context['author_feedback'],book.prompt(context['book_contract'])))
     source_rows=patches.paragraphs(body)
     by_paragraph={row['id']:row for row in source_rows}
+    source_positions={row['id']:i for i,row in enumerate(source_rows)}
     changed={edit['paragraph_id'] for edit in edits}
     nearby={source_rows[j]['id'] for i,row in enumerate(source_rows) if row['id'] in changed
             for j in range(max(0,i-1),min(len(source_rows),i+2))}
@@ -1001,8 +1142,21 @@ def scoped_assessment(report,context):
                 or issue['source_quote'] not in sources):
             raise ValueError('事实矛盾须引用本轮受影响候选与冻结资料的逐字依据')
         facts.append(issue['reason'])
-    changes=patches.review_changes(edits,report['change_reviews'],source=body,candidate=candidate)
-    additions=growth_findings(context,report)
+    signoff=context.get('whole_review_phase')=='signoff'
+    if signoff and (report['change_reviews'] or report.get('added_text_reviews')):
+        raise ValueError('整稿签发只提交逐场和原目标的 issue_outcomes，change_reviews 与 added_text_reviews 填 []。')
+    changes=[] if signoff else patches.review_changes(edits,report['change_reviews'],source=body,candidate=candidate)
+    if context.get('deletion_review_version')==1:
+        for row in report['change_reviews']:
+            i=row['edit_index']
+            judgment=row.get('preservation',{})
+            if edits[i]['replacement'] or judgment.get('status')!='lost':
+                continue
+            loss=judgment.get('lost_function')
+            if not isinstance(loss,str) or not loss.strip():
+                raise ValueError(f'补丁 {i} 删除后判为 lost，须填写 lost_function，具体说明候选让读者失去了哪项仍需的信息、人物声音或因果。'
+                                 '只删去重复表达请判 not_applicable；作用由别处承接请判 preserved 并引用候选。')
+    additions=[] if signoff else growth_findings(context,report)
     problems=facts+[row['reason'] for row in changes]+[row['reason'] for row in additions]
     blocked={row['edit_index'] for row in [*changes,*additions]}
     goals_by_id={row['id']:row for row in context['goals']}
@@ -1023,8 +1177,24 @@ def scoped_assessment(report,context):
         ids=locators[key]
         if 'scene_anchor' in goal:
             ids.update(goal['scene_anchor'].get('supporting',{}))
-        touched[key]={i for i,edit in enumerate(edits) if edit['paragraph_id'] in ids}
-        regions=[patches._scoped_paragraph(by_paragraph[p],edits) for p in ids if p in by_paragraph]
+        touched[key]={i for i,edit in enumerate(edits)
+                      if edit['paragraph_id'] in ids and edit['old']!=edit['replacement']}
+        regions=[]
+        for p in ids.intersection(by_paragraph):
+            region=patches._scoped_paragraph(by_paragraph[p],edits)
+            if region.strip():
+                regions.append(region)
+            elif p in changed:
+                # A removed paragraph has no candidate text. Only its nearest
+                # surviving neighbor on either side can attest to the join.
+                for step in (-1,1):
+                    pos=source_positions[p]+step
+                    while 0<=pos<len(source_rows):
+                        neighbor=patches._scoped_paragraph(source_rows[pos],edits)
+                        if neighbor.strip():
+                            regions.append(neighbor)
+                            break
+                        pos+=step
         if (status not in ('resolved','remaining','keep') or not isinstance(reason,str) or not reason.strip()
                 or not isinstance(quotes,list) or not quotes
                 or any(not isinstance(q,str) or not q.strip() or q not in candidate for q in quotes)
@@ -1043,6 +1213,10 @@ def scoped_assessment(report,context):
         if problem:
             still_open[key]=problem
             if required:hard.append(key+' 原有必改问题仍未解决：'+problem)
+    if signoff:
+        # Final review is all-or-nothing. Never reconstruct an unreviewed
+        # partial manuscript after a signoff or suppress a reported contradiction.
+        hard.extend(facts)
     return {'facts':facts,'blocked':blocked,'additions':additions,'hard':hard,'open':still_open,
             'touched':touched,'problems':problems+hard}
 
@@ -1120,16 +1294,50 @@ def equivalent_indices(report,context,reasons):
     return sorted(r['edit_index'] for r in equivalent)
 
 
+def scene_trial_prunes(report,context):
+    """Only withdraw proposals. The resulting text must receive a fresh full review."""
+    if 'untried_scene_windows' not in context or context.get('whole_review_phase')=='signoff':
+        return []
+    expanded=expand_review(report,context)
+    edits=context['edits']
+    changes=expanded['change_reviews']
+    if sorted(r['edit_index'] for r in changes)!=list(range(len(edits))):
+        return []
+    remove={r['edit_index'] for r in changes if r['effect'] in ('regressed','equivalent')}
+    if context.get('whole_review_phase')=='selection':
+        remove.update(r['edit_index'] for r in changes if r.get('preservation',{}).get('status')=='lost')
+        remove.update(i for i,e in enumerate(edits) if e['old']==e['replacement'])
+        for row in expanded.get('added_text_reviews',[]):
+            i=row.get('edit_index')
+            if type(i) is int and 0<=i<len(edits) and row.get('repetitions'):
+                remove.add(i)
+    for issue in expanded['issues']:
+        quote=issue.get('candidate_quote')
+        if not isinstance(quote,str) or not quote.strip() or quote not in context['candidate']:
+            continue
+        matches=[i for i,e in enumerate(edits) if quote in e['replacement'] and quote not in e['old']]
+        if len(matches)==1:
+            remove.add(matches[0])
+    groups={edits[i]['group_id'] for i in remove if edits[i].get('group_id')}
+    remove.update(i for i,e in enumerate(edits) if e.get('group_id') in groups)
+    if context.get('whole_review_phase')!='selection' and not any(i not in remove and e['replacement']!=e['old'] for i,e in enumerate(edits)):
+        return []
+    return sorted(remove)
+
+
 def scoped_publication(context, assessment, binding):
     if assessment['hard']:
         return None,assessment['hard']
     edits=context['edits']
-    all_indices=set(range(len(edits)))
+    # Omitting a byte-identical replacement preserves the reviewed candidate,
+    # including any grouped edits. It must not trigger partial publication.
+    all_indices={i for i,edit in enumerate(edits) if edit['old']!=edit['replacement']}
+    blocked=assessment['blocked'] & all_indices
     if assessment['facts']:
         selected=set()
-    elif assessment['blocked']:
-        selected={i for i,edit in enumerate(edits) if i not in assessment['blocked']
-                  and edit.get('independent') is True and not edit.get('group_id')}
+    elif blocked:
+        selected={i for i in all_indices-blocked
+                  if edits[i].get('independent') is True and not edits[i].get('group_id')}
     else:
         selected=all_indices
 
@@ -1201,6 +1409,28 @@ def commit(root,folder,expected_review):
         if not actual_matches:raise ValueError('复查文件与本任务实际模型输出不一致')
         scoped=context.get('review_protocol')==SCOPED_REVIEW
         if scoped:
+            remove=scene_trial_prunes(report,context)
+            selection=context.get('whole_review_phase')=='selection'
+            if selection:
+                votes=expand_review(report,context)['change_reviews']
+                if sorted(v['edit_index'] for v in votes)!=list(range(len(context['edits']))):
+                    raise ValueError('初选须完整且不重复地审读所有补丁。')
+                if not any(v['effect']=='improved' and v['edit_index'] not in remove
+                           and v.get('preservation',{}).get('status')!='lost'
+                           and context['edits'][v['edit_index']]['old']!=context['edits'][v['edit_index']]['replacement'] for v in votes):
+                    message='初选没有可签发的有效改动。请根据实质问题重新逐场修订。'
+                    guard.retry(root,'local-revision/'+b['task_id'],'agent_pl',message)
+                    raise Retry('agent_pl',message)
+            if remove or selection:
+                guard.store().event(root,'scene_trial_selection' if selection else 'scene_trial_prune',{'task_id':b['task_id'],'binding_digest':digest(b),
+                    'merged_digest':digest(context['edits']),'indices':remove,'review_context':context,'review_report':report})
+                fresh=compose(root,b,source)
+                save(safe(root,b['outputs']['revision_review_input']),fresh)
+                save_model(safe(root,b['outputs']['revision_review_model']),fresh,'reviewer')
+                refresh_retry_budget(root,'agent_local_review')
+                if selection:
+                    raise Retry('agent_local_review','进入整稿签发。按照 review-model 的 signoff_instructions 阅读完整候选。change_reviews、added_text_reviews 填 []，逐项完成当前 goals 的签发和原目标结论。')
+                raise Retry('agent_local_review','已撤回上一份报告中倒退、等价或引入所报矛盾的改动；请独立复查当前重组候选，按新索引填写。')
             assessment=scoped_assessment(report,context)
             publication,reasons=scoped_publication(context,assessment,b)
         else:
@@ -1211,6 +1441,8 @@ def commit(root,folder,expected_review):
             reasons=review_decision(report,context)
             publication=context
         expanded=expand_review(report,context)
+    except Retry:
+        raise
     except (ValueError,KeyError,TypeError) as exc:
         if actual_matches and context.get('review_protocol')!=SCOPED_REVIEW:
             targeted=report_repair.request(report,context,str(exc))
@@ -1265,6 +1497,15 @@ def commit(root,folder,expected_review):
              'changed_spans':len(publication['edits']),'length':publication['length'],'accepted':True,
              'expanded_review_digest':digest(expanded)}
     if scoped:receipt.update(review_protocol=SCOPED_REVIEW,open_issues=publication['open_issues'],published_edits_digest=digest(publication['edits']))
+    if 'tone_review' in source:
+        before_tone = read(safe(root,folder+'/tone-before.json'))
+        if digest(before_tone) != source['tone_review']['snapshot_digest'] or before_tone['sha256'] != b['body_sha256']:
+            raise ValueError('文体检测原稿与本次冻结凭据不一致')
+        after_tone = tone.scan(publication['candidate'])
+        if after_tone['sha256'] != receipt['after_sha256'] or after_tone['revision'] != before_tone['revision']:
+            raise ValueError('文体复测版本与采用稿或原检测器不一致')
+        tone_report = tone.comparison(before_tone, after_tone, report.get('issue_outcomes', []))
+        receipt['tone_report'] = folder + '/tone-report.md'
     # Prepare bytes outside the database lock, then keep epoch verification,
     # final source validation, canonical replacement and receipt in one lock.
     p=safe(root,b['body_path'])
@@ -1279,6 +1520,9 @@ def commit(root,folder,expected_review):
             if proof:receipt['execution_fence']=proof
             save(safe(root,folder+'/commit-intent.json'),receipt)
             if sha(p.read_bytes())!=publication['candidate_sha256']:os.replace(temporary,p)
+            if 'tone_report' in receipt:
+                save(safe(root,folder+'/tone-after.json'), after_tone)
+                quality.atomic_text(safe(root,receipt['tone_report']), tone_report)
             save(safe(root,folder+'/receipt.json'),receipt)
     finally:
         if temporary is not None and temporary.exists():temporary.unlink()

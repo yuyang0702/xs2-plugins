@@ -262,6 +262,14 @@ def parameters(state, definition):
         values["conflict_plan_mode"] = "serial_chapter"
     if workflow == 'polish':
         values['polish_pass'] = 'content'
+        if (automatic_launch and state.get('mode')=='short' and values.get('writer_type')!='muti'
+                and not values.get('author_feedback_file') and not state.get('readerRepairCount')
+                and not state.get('autoPending')):
+            values['polish_review_scope']='whole_chapter'
+        elif automatic_launch and state.get('autoPending'):
+            frozen=state['autoPending'].get('parameters') or {}
+            if 'polish_review_scope' in frozen:
+                values['polish_review_scope']=frozen['polish_review_scope']
     result = {}
     for variable in definition.get("variables", []):
         key = variable["key"]
@@ -473,7 +481,8 @@ def _audited_draft(root,state):
 
 def _keep_audited_draft(root, state, task):
     number=chapter(state)
-    if (state.get('mode')!='short' or state.get('readerRepairCount') or 'mvp' not in state.get('completed',[])
+    if (state.get('mode')!='short' or state.get('values',{}).get('writer_type')!='muti'
+            or state.get('readerRepairCount') or 'mvp' not in state.get('completed',[])
             or number not in (state.get('polishReviewRecoveries') or {}) or number in (state.get('polishDecisions') or {})
             or Path(task.get('workspace_override') or '').resolve()!=Path(root).resolve()):
         return None
@@ -527,7 +536,7 @@ def recovery_action(state, stage, task, *, root=None):
                         'updates':{'compositionReviewRefreshRecoveries':{**previous,key:dict(ref)}}}
     if stage == 'mvp' and root is not None and not state.get('automaticCheckpoint'):
         nodes = task.get('node_states') or {}
-        for step in ('facts_commit', 'expression_commit', 'expression_precheck'):
+        for step in ('facts_precheck', 'facts_commit', 'expression_commit', 'expression_precheck'):
             node = nodes.get(f'script_guard_{step}', {})
             error = '\n'.join(str(node.get(field) or '') for field in ('stderr', 'error'))
             if (node.get('status') == 'failed' and 'RETRY_STOP:' in error
@@ -717,18 +726,6 @@ def next_action(root, state, stage):
 
 def _next_action(root, state, stage):
     values=state.get('values',{})
-    short_single=(state.get('mode')=='short' and values.get('writer_type')!='muti')
-    if stage=='mvp' and short_single and not values.get('author_feedback_file'):
-        verified=_audited_draft(root,state)
-        if verified is not None:
-            draft,directory,digest=verified
-            binding_path=directory/'binding.json'
-            binding=json.loads(binding_path.read_text(encoding='utf-8')) if binding_path.is_file() else {}
-            if binding.get('task_id')==draft['task_id'] and binding.get('combined_precheck') is True:
-                decision={'status':'retained_audited_draft','draft_task_id':draft['task_id'],
-                          'body_sha256':digest,'reason':'combined_precheck'}
-                return {'action':'advance','stage':'post-hoc','updates':{'automaticCheckpoint':None,
-                    'polishDecisions':{**(state.get('polishDecisions') or {}),chapter(state):decision}}}
     if stage == 'polish':
         quality = length_quality()
         number = chapter(state)

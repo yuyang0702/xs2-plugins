@@ -247,6 +247,30 @@ def test_short_single_writer_projects_current_chapter_and_character_knowledge(tm
         assert phrase not in brief
 
 
+@pytest.mark.parametrize('mother_card', ['- 身份：林遥的母亲。', '### 已确认事实\n\n- 周岚是林遥的母亲。'])
+def test_short_writer_keeps_cards_referred_to_by_an_alias_or_confirmed_relationship(tmp_path, mother_card):
+    ready(tmp_path)
+    write(tmp_path, 'outline/near_term_outline.md',
+          '## 第 1 章 · 回家\n林遥回家向妈妈借钱，顺路把雨伞还给何师傅。')
+    write(tmp_path, 'meta/character_profiles.md',
+          '# 角色档案\n\n## 林遥\n- 身份：女儿。\n\n'
+          f'## 周岚\n{mother_card}\n\n'
+          '## 何庆\n- 别名：何师傅\n\n'
+          '## 何敏\n- 别名：何师傅\n\n'
+          '## 宋八\n- 身份：开货车的人。')
+    write(tmp_path, 'meta/character_voice.md',
+          '## 周岚\n生气时才叫女儿小名。\n\n'
+          '## 何庆\n每次还伞都先问伞骨。\n\n'
+          '## 何敏\n只管伞晾干没有。\n\n'
+          '## 宋八\n他称呼大家为旅客。')
+
+    path, _ = helper().prepare_context(tmp_path, '0001', single_writer=True)
+    brief = (tmp_path / path).read_text(encoding='utf-8')
+    for phrase in ('林遥的母亲', '生气时才叫女儿小名', '每次还伞都先问伞骨', '只管伞晾干没有'):
+        assert phrase in brief
+    assert '宋八' not in brief
+
+
 def test_short_writer_world_keeps_story_constraints_without_numeric_audit_instructions(tmp_path):
     ready(tmp_path)
     world = ('# 短篇世界基础\n\n## 信息与认知边界\n\n### 叙事限制\n\n'

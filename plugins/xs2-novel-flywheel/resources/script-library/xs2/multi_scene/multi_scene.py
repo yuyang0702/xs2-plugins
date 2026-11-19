@@ -203,8 +203,9 @@ def planning_sources(root, chapter, policy_runtime='', task_id=None, *, advisory
     return '\n\n'.join(parts)
 
 
-def write_handoffs(directory,plan,allocation):
-    if 'continuity' not in plan:return
+def write_handoffs(directory,plan,allocation, *, writer_inputs=False):
+    if 'continuity' not in plan and not writer_inputs:
+        return {}
     accepted={};allocation_sha=allocation_policy.digest(directory/'allocation.json')
     for row in allocation['scenes']:
         slot=row['slot'];file=directory/f'validated-{slot}.json'
@@ -214,11 +215,28 @@ def write_handoffs(directory,plan,allocation):
                 or value.get('source_sha256')!=allocation_policy.digest(raw)):
             raise ValueError('前场正文已有变化或未按当前分场校验，不能交接旧正文')
         accepted[row['scene_id']]=value['body']
+    writer_files = {}
     for row in allocation['scenes']:
+        previous = accepted.get(row['scene_id'] - 1)
+        if writer_inputs and previous and row['scene_id'] not in accepted:
+            ending = ''
+            for paragraph in reversed(paragraphs(previous)):
+                joined = f'{paragraph}\n\n{ending}' if ending else paragraph
+                if len(joined) > 800:
+                    ending = ending or paragraph[-800:]
+                    break
+                ending = joined
+            name = f"previous-{row['slot']}.md"
+            length.atomic_text(directory / name,
+                               '【上一场末段】从已有正文的落点接写，按本场计划继续。\n\n' + ending + '\n')
+            writer_files[row['slot']] = name
+        if 'continuity' not in plan:
+            continue
         save_json(directory/f"handoff-{row['slot']}.json",{'scene_id':row['scene_id'],'continuity':plan['continuity'],
             'book_contract':read_json(directory/'book-contract.json') if (directory/'book-contract.json').is_file() else None,
             'previous_scenes':[{'scene_id':i,'body':body} for i,body in accepted.items() if i<row['scene_id']],
             'instruction':'前场原文只说明实际衔接，不得覆盖冻结事实；发现冲突要纠正，不能照错续写。不得提前写后场，也不重复介绍已成立信息。'})
+    return writer_files
 
 
 def expansion_retry(directory, index, guard, minimum, maximum, issue=''):
@@ -351,7 +369,9 @@ def main():
     if args.action == 'check-plan':
         if not allocation:
             raise ValueError('缺少本次已确认分场，不能继续写作')
-        write_handoffs(directory,read_json(directory/'plan.json'),allocation)
+        writer_files = write_handoffs(directory, read_json(directory/'plan.json'), allocation, writer_inputs=True)
+        for slot, name in writer_files.items():
+            print(f'<WF_VAR>multi_previous_{slot}:{relative}/{name}</WF_VAR>')
     elif args.action == 'skip-scene':
         if args.scene is None or not allocation or args.scene in rows:
             raise ValueError('只可跳过本次已确认分场中未启用的执行槽')

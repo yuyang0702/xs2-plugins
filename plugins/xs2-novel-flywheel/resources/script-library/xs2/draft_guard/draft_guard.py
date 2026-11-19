@@ -129,6 +129,8 @@ def audit_value(directory,phase,body,contract,binding):
         'candidate_body':body,'continuity_contract':contract,'source_body':source['source_body'],
         **({'edits':edits,'edits_sha256':packet.digest(edits)} if edits else {}),
         **growth,
+        **({'required_check_keys':policy.required_checks(contract,'expression' if combined else phase)}
+           if binding.get('explicit_check_keys') else {}),
         **({'scene_goals':scene_goals} if scene_goals else {}),
         **({'facts_from_confirmed_sources':True} if phase=='facts' and binding.get('facts_from_confirmed_sources') else {}),
         **({'review_scope':'original_facts_and_expression'} if combined else {}),
@@ -143,6 +145,7 @@ def audit_value(directory,phase,body,contract,binding):
             + ('first_person_narrator_fact_id 是冻结计划中的第一人称叙述者。正文未自称姓名时，'
                '核对叙述中的第一人称指代，用实际代词作为 value，引用当前叙述原文，填写 is_name=false 及真实 same_referent。'
                '区分旁白与对话中别人的自称。读者能跟住「我」时不要求正文补名；视角或身份确实变化再举证。' if narrator else '')
+            + ('按 required_check_keys 中每个原样键名核查并在 checks 返回布尔值。handoff 核对动作、物件交接及场面连续性。' if binding.get('explicit_check_keys') else '')
             + COMMITMENT_CHECK + event_guidance
             + (QUESTION_CHECK + (ISSUE_GUIDANCE if binding.get('combined_precheck') else policy.expression_rules.GUARD_GUIDANCE)
                if phase == 'expression' or combined else '')
@@ -407,6 +410,8 @@ def main():
         if assembled.get('resume_expression_commit'):
             previous_dir = length.safe_path(root, 'cache/draft-guard/'+assembled['resume_expression_commit'])
             review_binding = read(previous_dir/'binding.json')
+        if review_binding is None or review_binding.get('explicit_check_keys'):
+            binding['explicit_check_keys']=True
         if args.advisory_length or review_binding is None or 'target_policy' in review_binding:
             target_policy=length.resolve_length(root,args.target,chapter=number,task_id=task,advisory=args.advisory_length)
             if target_policy['ownership']!='legacy':

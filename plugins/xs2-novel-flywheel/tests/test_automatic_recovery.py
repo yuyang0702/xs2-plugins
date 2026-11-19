@@ -4,7 +4,7 @@ import pytest
 from test_length_quality import policy
 
 
-def test_short_production_reuses_only_a_current_combined_precheck(tmp_path, monkeypatch):
+def test_prechecked_short_single_draft_still_advances_to_polish(tmp_path, monkeypatch):
     import hashlib
     import json
     from test_book_contract import helper
@@ -29,10 +29,21 @@ def test_short_production_reuses_only_a_current_combined_precheck(tmp_path, monk
     monkeypatch.setattr(p.execution_guard(),'terminal_native_task',lambda *_:native)
     state={'mode':'short','values':{'chapter_number':'0001','target_word_count':'1-50','writer_type':'single'},
            'completed':['mvp'],'refs':{'mvp':{'workflow_id':workflow,'task_id':task_id}}}
-    assert p.next_action(tmp_path,state,'mvp')['stage']=='post-hoc'
+    assert p.next_action(tmp_path,state,'mvp')['stage']=='polish'
     assert p.next_action(tmp_path,{**state,'values':{**state['values'],'author_feedback_file':'author.md'}},'mvp')['stage']=='polish'
     body.write_text('本章后来被另行修改。',encoding='utf-8')
     assert p.next_action(tmp_path,state,'mvp')['stage']=='polish'
+
+
+@pytest.mark.parametrize(('writer','expected'), [('single','whole_chapter'),('muti','auto')])
+def test_automatic_short_polish_scope_is_bound_at_launch(tmp_path, writer, expected):
+    p=policy()
+    state={'autoNext':True,'autoArmed':True,'autoController':'server-v1','mode':'short',
+           'values':{'chapter_number':'0001','writer_type':writer}}
+    definition={'workflow_id':'polish','variables':[{'key':'polish_review_scope','default':'auto'},
+                                                   {'key':'polish_pass','default':''}]}
+    p.launch_check(tmp_path,state,'polish')
+    assert p.parameters(state,definition)=={'polish_review_scope':expected,'polish_pass':'content'}
 
 
 def test_retired_reader_cannot_start_or_schedule_repair(tmp_path):
@@ -173,6 +184,8 @@ def test_exhausted_polish_can_archive_unchanged_audited_draft(tmp_path, monkeypa
            'refs':{'mvp':{'workflow_id':workflow,'task_id':identity}},'polishReviewRecoveries':{'0001':'first-polish'}}
     failed={'task_id':'second-polish','status':'failed','workspace_override':str(root),
             'node_states':{'agent_pl':{'status':'failed','error':'No streaming chunk received for 120.0s'}}}
+    assert (p.recovery_action(state,'polish',failed,root=root) or {}).get('stage')!='post-hoc'
+    state['values']['writer_type']='muti'
     action=p.recovery_action(state,'polish',failed,root=root)
     assert action['stage']=='post-hoc' and action['reset']==['post-hoc','export']
     decision=action['updates']['polishDecisions']['0001']

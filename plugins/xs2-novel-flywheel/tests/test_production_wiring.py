@@ -59,6 +59,14 @@ def test_scoped_reference_is_generated_without_overwriting_frozen_input(tmp_path
         **values, 'scoped_learning_context': f'learning/context/{stage}.md'})
 
 
+def test_fragment_review_context_is_generated_by_its_task():
+    graph = json.loads((PLUGIN/"resources/workflows/polish/definition.json").read_text(encoding="utf-8"))
+    variables = {v["key"]: v for v in graph["variables"]}
+    for key in ("fragment_review_input", "fragment_review_report_path", "fragment_review_binding", "fragment_review_binding_sha"):
+        assert variables[key]["source_type"] == "output"
+        assert variables[key]["source_node_id"] == "script_fragment_review_context"
+
+
 @pytest.mark.parametrize('stage',STAGES)
 def test_every_paid_role_is_downstream_of_preflight_and_its_budget(stage):
     from src.workflow.definition import WorkflowDef

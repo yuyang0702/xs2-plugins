@@ -252,6 +252,18 @@ def local(data,role):
         fields=('source_body','source_sha256','book_contract','book_contract_sha256',
                 'author_feedback','automatic_revision_advice','writer_references','length_edit_budget','fixed_edit','growth_guidance')
         result={key:copy.deepcopy(data[key]) for key in fields if key in data}
+        commission=(data.get('tone_review') or {}).get('writer_commission')
+        if commission:
+            result['scene_workshop']={
+                'assignment':commission,
+                'scene_pass':copy.deepcopy(data.get('critique',{}).get('scene_pass',[])),
+            }
+            if data.get('scene_trial_windows'):
+                result['scene_workshop'].update(
+                    trial_windows=copy.deepcopy(data['scene_trial_windows']),
+                    deliverable='本轮是逐场对照试写。每个 first 到 last 区间选一处提交可与原稿比较的实际替代写法。'
+                                '优先发展现场转折，允许在区间中选比 anchor 更合适的段落。'
+                                'keep 提醒你原场的长处。你提交候选，独立审稿者决定是否采用；作者明示的保留要求优先。')
         goal_plans=((data.get('composition_plan') or {}).get('plan') or {}).get('goal_plans')
         if goal_plans:
             result['composition_plan']={'plan':{'goal_plans':copy.deepcopy(goal_plans)}}

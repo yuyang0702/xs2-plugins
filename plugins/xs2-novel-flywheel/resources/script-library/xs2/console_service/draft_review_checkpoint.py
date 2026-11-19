@@ -81,6 +81,7 @@ def prepare(root,state,task,chapter):
         raise ValueError('审稿恢复需要本书尚未发布正文的失败任务')
     nodes=task.get('node_states',{})
     failed={key for key,node in nodes.items() if node.get('status')=='failed'}
+    initial_precheck=(failed=={'script_guard_facts_precheck'} and nodes.get('agent_guard_facts_inspect',{}).get('status')=='completed')
     facts_retry=bool(failed) and failed<={'agent_guard_facts_audit','script_guard_facts_commit'}
     expression_retry=bool(failed) and failed<={'agent_guard_expression_repair','agent_guard_expression_audit',
             'script_guard_expression_candidate','script_guard_expression_commit','agent_guard_expression_inspect',
@@ -88,7 +89,7 @@ def prepare(root,state,task,chapter):
     def completed(key):return nodes.get(key,{}).get('status')=='completed'
     facts_ready=(all(completed(key) for key in ('agent_guard_facts_repair','script_guard_facts_candidate'))
                  if facts_retry else any(completed(key) for key in ('script_guard_facts_commit','script_guard_facts_accept')))
-    if not (facts_retry or expression_retry) or not facts_ready or not all(
+    if not (initial_precheck or ((facts_retry or expression_retry) and facts_ready)) or not all(
             completed(key) for key in ('script_multi_plan','script_guard_prepare')):
         raise ValueError('该失败范围缺少可继续审核的候选或事实稿')
     directory='cache/draft-guard/'+task['task_id'];multi=task['parameter_values'].get('multi_dir','')
@@ -114,7 +115,21 @@ def prepare(root,state,task,chapter):
         raise ValueError('候选、原任务或当前本书契约的绑定不完整')
     folder=common._path(root,directory)
     inputs=[directory+'/binding.json',directory+'/facts-input.json']
-    if facts_retry:
+    if initial_precheck:
+        if not binding.get('inspect_first') or not binding.get('combined_precheck') or (folder/'facts-approved.json').exists():
+            raise ValueError('初稿已改变核验阶段，无法沿用初次预审')
+        writer=nodes.get('agent_sw',{})
+        emitted=writer.get('outputs',{}).get('_json_output_file')
+        file=common._path(root,task['parameter_values']['guard_source_file'])
+        body=source['source_body']
+        if (not completed('agent_sw') or not emitted or Path(emitted).resolve()!=file
+                or g.read(file).get('body','').strip()!=body):
+            raise ValueError('初次预审恢复缺少实际写手输出或冻结原稿不匹配')
+        packet=read(root,directory+'/facts-audit-input.json')
+        if packet!=g.audit_value(folder,'facts',body,contract,binding):
+            raise ValueError('初次预审恢复的冻结输入不匹配')
+        inputs.append(directory+'/facts-audit-input.json')
+    elif facts_retry:
         output=nodes['agent_guard_facts_repair'].get('outputs',{}).get('_json_output_file')
         if not output or Path(output).resolve()!=folder/'facts-draft.json' or (folder/'facts-approved.json').exists():
             raise ValueError('待审事实候选与原任务的写手交付不一致')

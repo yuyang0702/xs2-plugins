@@ -364,15 +364,22 @@ def first_person_narrator(contract, narrative_pov):
     return matches[0] if len(matches) == 1 else None
 
 
+def required_checks(contract,phase):
+    categories=HARD+(('repetition',) if phase=='expression' else ())
+    return [key for key in categories if key!='resources' or contract.get('resource_ledgers')]
+
+
 def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None,narrative_pov=None):
     _require(phase in ('facts','expression') and isinstance(report,dict) and report.get('schema')==1,'核验报告格式无效')
     _require(report.get('candidate_sha256')==hashlib.sha256(body.encode()).hexdigest()
              and report.get('contract_sha256')==contract_digest(contract),'核验报告与当前候选或事实契约不匹配')
     report=audit_evidence.resolve_report(report,body,evidence_unit_names(contract))
     categories=HARD+(('repetition',) if phase=='expression' else ())
-    required=[k for k in categories if k!='resources' or contract.get('resource_ledgers')]
+    required=required_checks(contract,phase)
     if phase=='expression':categories+=tuple(expression_rules.GUARD_ISSUE_DIMENSIONS)
-    _require(isinstance(report.get('checks'),dict) and all(report['checks'].get(k) is True for k in required),'核验报告未检查全部必需维度')
+    checks=report.get('checks')
+    missing=[key for key in required if not isinstance(checks,dict) or checks.get(key) is not True]
+    _require(not missing,'核验报告未检查全部必需维度：'+', '.join(missing))
     semantic=report.get('issues');_require(isinstance(semantic,list),'语义问题须明确提供数组')
     for row in semantic:
         _require(isinstance(row,dict) and row.get('category') in categories

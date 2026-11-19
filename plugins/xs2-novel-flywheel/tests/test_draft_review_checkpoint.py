@@ -26,6 +26,31 @@ def fixture(root,monkeypatch,capsys):
     return state,task,definition,body
 
 
+def test_initial_precheck_recovery_binds_actual_single_writer_output(tmp_path,monkeypatch,capsys):
+    from test_draft_guard import prepared
+    body='她收起相机。'
+    prepared(tmp_path,monkeypatch,capsys,source_body=body,inspect_first=True,combined_precheck=True)
+    directory=tmp_path/'cache/draft-guard/task-guard'
+    packet=json.loads((directory/'facts-audit-model.json').read_bytes())
+    assert {'facts','money','pov','handoff','repetition'}<=set(packet['required_check_keys'])
+    source_file='cache/si/chapter.json'
+    save(tmp_path/'cache/se/se_output.json',{})
+    values={'chapter_number':'0001','target_word_count':'1-500','narrative_pov':'third_person'}
+    nodes={k:{'status':'completed'} for k in ('agent_sw','script_multi_plan','script_guard_prepare','agent_guard_facts_inspect')}
+    nodes['agent_sw']['outputs']={'_json_output_file':str(tmp_path/source_file)}
+    nodes['script_guard_facts_precheck']={'status':'failed'}
+    task={'task_id':'task-guard','status':'failed','workspace_override':str(tmp_path),'node_states':nodes,
+          'parameter_values':{**values,'guard_source_file':source_file,'multi_dir':'cache/multi/task-guard'}}
+    prepare_review=load('recovery_checkpoint').prepare_review
+    checkpoint=prepare_review(tmp_path,{'values':values},task,'0001')
+    assert json.loads((tmp_path/checkpoint['source_file']).read_bytes())['body']==body
+    assert 'agent_guard_facts_inspect' in checkpoint['selected_node_ids']
+    assert 'agent_sw' not in checkpoint['selected_node_ids']
+    save(tmp_path/source_file,{'body':'后来替换的正文。'})
+    with pytest.raises(ValueError,match='写手输出'):
+        prepare_review(tmp_path,{'values':values},task,'0001')
+
+
 def test_review_checkpoint_keeps_verified_prose_and_replays_all_gates_not_writers(tmp_path,monkeypatch,capsys):
     state,source,definition,body=fixture(tmp_path,monkeypatch,capsys);module=load('recovery_checkpoint')
     checkpoint=module.prepare_review(tmp_path,state,source,'0001');state['automaticCheckpoint']=checkpoint

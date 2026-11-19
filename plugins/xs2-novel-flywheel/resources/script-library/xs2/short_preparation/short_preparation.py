@@ -18,6 +18,17 @@ OPTIONAL = ('meta/character_voice_adaptations.md', 'learning/context/mvp.md',
             'meta/current_world.md', 'meta/current_characters.md', 'meta/conflict_ledger.md',
             'meta/hooks.md', 'meta/debts.md', 'cache/story-support/context.md')
 
+RELATIONSHIP_NAMES = {
+    '母亲': ('妈妈', '妈', '娘'),
+    '父亲': ('爸爸', '爸', '爹'),
+    '姐姐': ('姐',),
+    '哥哥': ('哥',),
+    '弟弟': ('弟',),
+    '妹妹': ('妹',),
+    '师父': ('师傅', '恩师'),
+    '师傅': ('师父', '恩师'),
+}
+
 
 def _path(root, relative):
     root = Path(root).resolve()
@@ -156,6 +167,10 @@ def render_characters(root, data):
         profiles.extend([f'## {name}', ''])
         if v2:
             base.update({key: item[key] for key in ('card_schema', 'facts', 'personality', 'plot_constraints')})
+            aliases = [alias.strip() for alias in item.get('aliases', [])]
+            if aliases:
+                profiles.append('- 别名：' + '、'.join(dict.fromkeys(aliases)))
+                profiles.append('')
             profiles.extend(['### 已确认事实', ''])
             profiles.extend('- ' + fact for fact in item['facts'])
             profiles.extend(['', '### 性格与关系', '', '- 性格倾向：' + item['personality']])
@@ -303,6 +318,24 @@ def _composition_intent(root, chapter):
     return _json(list(segments.values()))
 
 
+def _character_mentions(profile, scene_scope, voice):
+    cards = [(voice._name(card['title']), card['body']) for card in voice._sections(profile)]
+    names = {name for name, _ in cards if name}
+    cast = {name for name in names if name in scene_scope}
+    for name, body in cards:
+        aliases = re.findall(r'^\s*-\s*别名[：:]([^\n]+)', body, re.M)
+        if any(alias.strip() and alias.strip() in scene_scope
+               for line in aliases for alias in re.split(r'[、，,；;]', line)):
+            cast.add(name)
+        for line in body.splitlines():
+            identity = re.sub(r'^(?:-\s*)?(?:(?:身份|已确认事实)[：:]\s*)?', '', line.strip()).rstrip('。')
+            owner, _, relationship = identity.removeprefix(f'{name}是').rpartition('的')
+            if owner in names and owner in scene_scope and relationship in RELATIONSHIP_NAMES:
+                if any(term in scene_scope for term in (relationship, *RELATIONSHIP_NAMES[relationship])):
+                    cast.add(name)
+    return names, cast
+
+
 def single_writer_brief(root, chapter, effective, task_id, overrides, author):
     sections = []
     seen = set()
@@ -335,9 +368,8 @@ def single_writer_brief(root, chapter, effective, task_id, overrides, author):
 
     voice = _library('voice_support/voice_support.py')
     profile = effective['meta/character_profiles.md']
-    names = {voice._name(card['title']) for card in voice._sections(profile)} - {''}
     scene_scope = '\n'.join([*sections, str(author.get('human_intent', '')), str(author.get('premise', ''))])
-    cast = {name for name in names if name in scene_scope}
+    names, cast = _character_mentions(profile, scene_scope, voice)
     offstage = names - cast if cast else set()
 
     def other_character(level, title):
