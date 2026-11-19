@@ -35,7 +35,7 @@ def test_prechecked_short_single_draft_still_advances_to_polish(tmp_path, monkey
     assert p.next_action(tmp_path,state,'mvp')['stage']=='polish'
 
 
-@pytest.mark.parametrize(('writer','expected'), [('single','whole_chapter'),('muti','auto')])
+@pytest.mark.parametrize(('writer','expected'), [('single','whole_chapter'),('muti','auto'),('multi','auto')])
 def test_automatic_short_polish_scope_is_bound_at_launch(tmp_path, writer, expected):
     p=policy()
     state={'autoNext':True,'autoArmed':True,'autoController':'server-v1','mode':'short',

@@ -11,6 +11,7 @@ import re
 
 STAGES = ("novel-advisor", "build", "character", "story-plan", "outline", "mvp", "polish", "post-hoc", "export")
 PRODUCTION = STAGES[5:]
+MULTI_WRITER_TYPES = ('muti', 'multi')  # Existing books store "muti".
 ARTIFACTS = {
     "novel-advisor": "learning/advisor_report.json", "build": "meta/world_foundation.md",
     "character": "meta/character_profiles.md", "story-plan": "meta/story_plan.md",
@@ -262,7 +263,7 @@ def parameters(state, definition):
         values["conflict_plan_mode"] = "serial_chapter"
     if workflow == 'polish':
         values['polish_pass'] = 'content'
-        if (automatic_launch and state.get('mode')=='short' and values.get('writer_type')!='muti'
+        if (automatic_launch and state.get('mode')=='short' and values.get('writer_type') not in MULTI_WRITER_TYPES
                 and not values.get('author_feedback_file') and not state.get('readerRepairCount')
                 and not state.get('autoPending')):
             values['polish_review_scope']='whole_chapter'
@@ -481,7 +482,7 @@ def _audited_draft(root,state):
 
 def _keep_audited_draft(root, state, task):
     number=chapter(state)
-    if (state.get('mode')!='short' or state.get('values',{}).get('writer_type')!='muti'
+    if (state.get('mode')!='short' or state.get('values',{}).get('writer_type') not in MULTI_WRITER_TYPES
             or state.get('readerRepairCount') or 'mvp' not in state.get('completed',[])
             or number not in (state.get('polishReviewRecoveries') or {}) or number in (state.get('polishDecisions') or {})
             or Path(task.get('workspace_override') or '').resolve()!=Path(root).resolve()):
@@ -785,7 +786,7 @@ def repair_ready(state, feedback_path):
 
 
 def dialogue_writer_node(definition, writer_type):
-    if writer_type != 'muti':
+    if writer_type not in MULTI_WRITER_TYPES:
         return 'agent_sw'
     if any(node['id'] == 'agent_dw' and node.get('agent_type', '').endswith('novel-multi-scene-writer')
            for node in definition.get('nodes', [])):

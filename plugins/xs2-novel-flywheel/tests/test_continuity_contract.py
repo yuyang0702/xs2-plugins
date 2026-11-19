@@ -484,3 +484,21 @@ def test_explicit_zero_balance_does_not_require_a_repeated_unit():
     assert m.amount('可用模块，零。',{'枚':1})==0
     assert m.amount('零',{'瓶':1})==0
     with pytest.raises(ValueError):m.amount('零号基地',{'枚':1})
+
+
+@pytest.mark.parametrize(('quote', 'same', 'valid'), [
+    ('北庭王子赫连靖掀帘进来', True, True),
+    ('北庭王子招呼赫连靖', True, False),
+    ('北庭王子赫连靖掀帘进来', False, False),
+])
+def test_personal_name_requires_explicit_identification_with_frozen_title(quote, same, valid):
+    m = module()
+    c = contract()
+    c['facts'][0].update(value='北庭王子', aliases=[], source_quote='他是成年北庭王子。')
+    original, _ = evidence()
+    body, report = evidence(original.replace('青石铺门前', quote))
+    report['contract_sha256'] = m.contract_digest(c)
+    report['fact_observations'][0]['occurrences'] = [
+        {'value': '赫连靖', 'is_name': True, 'same_referent': same, 'quote': span(quote)}]
+    issues = m.audit_issues(report, body, c, 'facts')
+    assert (issues == []) is valid

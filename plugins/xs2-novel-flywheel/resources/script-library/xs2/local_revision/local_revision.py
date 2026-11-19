@@ -79,7 +79,7 @@ def model_view(data,role):
                 view['signoff_instructions']=(
                     '本次是撤回后的整稿签发。通读完整候选并逐场与冻结原稿对比，核对每处修改、删句、新增、前后衔接及作者要求。'
                     '当前任务以此协议为准：change_reviews 和 added_text_reviews 均填 []。issue_outcomes 覆盖 goals 的全部编号。'
-                    'final- 开头的是必须独立作出的签发判断；逐场说明具体理由，引用该场实际变动处的候选原句或候选段号对象。'
+                    'final- 开头的是必须独立作出的签发判断；逐场说明具体理由，引用该场实际变动处的候选原句或候选段号对象，例如 {"ref_id":"p0002"}。'
                     '对于其他目标，填写原目标结论。客观矛盾同时填 issues；实质问题由写手修订。'
                     '允许保留尚有别种写法、但合乎情节与本书文风的句子。')
                 view['signoff_evidence']=signoff_evidence(data)

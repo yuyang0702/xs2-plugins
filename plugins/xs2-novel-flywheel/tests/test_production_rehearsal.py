@@ -496,3 +496,55 @@ def test_both_formal_writer_paths_read_rehearsals_before_request_budget():
             assert '{{single_writer_context}}' in prompt
             prompt += full_single_writer
         assert '{{pp_learning_context}}' in prompt
+
+
+@pytest.mark.parametrize('failure', ['knowledge', 'long_reply', 'provider', 'changed_plan'])
+def test_allocated_multi_writer_continues_only_with_verified_scene_material(book, service, failure):
+    from hashlib import sha256
+
+    directory = book / 'cache/multi/task-fallback'
+    directory.mkdir(parents=True)
+    scene = {'id': 1, 'entry': '拦车之前。', 'turn': '听明白后赔礼。', 'exit': '绳子解开。',
+             'knowledge': '此时才明白先前的后果。', 'rehearsal_cast': ['阿杏', '掌柜']}
+    plan_file = directory / 'plan.json'
+    plan_file.write_text(json.dumps({'scenes': [scene]}), encoding='utf-8')
+    (directory / 'brief-2.json').write_text(json.dumps(dict(scene, slot=2)), encoding='utf-8')
+    (directory / 'allocation.json').write_text(json.dumps({
+        'plan_sha256': sha256(plan_file.read_bytes()).hexdigest(),
+        'scenes': [{'scene_id': 1, 'slot': 2}]}), encoding='utf-8')
+    if failure == 'changed_plan':
+        plan_file.write_text(json.dumps({'scenes': [dict(scene, entry='另外一个开场。')]}), encoding='utf-8')
+
+    calls = []
+
+    async def call(step, system, packet, parse):
+        calls.append((step, json.loads(packet)))
+        if failure == 'provider':
+            raise ConnectionError('offline')
+        if step.endswith('director'):
+            return parse({'public_start': '柜台前', 'roles': [
+                {'name': name, 'knowledge': '已经知道结局', 'goal': '认错', 'voice': '话少'}
+                for name in ['阿杏', '掌柜']]})
+        if step.endswith('opening-review'):
+            return parse({'voice_or_knowledge': [] if failure == 'long_reply' else [
+                {'quote': '已经知道结局', 'reason': '此事尚未发生', 'repair': '开场只想拦车'}]})
+        return parse({'speech': '话' * 241, 'action': '', 'private_beat': '', 'wants_reply': False})
+
+    result = service.prepare_rehearsal(book, 'task-fallback', 'agent_dw', '0001', directory, 2, '',
+                                       call, model_identity='test-model')
+    if failure == 'provider':
+        with pytest.raises(ConnectionError):
+            asyncio.run(result)
+        return
+    if failure == 'changed_plan':
+        with pytest.raises(ValueError, match='两次未通过'):
+            asyncio.run(result)
+        assert not (directory / 'r-agent_dw.md').exists()
+        return
+    path, count = asyncio.run(result)
+    assert count == 0
+    handoff = (book / path).read_text(encoding='utf-8')
+    assert '拦车之前' in handoff and '已经知道结局' not in handoff
+    if failure == 'knowledge':
+        assert '开场只想拦车' in str(dict(calls)['retake-director'])
+        assert len(calls) == 4

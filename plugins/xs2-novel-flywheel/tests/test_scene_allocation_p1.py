@@ -172,7 +172,7 @@ def test_one_scene_small_target_is_not_rejected_by_unused_six_slot_budget(tmp_pa
 
 
 @pytest.mark.parametrize('count,assembly_retry,writer_type',[(1,False,'muti'),(3,False,'muti'),
-    (6,False,'muti'),(3,True,'muti'),(1,False,'single')])
+    (3,False,'multi'),(6,False,'muti'),(3,True,'muti'),(1,False,'single')])
 def test_real_scheduler_runs_only_planned_scenes_with_actual_allocation_clis(tmp_path,monkeypatch,caplog,count,assembly_retry,writer_type):
     import asyncio
     import os

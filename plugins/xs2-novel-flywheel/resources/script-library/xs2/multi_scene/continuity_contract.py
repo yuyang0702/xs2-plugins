@@ -503,6 +503,21 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None,n
                                  '用实际代词及同一所指作证；缺少专名不算身份缺失。'
                                  '若叙述者确实不一致，用带原文的 pov 或 facts 问题说明。')
         observed_same = any(isinstance(obs, dict) and obs.get('same_referent') is True for obs in occurrences)
+        # Some older plans freeze a person's title as a name. A reviewed
+        # apposition in the candidate can bind one personal name to that title.
+        title = row['value']
+        introduced_names = set()
+        if not row['aliases'] and title.endswith(('王子', '公主', '王妃', '太子', '将军', '掌柜', '大夫', '县令')):
+            for observation in occurrences:
+                if (not isinstance(observation, dict) or observation.get('same_referent') is not True
+                        or observation.get('is_name', True) is not True):
+                    continue
+                name = observation.get('value')
+                quote = observation.get('quote')
+                text = quote.get('text') if isinstance(quote, dict) else None
+                if (isinstance(name, str) and name != title and re.fullmatch(r'[一-鿿]+(?:·[一-鿿]+)*', name)
+                        and isinstance(text, str) and title + name in text):
+                    introduced_names.add(name)
         for obs in occurrences:
             located(obs.get('quote'),body);value=obs.get('value');_require(isinstance(value,str) and value.strip() and value in obs['quote']['text'],'标准值不能冒充实际引文中的名称')
             _require(type(obs.get('is_name',True)) is bool,'须区分专名使用与普通描述')
@@ -519,7 +534,9 @@ def audit_issues(report,body,contract,phase,*,arithmetic=None,facts_audit=None,n
                                  '如正文确实用异物替换原物，须在 issues 的 facts 中列出事实 ID、引文及替换关系。')
                     else:
                         issue('facts','共享物件或身份指向发生变化 '+key,[quote])
-            elif value not in [row['value'],*row['aliases']]:issue('facts','共享事实 '+key+' 发生变化：'+value,[obs['quote']['text']])
+            elif value not in [title, *row['aliases']]:
+                if introduced_names != {value} or obs.get('same_referent') is not True:
+                    issue('facts', '共享事实 '+key+' 发生变化：'+value, [obs['quote']['text']])
     ledgers=_rows(contract.get('resource_ledgers',[]),'分项资源账')
     resource_obs=observations('resource_observations',ledgers) if ledgers or 'resource_observations' in report else {}
     for key,ledger in ledgers.items():

@@ -91,6 +91,10 @@ def resolve_report(report,body,units=None,*,reader_excerpts=False):
             result={k:walk(v,path+'.'+k) for k,v in value.items()}
             if 'excerpts' in result and isinstance(result['excerpts'],list):
                 result['excerpts']=[v['text'] if isinstance(v,dict) and set(v)=={'text','occurrence'} else v for v in result['excerpts']]
+                if re.fullmatch(r'report\.issue_outcomes\[\d+\]', path):
+                    for index, quote in enumerate(result['excerpts']):
+                        if isinstance(quote, str) and re.fullmatch(r'p[0-9]{4,}', quote) and quote not in body:
+                            result['excerpts'][index] = span({'ref_id': quote}, f'{path}.excerpts[{index}]')['text']
                 if reader_excerpts:
                     result['excerpts']=[reader_excerpt(quote,f'{path}.excerpts[{index}]')
                                         for index,quote in enumerate(result['excerpts'])]

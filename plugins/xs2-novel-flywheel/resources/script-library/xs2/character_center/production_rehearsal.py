@@ -65,10 +65,14 @@ role 是你个人的开场资料，own_private_beat 是你刚才留在心里的�
 先顾自己的事和脾气。对方问了一句，你可以只答最要紧的部分，也可以因为手上的事或对方刚才的反应改变话头。有实用价值的简短确认可以直接说。
 开口时先想这人眼下为什么偏要找对方说这句话。若是熟人，你可以当面拆穿对方那点嘴硬，可以避开不想回的部分。只有这关系、这场面真的会这么说时才这样接。
 如果有 retry_lines，按这一遍的现场反应和给出的方向重新演。里面的 quote 如有内容，是你自己上一遍要重来的原话；上一遍的事这次尚未发生。
-只回 JSON {"speech":"你实际说出口的话","action":"你实际做出、对方能感知的动作","private_beat":"你此刻没说出的想法，用第一人称短句，可为空","wants_reply":false}。台词和动作可都留空，表示这一刻你的沉默里也没有可观察动作。短句、半句话、自然多说几句都可以。公开的话或动作给对方留下实际需要回应的事时，wants_reply 设为 true，包括你刚让对方得知异常、拒绝或局势发生变化，即使没用问句。轮到你时，对方上一轮的话可能让你先动手、沉默或改变话头，可以按自己的脾气处理。'''
+只回 JSON {"speech":"你实际说出口的话","action":"你实际做出、对方能感知的动作","private_beat":"你此刻没说出的想法，用第一人称短句，可为空","wants_reply":false}。台词和动作可都留空，表示这一刻你的沉默里也没有可观察动作。每次只演眼前一拍。speech、action、private_beat 各不超过240个字符。公开的话或动作给对方留下实际需要回应的事时，wants_reply 设为 true，包括你刚让对方得知异常、拒绝或局势发生变化，即使没用问句。轮到你时，对方上一轮的话可能让你先动手、沉默或改变话头，可以按自己的脾气处理。'''
 
 
 class VoiceReviewError(ValueError):
+    pass
+
+
+class InvalidTrialReply(ValueError):
     pass
 
 
@@ -191,8 +195,13 @@ def _assess_opening(reply, public, roles):
 def _performance(reply):
     protocol = _role_protocol()
     value = protocol._object(reply, ('speech', 'action', 'private_beat', 'wants_reply'))
-    public = {key: protocol._text(value[key], 240, optional=True) for key in ('speech', 'action')}
-    private = protocol._text(value['private_beat'], 240, optional=True)
+    def short_text(field):
+        try:
+            return protocol._text(value[field], 240, optional=True)
+        except ValueError as error:
+            raise ValueError(f'{field} 须为不超过 240 字的文本，可留空。') from error
+    public = {key: short_text(key) for key in ('speech', 'action')}
+    private = short_text('private_beat')
     follow_up = value['wants_reply']
     if type(follow_up) is not bool or (follow_up and not any(public.values())):
         raise ValueError('续接须由实际说出的话或可观察动作触发。')
@@ -257,7 +266,12 @@ async def run(root, chapter, briefs, style_path, call, *, prior_scenes=(), requi
         issues = []
         for take in range(2):
             prefix = 'retake-' if take else ''
-            packet = director_input | {'review': sorted({issue['kind'] for issue in issues})} if take else director_input
+            packet = director_input
+            if take:
+                packet = director_input | {'review': sorted({issue['kind'] for issue in issues})}
+                # Send the director only the opening correction. Its rejected quote and
+                # the reviewer's explanation can contain the reveal that spoiled the take.
+                packet['opening_repairs'] = [i['repair'] for i in issues if i['turn'] == 0 and i.get('repair')]
             public, roles = await request(f'{prefix}director', director_prompt, packet, parse_roles)
             opening = {'public_start': public, 'assigned_roles': roles}
             opening_issues = await request(f'{prefix}opening-review', OPENING_REVIEW, review_input | opening,
@@ -535,22 +549,48 @@ async def prepare(root, task_id, writer_id, chapter, directory, slot, style_path
             if record['sha256'] == signature:
                 return parse(record['reply'])
 
+        invalid_reply = False
+
         def capture(raw):
-            result = parse(raw)
+            nonlocal invalid_reply
+            invalid_reply = False
+            try:
+                result = parse(raw)
+            except (TypeError, ValueError):
+                invalid_reply = True
+                raise
             atomic(target, json.dumps({'sha256': signature, 'reply': raw}, ensure_ascii=False).encode())
             return result
 
-        return await call(step, system, packet, capture)
+        try:
+            return await call(step, system, packet, capture)
+        except ValueError as error:
+            if invalid_reply:
+                raise InvalidTrialReply(f'{step}: {error}') from error
+            raise
 
     compact = compact and writer_id == 'agent_sw' and slot == 0 and chapter == '0001'
     opening_context = {} if compact else None
     try:
         result = await run(root, chapter, briefs, style_path, cached_call, prior_scenes=prior, required=not compact,
                            opening_context=opening_context)
-    except VoiceReviewError:
-        # An explicit failed quality gate needs a fresh performance on retry.
-        atomic(attempt_path, str(generation + 1).encode())
-        raise
+    except (VoiceReviewError, InvalidTrialReply) as error:
+        # Only allocated multi-writer scenes have an independently accepted brief
+        # available for a handoff when audition material cannot be used.
+        allocation_text = _file(root, directory / 'allocation.json') if slot else ''
+        allocation = json.loads(allocation_text) if allocation_text else {}
+        assigned = any(row['slot'] == slot and row['scene_id'] == brief['id']
+                       for row in allocation.get('scenes', []))
+        if (not assigned or brief.get('slot') != slot
+                or allocation.get('plan_sha256') != sha256((directory / 'plan.json').read_bytes()).hexdigest()
+                or not any(scene['id'] == brief['id'] and all(brief.get(k) == v for k, v in scene.items())
+                           for scene in plan['scenes'])):
+            atomic(attempt_path, str(generation + 1).encode())
+            raise
+        logging.getLogger(__name__).info('场景 %s 未采用试演：%s', brief['id'], error)
+        path = source_path(root, directory / f'r-{writer_id}.md')
+        atomic(path, ('本场试演未收录。请按已确认的分场和前场交接创作。开场：' + brief['entry']).encode())
+        return path.relative_to(root).as_posix(), 0
     path = source_path(root, directory / f'r-{writer_id}.md')
     document = WRITER_NOTE + '\n\n' + json.dumps(result, ensure_ascii=False, indent=2) if result else ''
     atomic(path, document.encode())

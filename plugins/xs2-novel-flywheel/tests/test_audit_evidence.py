@@ -69,3 +69,13 @@ def test_amount_reference_keeps_the_ordinal_marker_for_exact_counting():
 def test_standalone_zero_gets_a_reference_without_reading_a_name_as_zero():
     rows=helper().catalog('零号基地里，可用模块，零。',{'枚':1})
     assert [r['text'] for r in rows if r['kind']=='amount']==['零']
+
+
+def test_signoff_bare_paragraph_ids_resolve_only_in_evidence_fields():
+    m = helper()
+    body = '我解下绳子。\n\n医药钱算我的。'
+    outcome = {'reason': 'p0002', 'excerpts': ['p0002', '我解下绳子']}
+    result = m.resolve_report({'issue_outcomes': [outcome]}, body)
+    assert result['issue_outcomes'] == [{'reason': 'p0002', 'excerpts': ['医药钱算我的。', '我解下绳子']}]
+    with pytest.raises(ValueError, match='excerpts'):
+        m.resolve_report({'issue_outcomes': [{'excerpts': ['p9999']}]}, body)
