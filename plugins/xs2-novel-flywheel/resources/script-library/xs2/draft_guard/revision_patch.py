@@ -323,7 +323,7 @@ def _preservation_lost(review, source, candidate):
     return status=='lost'
 
 
-def review_changes(edits, changes, *, source=None, candidate=None):
+def review_changes(edits, changes, *, source=None, candidate=None, accept_equivalent=()):
     if not isinstance(changes,list) or len(changes)!=len(edits):
         raise ValueError('每项局部改动都须独立核对净效果')
     seen=set();issues=[]
@@ -344,7 +344,7 @@ def review_changes(edits, changes, *, source=None, candidate=None):
         if source is not None and 'preservation' in row and _preservation_lost(row['preservation'],source,candidate):
             review=row['preservation']
             issues.append({**row,'reason':review['reason'],'before_excerpt':review['source_excerpt']})
-        elif row['effect']!='improved':
+        elif row['effect']!='improved' and not (row['effect']=='equivalent' and index in accept_equivalent):
             issues.append(row)
     return issues
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from functools import lru_cache
 import copy
 import hashlib
 import importlib.util
@@ -24,6 +25,19 @@ _EXPRESSION_SPEC = importlib.util.spec_from_file_location('length_expression_pol
     Path(__file__).resolve().parents[1]/'prose_policy/expression_review.py')
 expression_rules = importlib.util.module_from_spec(_EXPRESSION_SPEC)
 _EXPRESSION_SPEC.loader.exec_module(expression_rules)
+
+
+@lru_cache(maxsize=1)
+def tone_review():
+    spec = importlib.util.spec_from_file_location('length_tone_review',
+        Path(__file__).resolve().parents[1]/'local_revision/tone_review.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FragmentToneError(ValueError):
+    pass
 
 
 def safe_path(root, relative):
@@ -457,7 +471,8 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         spec.loader.exec_module(policy)
         story_context_path = policy.runtime_common(root, policy_runtime, task_id=task_id)
         identity_data = {**binding, "effective_context": story_context_path}
-    identity = hashlib.sha256(json.dumps(identity_data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    tone = tone_review()
+    identity = hashlib.sha256(json.dumps({**identity_data, 'local_tone':tone.REVISION}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     folder = f"cache/quality/{chapter}/focused/{result['body_sha256'][:12]}-{identity[:12]}"
     base = folder + '/length_base.json'
     context = folder + '/execution.md'
@@ -469,6 +484,11 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
               '此局部输出契约优先于通常完整正文输出要求。')
     atomic_text(safe_path(root, system_path), system)
     instruction = fragment_instructions(body, fragment, result)
+    selected = body[fragment['start']:fragment['end']].decode('utf-8')
+    protected = book['protected_phrases']
+    marks = tone.mandatory(selected, protected) if fragment['kind'] != 'insert' else []
+    if marks:
+        instruction += '\n' + tone.REPHRASE + json.dumps(marks, ensure_ascii=False)
     # This is the focused writer's entire user message, not an appendix to the
     # normal full-chapter rewrite request. All sources below are frozen below.
     author = safe_path(root, source).read_text(encoding='utf-8-sig') if source else ''
@@ -508,6 +528,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         story_context_path = ''
     guard = {'body_path': body_path, 'story_context_path': story_context_path, 'body_sha256': result['body_sha256'], 'files': files,
              'state_binding': binding, 'outputs': outputs, 'fragment': fragment, 'assessment': result, 'semantic_review_required': True}
+    guard['local_tone'] = {'marks':marks, 'protected':protected, 'revision':tone.REVISION}
     if result.get('ownership'):
         target_policy = resolve_length(root, target, chapter=chapter, task_id='')
         if measurement(body, chapter, target_policy) != result:
@@ -855,6 +876,7 @@ def focused_commit(root, chapter, expected_sha, guard_path, guard_sha, task_id, 
         if not isinstance(fragment_text, str) or not fragment_text.strip():
             raise ValueError('片段为空或缺少body字符串')
         fragment_text = fragment_text.strip()
+        check_fragment_tone(guard, fragment_text)
         spec = guard['fragment']; start, end = spec['start'], spec['end']
         if hashlib.sha256(raw[start:end]).hexdigest() != spec['old_span_sha256']:
             raise ValueError('冻结的局部锚发生变化')
@@ -936,6 +958,14 @@ def verify_focused_attempt(root, chapter, task, node):
     return receipt
 
 
+def check_fragment_tone(guard, text):
+    tone = tone_review()
+    settings = guard.get('local_tone', {})
+    hits = tone.remaining(text, settings.get('marks', ()), settings.get('protected', ()))
+    if hits:
+        raise FragmentToneError(tone.REPHRASE + json.dumps(hits, ensure_ascii=False))
+
+
 def prepare_fragment_review(root, chapter, expected_sha, guard_path, guard_sha, task_id):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', str(task_id)):
         raise ValueError('片段审查缺少任务编号')
@@ -945,6 +975,7 @@ def prepare_fragment_review(root, chapter, expected_sha, guard_path, guard_sha, 
     candidate = json.loads(raw)
     if not isinstance(candidate, dict) or not isinstance(candidate.get('body'), str):
         raise ValueError('候选缺少body片段')
+    check_fragment_tone(guard, candidate['body'])
     source = guard['state_binding']['receipt'].get('source_path') or ''
     shared_path = guard.get('story_context_path') or ''
     shared_raw = safe_path(root, shared_path).read_bytes() if shared_path else b''

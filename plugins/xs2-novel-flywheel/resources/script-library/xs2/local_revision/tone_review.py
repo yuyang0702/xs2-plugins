@@ -168,7 +168,15 @@ def critic_view(scan_result, body, paragraphs):
 def marked_phrases(text):
     """Yield literal A/B rule hits with offsets in the submitted text."""
     start = 0
+    fenced = False
     for line in text.splitlines(keepends=True):
+        if detector.FENCE.match(line):
+            fenced = not fenced
+            start += len(line)
+            continue
+        if fenced or re.match(r'^\ufeff?#{1,6}[ \t]', line):
+            start += len(line)
+            continue
         for level, _, pattern, *_ in detector.REGEX_HITS:
             if level in ("A", "B"):
                 for hit in re.finditer(pattern, line.rstrip("\r\n")):
@@ -176,14 +184,76 @@ def marked_phrases(text):
         start += len(line)
 
 
+REPHRASE = "本地去 AI 味明确标出以下原句。请在本次可编辑范围内换一种说法，保留原意、人称、人物口吻、事实和数字；只改标记及必要的衔接。"
+
+
+def editable_prose(text, protected=()):
+    # A protected quotation and a Markdown title are outside the writer's remit.
+    for phrase in protected:
+        if phrase:
+            text = text.replace(phrase, '\n' * len(phrase))
+    return re.sub(r'(?m)^\ufeff?#{1,6}[ \t].*$', lambda m: '\n' * len(m[0]), text)
+
+
+def mandatory(text, protected=()):
+    return list(dict.fromkeys(hit.strip() for _, _, hit in marked_phrases(editable_prose(text, protected))))
+
+
+def remaining(text, original_marks=(), protected=(), *, original=None):
+    prose = editable_prose(text, protected)
+    if not original_marks:
+        return mandatory(prose)
+    words = lambda value: ''.join(c for c in value if c.isalnum())
+    normalized = words(prose)
+    old = editable_prose(original, protected) if original is not None else ''
+    original_words = words(old)
+    old_counts = Counter(words(hit) for _, _, hit in marked_phrases(old))
+    copied = []
+    for phrase in original_marks:
+        key = words(phrase)
+        # The same word can occur in ordinary dialogue outside the flagged construction.
+        allowance = max(0, original_words.count(key) - old_counts[key]) if key else 0
+        if key and normalized.count(key) > allowance:
+            copied.append(phrase)
+    return list(dict.fromkeys([*copied, *mandatory(prose)]))
+
+
+def scoped_remaining(original, updated, original_scope, new_scope, required, protected):
+    old = editable_prose(original, protected)
+    new = editable_prose(updated, protected)
+    words = lambda text: ''.join(c for c in text if c.isalnum())
+    expected = Counter()
+    for a, b, hit in marked_phrases(old):
+        if hit.strip() in required or any(x < b and a < y for x, y in original_scope):
+            expected[hit.strip()] += 1
+    hits = [hit.strip() for a, b, hit in marked_phrases(new)
+            if any(x < b and a < y for x, y in new_scope)]
+    before, after = words(old), words(new)
+    for hit, count in expected.items():
+        phrase = words(hit)
+        if phrase and after.count(phrase) > before.count(phrase) - count:
+            hits.append(hit)
+    return list(dict.fromkeys(hits))
+
+
 def fragment_review(text):
     """Give the writer evidence from exactly the text it is allowed to change."""
     view = critic_view(scan(text), text, [{"id": "target", "start": 0, "end": len(text)}])
     return {
         "guidance": "mandatory_phrases 中每一处须更换说法并保留信息。语义候选结合语境判断，保住人物口吻、笑点和必要细节。",
-        "mandatory_phrases": list(dict.fromkeys(phrase for _, _, phrase in marked_phrases(text))),
+        "mandatory_phrases": mandatory(text),
         "hints": [{k: v for k, v in h.items() if k != "paragraph"} for h in view["hints"][:8]],
     }
+
+
+def rephrased_indices(body, edits, patches, protected=()):
+    """An equally good wording satisfies a required rewrite, provided the reader found no loss."""
+    hits = [(a, b) for a, b, _ in marked_phrases(editable_prose(body, protected))]
+    if not hits:
+        return []
+    return [i for start, end, i in patches._patch_spans(body, edits)
+            if edits[i]['replacement'].strip() and edits[i]['replacement'] != edits[i]['old']
+            and any(a < end and start < b for a, b in hits)]
 
 
 def include_rule_hits(units, paragraphs):

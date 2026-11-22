@@ -18,6 +18,31 @@ def run(data):
     zhuque = load(here / 'zhuque_review.py')
     patches = load(here.parent / 'draft_guard' / 'revision_patch.py')
     body = data['body']
+    if data['action'] == 'local-tone':
+        tone = load(here / 'tone_review.py')
+        protected = data.get('protected_phrases', ())
+        return {key: tone.remaining(text, data.get('original_marks', {}).get(key, ()), protected)
+                for key, text in data['texts'].items()}
+    if data['action'] == 'local-patch':
+        view, payload = data['view'], data['patch']
+        source = view['source_body']
+        if isinstance(source, dict):
+            source = ''.join(p.get('before', '') + p['text'] for p in source['paragraphs']) + source.get('suffix', '')
+        protected = view.get('book_contract', {}).get('protected_phrases', [])
+        edits = payload['edits']
+        patches.apply_patches(source, {'source_sha256':payload['source_sha256'], 'edits':edits}, protected_phrases=protected)
+        local = load(here/'local_revision.py')
+        rows = patches.paragraphs(source)
+        review = view.get('local_tone')
+        if review is None:
+            review = {'edited_only':len(rows) != 1,
+                      'marks':{p['id']:local.tone.mandatory(p['text'], protected) for p in rows} if len(rows)==1 else {}}
+        try:
+            local.check_local_tone({'local_tone':review, 'paragraphs':rows,
+                                    'book_contract':{'protected_phrases':protected}}, edits, edits)
+        except ValueError as exc:
+            return {'feedback':str(exc)}
+        return {'feedback':''}
     if data['action'] == 'detect':
         report = zhuque.analyze(body, patches.paragraphs, os.environ.get('XS2_ZHUQUE_KEY_FILE', ''))
         paragraphs = patches.paragraphs(body)
@@ -35,6 +60,9 @@ def run(data):
         tone = load(here / 'tone_review.py')
         hints = {}
         for row in data['rewrites']:
+            hits = tone.mandatory(row['replacement'], data['protected_phrases'])
+            if hits:
+                raise ValueError(row['id'] + ' ' + tone.REPHRASE + ' '.join(hits))
             evidence = tone.fragment_review(row['replacement'])['hints']
             if evidence:
                 hints[row['id']] = evidence

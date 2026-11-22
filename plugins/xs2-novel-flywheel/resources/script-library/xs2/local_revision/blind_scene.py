@@ -69,7 +69,7 @@ def packet(source, edits, windows, seed, patches, *, required=False):
     return packet, decoder
 
 
-def select(public, decoder, edits, report):
+def select(public, decoder, edits, report, *, keep_on_tie=()):
     if report.get('ballot') != public['ballot']:
         raise ValueError('请填写本张票面给出的 ballot。')
     votes = report.get('scenes')
@@ -100,7 +100,7 @@ def select(public, decoder, edits, report):
         sid, original, parts = decoder[i]
         base, flip = selected[sid]
         if base == 'tie':
-            if public.get('reading_task') == 'meaning_preservation':
+            if public.get('reading_task') == 'meaning_preservation' or i in keep_on_tie:
                 result.append(edit)
             continue
         replacement = ''.join(left if (base == original) != (key in flip) else right for key,left,right in parts)

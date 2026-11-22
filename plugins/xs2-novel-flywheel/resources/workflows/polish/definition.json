@@ -743,6 +743,7 @@
     },
     {
       "id": "script_fragment_review_context",
+      "enable_reject_upstream": true,
       "label": "冻结局部审查输入",
       "node_type": "script",
       "position": {

@@ -20,6 +20,7 @@ length=load('draft_guard_length',BASE/'console_service/length_quality.py')
 book_policy=load('draft_guard_book_contract',BASE/'prose_policy/book_contract.py')
 revision=load('draft_guard_revision_patch',Path(__file__).with_name('revision_patch.py'))
 packet=load('draft_guard_packet',BASE/'prose_policy/context_packet.py')
+tone=load('draft_guard_tone',BASE/'local_revision/tone_review.py')
 
 
 def read(path):return json.loads(path.read_text(encoding='utf-8-sig'))
@@ -224,7 +225,9 @@ def audit_candidate(directory, report, body, contract, phase, *, arithmetic=None
             edits=read(directory/'expression-draft.json')['edits']
             if report.get('edits_sha256')!=packet.digest(edits):
                 raise ValueError('核验报告未绑定当前补丁及分组，请从最新输入复制 edits_sha256 并重新对读。')
-            for row in revision.review_changes(edits,resolved.get('change_reviews'),source=expression_source,candidate=body):
+            mandatory = tone.rephrased_indices(expression_source, edits, revision, source['book_contract']['protected_phrases'])
+            for row in revision.review_changes(edits,resolved.get('change_reviews'),source=expression_source,candidate=body,
+                                               accept_equivalent=mandatory):
                 issues.append({'category':'expression_regression','reason':row['reason'],
                                'excerpts':[row['before_excerpt']],
                                'goal':'结合整场恢复这组补丁损失的作用，撤回无净改善的独立改动。'})
@@ -546,13 +549,24 @@ def main():
             actual=measured['actual'];lower,upper=measured['lower'],measured['upper']
             issues.append({'category':'length','reason':f'最终正文实测{actual}，目标{lower}—{upper}，按实字复核后交付',
                          'goal':'保留已通过的表达、事实和顺序。篇幅不足时找一处尚未表现的反应、行动或选择的后果再补；无有用内容可补时反馈篇幅冲突。'})
+    if phase == 'expression':
+        source_body = read(directory/'expression-input.json')['source_body']
+        protected = facts_source['book_contract']['protected_phrases']
+        marks = tone.remaining(body, tone.mandatory(source_body, protected), protected, original=source_body)
+        save(directory/'expression-tone.json', {'revision':tone.REVISION, 'body_sha256':body_digest(body), 'marks':marks})
+        if marks:
+            issues.append({'category':'local_tone', 'reason':tone.REPHRASE, 'quotes':marks})
+            reject_candidate(directory, phase, binding, body, issues, retry=not precheck)
+            if precheck:
+                print('<WF_VAR>guard_expression_needs_repair:yes</WF_VAR>')
+            return
     if combined and phase=='expression':
         original_path=directory/'expression-original-review.json'
         if precheck:
             save_advice(directory,body,advice,measured)
             if not hard and not length.is_blocking(measured) and issues:
                 save(original_path,{'audit':report,'open_issues':issues,'advice':advice})
-        elif issues and original_path.is_file():
+        elif issues and original_path.is_file() and not tone.mandatory(source_body, protected):
             # The only automatic expression attempt may be discarded if the original
             # was already checked and independently fits the hard delivery constraints.
             original=read(original_path)

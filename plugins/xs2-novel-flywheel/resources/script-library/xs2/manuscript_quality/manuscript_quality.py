@@ -39,7 +39,12 @@ def main():
         elif args.action == 'focused-commit':
             outputs = q.focused_commit(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha, os.environ.get('TASK_ID', ''), args.review_binding, args.review_binding_sha, args.review_result)
         elif args.action == 'prepare-fragment-review':
-            outputs = q.prepare_fragment_review(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha, os.environ.get('TASK_ID', ''))
+            try:
+                outputs = q.prepare_fragment_review(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha, os.environ.get('TASK_ID', ''))
+            except q.FragmentToneError as exc:
+                from html import escape
+                print('<WF_REJECT_UPSTREAM target="agent_pp">' + escape(str(exc)) + '</WF_REJECT_UPSTREAM>')
+                return
         elif args.action == 'focused-ready':
             outputs = q.confirm_execution(root, chapter, args.expected_body_sha, args.focused_guard, args.focused_guard_sha)
         else:
