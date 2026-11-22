@@ -94,7 +94,7 @@ def precision_guidance():
     return _editing_resources()[0].DEFAULT_PROSE
 
 
-async def accept_precision(text, context, writer_system, call):
+async def accept_precision(text, context, writer_system, call, *, review_call=None):
     precision, patches = _editing_resources()
     style = context.get('book_style', {})
     for attempt in range(3):
@@ -122,7 +122,7 @@ async def accept_precision(text, context, writer_system, call):
                     corrections.append(record)
             return corrections
 
-        decision = await call('你负责成稿的确数验收。' + precision.DEFAULT_PROSE + '\n' + precision.COUNTERFACTUAL + '\n' +
+        decision = await (review_call or call)('你负责成稿的确数验收。' + precision.DEFAULT_PROSE + '\n' + precision.COUNTERFACTUAL + '\n' +
             '逐段把确数遮住再读，重复交代同一个事实应省去。若规模和交期可以靠现有资源和现场紧迫性表达，'
             '普通接单对白连同重复回应里的确数都应列为返修。留用时要说清读者具体会失去什么。'
             '场景卡和书中既有事实只用来理解。只回纯 JSON {"checks":[{"paragraph_id":"原段号","remove":["候选中要删的逐字数值和单位"],"reason":"保留或去掉的具体原因"}]}。'
@@ -168,13 +168,16 @@ def _blind(reply, texts):
     return {**value, 'reason': _text(value['reason'], 1200), 'endings': _text(value['endings'], 700)}
 
 
-async def compare(task, writer, call, progress):
+async def compare(task, writer, call, progress, *, rehearsal_call=None):
     async def request(system, user, parse):
         return await call(system, json.dumps(user, ensure_ascii=False), parse)
 
-    async def measured(system, user, parse):
+    async def review_request(system, user, parse):
+        return await (rehearsal_call or call)(system, json.dumps(user, ensure_ascii=False), parse)
+
+    async def measured(system, user, parse, send=request):
         started = perf_counter()
-        result = await request(system, user, parse)
+        result = await send(system, user, parse)
         return result, round(perf_counter() - started, 2)
 
     target, context = task['target'], task['rehearsal']
@@ -182,12 +185,12 @@ async def compare(task, writer, call, progress):
     system = writer['system'] + '\n\n【场景试读交付约定】\n' + WRITER + '\n' + precision_guidance()
 
     async def rehearse():
-        ((public, roles), director_seconds) = await measured(DIRECTOR, context, lambda reply: _director(reply, names))
+        ((public, roles), director_seconds) = await measured(DIRECTOR, context, lambda reply: _director(reply, names), review_request)
         turns, turn_seconds = [], []
         for name in names * 2:
             progress(f'角色试演第 {len(turns) + 1} 轮 · {name}…')
             turn, seconds = await measured(ACTOR, {'role': roles[name], 'public_start': public,
-                                                  'observable_turns': turns}, _turn)
+                                                  'observable_turns': turns}, _turn, review_request)
             turns.append({'name': name, **turn})
             turn_seconds.append(seconds)
         progress('主写手正在把试演写成小说正文…')
@@ -202,8 +205,8 @@ async def compare(task, writer, call, progress):
     (baseline, direct_seconds), (candidate, public, roles, turns, director_seconds, write_seconds) = stages
     progress('两版正在验收确数和复核局部返修…')
     checked_at = perf_counter()
-    validated = await asyncio.gather(accept_precision(baseline, context, writer['system'], request),
-                                     accept_precision(candidate, context, writer['system'], request), return_exceptions=True)
+    validated = await asyncio.gather(accept_precision(baseline, context, writer['system'], request, review_call=review_request),
+                                     accept_precision(candidate, context, writer['system'], request, review_call=review_request), return_exceptions=True)
     for version in validated:
         if isinstance(version, BaseException):
             raise version
@@ -215,7 +218,7 @@ async def compare(task, writer, call, progress):
     label_map = dict(zip(labels, ('baseline', 'candidate')))
     drafts = {'baseline': baseline, 'candidate': candidate}
     texts = {label: drafts[label_map[label]] for label in ('甲', '乙')}
-    report, blind_seconds = await measured(BLIND, {'texts': texts}, lambda reply: _blind(reply, texts))
+    report, blind_seconds = await measured(BLIND, {'texts': texts}, lambda reply: _blind(reply, texts), review_request)
     return {key: target[key] for key in ('chapter', 'character_ids', 'scene')} | {
         'baseline': baseline, 'candidate': candidate, 'checks': [],
         'rehearsal': {'writer': writer['label'], 'public_start': public, 'roles': list(roles.values()),

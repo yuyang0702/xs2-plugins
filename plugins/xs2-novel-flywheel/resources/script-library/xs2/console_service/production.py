@@ -140,6 +140,11 @@ def verify_completion(root, state, stage, task):
 
 
 def _verify_completion(root, state, stage, task):
+    nodes = task.get('node_states') or {}
+    values = task.get('parameter_values') or {}
+    if (stage == 'polish' and values.get('revision_dir') and values.get('zhuque_round_mode') in ('yes','no')
+            and (nodes.get('script_local_commit') or {}).get('status') != 'completed'):
+        raise ValueError('本次正文尚未完成签发，不能用原有书稿代替本次结果。')
     if stage=='polish' and ((task.get('node_states') or {}).get('script_local_commit') or {}).get('status')=='completed':
         source=Path(__file__).resolve().parents[1]/'local_revision/local_revision.py'
         spec=importlib.util.spec_from_file_location('completed_local_revision',source)
@@ -819,6 +824,9 @@ def model_overrides(state, definition, stage):
         if (node.get('node_type', 'agent') != 'agent'
                 or ((node.get('var_bindings') or {}).get('model_override') or {}).get('var_key')
                 or '{{' in node.get('agent_type', '') or '{{' in (node.get('model_override') or '')):
+            continue
+        if identity == 'agent_zhuque_rounds' and stage == 'polish':
+            selected[identity] = 'lingsuan-google:gemini-4-neon'
             continue
         if identity == 'agent_fragment_review' and not analysis:
             continue

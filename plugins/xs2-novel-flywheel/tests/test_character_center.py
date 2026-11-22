@@ -220,7 +220,8 @@ def test_trial_binds_context_and_persists_preference_only_on_fresh_result(servic
     asyncio.run(scenario())
 
 
-def test_role_rehearsal_keeps_shared_writer_context_and_separates_character_and_blind_inputs(service, book):
+@pytest.mark.parametrize('rehearsal_model', [None, 'chosen:reviewer'])
+def test_role_rehearsal_keeps_shared_writer_context_and_separates_character_and_blind_inputs(service, book, rehearsal_model):
     async def scenario():
         view = service.read(book)
         cast = [row['id'] for row in view['characters'] if row['name'] in ('阿杏', '掌柜')]
@@ -230,8 +231,15 @@ def test_role_rehearsal_keeps_shared_writer_context_and_separates_character_and_
         calls = []
 
         class Model:
+            def __init__(self, options):
+                self.options = options
+
             async def ainvoke(self, messages):
                 system, user = messages[0][1], json.loads(messages[1][1])
+                route = 'chosen:writer' if '交涉写手角色' in system else (rehearsal_model or 'chosen:writer')
+                assert self.options['model_override'] == route
+                if route == 'chosen:writer':
+                    assert self.options['model_params'] == {'reasoning_effort': 'medium'}
                 calls.append((system, user))
                 if '"roles"' in system:
                     value = {'public_start': '铺子里有一把湿伞', 'roles': [
@@ -257,15 +265,15 @@ def test_role_rehearsal_keeps_shared_writer_context_and_separates_character_and_
                 return SimpleNamespace(content=json.dumps(value, ensure_ascii=False))
 
         def factory(**options):
-            assert options['model_override'] == 'chosen:writer'
-            assert options['model_params'] == {'reasoning_effort': 'medium'}
-            return Model()
+            return Model(options)
 
         jobs = _console().create_assistant(factory, lambda **_: None, character_loader=lambda: service)
         options = dict(purpose='dialogue_trial', chapter='0001', question='白描', scene='收伞', character_ids=cast,
                        trial_mode='role_rehearsal', scene_card='铺子漏雨，阿杏要收伞', ending='秘密结局：收伞',
                        expected_revision=view['revision'], _model_override='chosen:writer',
                        _model_params={'reasoning_effort': 'medium'}, _trial_writer={'label': '交涉写手', 'system': '交涉写手角色'})
+        if rehearsal_model:
+            options['_trial_writer']['rehearsal_model'] = rehearsal_model
         jobs.start(book, 'rehearsal', options)
         await jobs.tasks['rehearsal']
         entry = jobs.history(book)[0]

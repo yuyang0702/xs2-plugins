@@ -2,8 +2,10 @@
 from bisect import bisect_right
 from collections import Counter
 from hashlib import sha256
+from functools import lru_cache
 import importlib.util
 from pathlib import Path
+import re
 
 REVISION = "fe77df00a27cf94428632ad449a4aecdcb83db41"
 _spec = importlib.util.spec_from_file_location("xs2_lieflat_detect", Path(__file__).parent / "vendor/lieflat/detect.py")
@@ -22,20 +24,26 @@ GUIDANCE = (
 )
 SEMANTIC = {"rename": "段内换名", "cohesion": "段间衔接", "colon": "冒号用途", "iso3": "三句同构"}
 
+@lru_cache(maxsize=1)
+def semantic_rubric():
+    path = Path(__file__).parent / "vendor/lieflat/semantic-criteria.md"
+    sections = re.split(r"(?m)^## ", path.read_text(encoding="utf-8"))[1:5]
+    return {name: [line for line in section.splitlines() if line.startswith("| ")
+                   and not line.startswith("| 标签 |")]
+            for name, section in zip(SEMANTIC.values(), sections)}
+
 SCENE_COMMISSION = (
     "本轮委托是逐场内容编辑。按人物当前要办的事、时地和转折划分自然场面，连续同场的对白与动作合在一起。"
-    "每场先找出读者此刻最想亲眼看见、听见或弄懂的变化，比较原有写法和另一种具体演法。"
-    "有用的情节也能演得更好：设想把盘问改成共同做一件事，把旁白交代的利益冲突落实成当场选择，"
-    "让一个声音、动作或道具改变下一句话。证据取本书当场原文，独立选择适合该故事的处理。"
-    "在 scene_pass 用少量自然场面覆盖授权全文；一行负责一个场面的行动与转折。revise 可以是值得试写的替代演法，"
-    "无需先判定原句有错；impact 比较具体阅读得失，action 交代改后谁如何行动、对方如何反应。"
+    "在 scene_pass 用自然场面覆盖授权全文。比较本场与书中已经成立的声音、视角和节奏。"
+    "提出 revise 时引用一处原文并在 impact 说清具体阅读损失或可得的增益，action 指出想改善的效果。"
+    "处理方法由写手选择。场面已经成立时用 keep，允许整章保留。"
 )
 
 WRITER_COMMISSION = (
     "你负责本轮逐场试写，有权在作者授权范围内提出审稿人没有指出的场面改法。"
     "先独立连读全文，按自然场面为有提升空间的冲突写出替代段落，再把有具体增益的版本提交给下一位独立审稿人比较。"
     "场面表的 keep 标出值得保住的作用，允许保住这一作用并改写附近的问答、动作或叙述。"
-    "不要在全章只做词句校对。优先发展人物取得信息的过程、立场碰撞时的选择和收束的落点。"
+    "选最适合本场的改动尺度；原稿更好或两版相当时可以保留，包括交空补丁。"
     "可以删掉重复的对白，也可以把篇幅花在原先被一句带过的转折。保留既有事实，按书中人物所知写。"
     "每处可单独成立的修改标 independent:true；必须连读的一组用唯一 group_id；不提交原样替换。"
 )
@@ -86,16 +94,16 @@ def trial_windows(rows, paragraphs):
              "last":paragraphs[stop-1]["id"]} for center,start,stop in zip(centers,cuts,cuts[1:])]
 
 
-def untried_windows(windows, edits, *, first_read=True):
+def untried_windows(windows, edits, *, first_read=True, require_trials=True):
     touched = {int(edit["paragraph_id"][1:]) for edit in edits if edit["old"] != edit["replacement"]}
-    if windows and not touched:
+    if require_trials and windows and not touched:
         raise ValueError("逐场试写尚未交付可对读的替代稿。请读 scene_workshop，在各场找到值得试写的段落，"
                          "提交实际候选供独立审稿决定是否采用。")
     # Window edges approximate scene boundaries. A gap is useful evidence
     # about coverage, not grounds for discarding valid work in other scenes.
     covered = [any(int(w["first"][1:]) <= i <= int(w["last"][1:]) for i in touched) for w in windows]
     missing = [w for w, has_trial in zip(windows,covered) if not has_trial]
-    if first_read and missing and (sum(covered)==1 or any(not a and not b for a,b in zip(covered,covered[1:]))):
+    if require_trials and first_read and missing and (sum(covered)==1 or any(not a and not b for a,b in zip(covered,covered[1:]))):
         ranges = "、".join(w["first"]+" 至 "+w["last"] for w in missing)
         raise ValueError("本轮是全章逐场对读，草案仍集中在局部。请完整重交已有改动，并为尚未试写的场面提交实际替代写法："
                          + ranges + "。每场挑最有用的一处，独立审稿可以保留原稿。")
@@ -151,8 +159,74 @@ def critic_view(scan_result, body, paragraphs):
                 else:
                     hint["excerpt"] = item["para"][:140]
                 hints.append(hint)
-    return {"revision": REVISION, "handoff_version": 2, "guidance": GUIDANCE, "candidate_counts_after_upstream_sampling": totals,
+    return {"revision": REVISION, "handoff_version": 2, "guidance": GUIDANCE,
+            "semantic_criteria": {name: rules for name, rules in semantic_rubric().items() if totals.get(name)},
+            "candidate_counts_after_upstream_sampling": totals,
             "upstream_truncation": scan_result["candidates"]["meta"]["truncated"], "hints": hints}
+
+
+def marked_phrases(text):
+    """Yield literal A/B rule hits with offsets in the submitted text."""
+    start = 0
+    for line in text.splitlines(keepends=True):
+        for level, _, pattern, *_ in detector.REGEX_HITS:
+            if level in ("A", "B"):
+                for hit in re.finditer(pattern, line.rstrip("\r\n")):
+                    yield start + hit.start(), start + hit.end(), hit.group()
+        start += len(line)
+
+
+def fragment_review(text):
+    """Give the writer evidence from exactly the text it is allowed to change."""
+    view = critic_view(scan(text), text, [{"id": "target", "start": 0, "end": len(text)}])
+    return {
+        "guidance": "mandatory_phrases 中每一处须更换说法并保留信息。语义候选结合语境判断，保住人物口吻、笑点和必要细节。",
+        "mandatory_phrases": list(dict.fromkeys(phrase for _, _, phrase in marked_phrases(text))),
+        "hints": [{k: v for k, v in h.items() if k != "paragraph"} for h in view["hints"][:8]],
+    }
+
+
+def include_rule_hits(units, paragraphs):
+    """Union literal Lieflat marks with the existing exact, non-overlapping edit ranges."""
+    by_paragraph = {}
+    for unit in units:
+        by_paragraph.setdefault(unit["paragraph_id"], []).append(unit)
+    for para in paragraphs:
+        pid, text = para["id"], para["text"]
+        if text.lstrip("\ufeff").startswith("# "):
+            continue
+        hits = [(a, b) for a, b, _ in marked_phrases(text)]
+        if not hits:
+            continue
+        intervals = []
+        original = by_paragraph.get(pid, [])
+        for u in original:
+            pos = -1
+            for _ in range(u["occurrence"]):
+                pos = text.index(u["old"], pos + 1)
+            intervals.append((pos, pos + len(u["old"])))
+        if all(any(a <= x and y <= b for a, b in intervals) for x, y in hits):
+            continue
+        merged = []
+        for a, b in sorted(intervals + hits):
+            if merged and a < merged[-1][1]:
+                merged[-1][1] = max(b, merged[-1][1])
+            else:
+                merged.append([a, b])
+        rebuilt = []
+        for index, (a, b) in enumerate(merged, 1):
+            old = text[a:b]
+            occurrence = 1 + sum(1 for match in re.finditer("(?=" + re.escape(old) + ")", text) if match.start() < a)
+            rebuilt.append({"id": f"{pid}-s{index}", "paragraph_id": pid, "old": old, "occurrence": occurrence})
+        by_paragraph[pid] = rebuilt
+    return [u for para in paragraphs for u in by_paragraph.get(para["id"], [])]
+
+
+def annotate_rewrites(report, paragraphs=None):
+    if paragraphs is not None and "rewrite_units" in report:
+        report["rewrite_units"] = include_rule_hits(report["rewrite_units"], paragraphs)
+    for unit in report.get("rewrite_units", []):
+        unit["lieflat_review"] = fragment_review(unit["old"])
 
 
 def comparison(before, after, outcomes=()):

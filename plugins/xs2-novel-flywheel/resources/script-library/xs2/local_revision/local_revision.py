@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sys
 from collections import Counter
 from xml.sax.saxutils import escape
@@ -25,6 +26,8 @@ pending=load('local_revision_pending',HERE/'local_revision/pending_revision.py')
 guard=load('local_revision_execution_guard',HERE/'production_guard/production_guard.py')
 report_repair=load('local_revision_report_repair',HERE/'prose_policy/report_repair.py')
 tone=load('local_revision_tone',HERE/'local_revision/tone_review.py')
+blind=load('local_revision_blind',HERE/'local_revision/blind_scene.py')
+zhuque=load('local_revision_zhuque',HERE/'local_revision/zhuque_review.py')
 SCOPED_REVIEW='local-review-v3'
 
 
@@ -62,6 +65,15 @@ def read(p):return json.loads(p.read_text(encoding='utf-8-sig'))
 def save(p,data):quality.atomic_text(p,json.dumps(data,ensure_ascii=False,indent=2)+'\n')
 def model_view(data,role):
     view=packet.local(data,role)
+    view.pop('zhuque_review', None)
+    detection = data.get('zhuque_review', {})
+    if role in ('critic', 'writer') and detection.get('status') == 'success':
+        view['zhuque_review'] = {key: detection[key] for key in ('attention', 'reference_paragraphs')}
+        if 'reference_excerpts' in detection:
+            view['zhuque_review']['reference_excerpts'] = detection['reference_excerpts']
+        view['zhuque_review']['guidance'] = zhuque.GUIDANCE
+        if detection.get('required'):
+            view['zhuque_review'].update(rewrite_units=detection['rewrite_units'], guidance=zhuque.REWRITE_GUIDANCE)
     if role != 'critic':
         view.pop('tone_review', None)
     if data.get('review_protocol')==SCOPED_REVIEW:
@@ -258,7 +270,7 @@ def confirmed_reader(root,chapter,source):
     return {'binding_path':relative,'source_paths':[relative,input_path],'goals':result}
 
 
-def prepare(root,chapter,task_id,target='',context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,*,dialogue_check=False,dialogue_check_version=1,scoped_review=False,whole_chapter_review=False,advisory=False):
+def prepare(root,chapter,task_id,target='',context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,*,dialogue_check=False,dialogue_check_version=1,scoped_review=False,whole_chapter_review=False,advisory=False,blind_scenes=False,whole_text_detection=False):
     root=Path(root).resolve();chapter=quality.chapter_number(chapter)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',task_id or ''):raise ValueError('局部修订缺少有效任务编号')
     frozen=book.freeze(root,task_id);folder=f'cache/local-revision/{task_id}';out=locations(folder)
@@ -269,6 +281,11 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
     previous=safe(root,folder+'/source-binding.json')
     prior_binding=read(previous) if previous.exists() else None
     previous_source=read(safe(root,out['revision_source_input'])) if prior_binding is not None else None
+    round_options = None
+    if prior_binding is not None:
+        round_options = prior_binding.get('zhuque_options')
+    elif whole_text_detection:
+        round_options = zhuque.options(root)
     target_policy=quality.resolve_length(root,target,chapter=chapter,task_id=task_id,advisory=advisory)
     bounds=target_policy['bounds']
     policy_bound=(prior_binding is None and target_policy['ownership']!='legacy'
@@ -325,12 +342,27 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
         # Preserve inputs for attempts frozen before or after this detector was installed.
         if 'tone_review' in previous_source:
             source['tone_review'] = previous_source['tone_review']
+        if 'zhuque_review' in previous_source:
+            source['zhuque_review'] = previous_source['zhuque_review']
     elif scoped_review and not fixed and 'confirmed_reader' not in source:
+        key_path = os.environ.get('XS2_ZHUQUE_KEY_FILE')
+        if blind_scenes and key_path and round_options is None and zhuque.options(root)['enabled']:
+            detection = zhuque.analyze(body, patches.paragraphs, key_path)
+            if not authored.strip():
+                if detection.get('status') != 'success':
+                    raise ValueError('朱雀检测未完成，无法确定必改范围：'+str(detection.get('reason')))
+                if 'rewrite_units' in detection:
+                    tone.annotate_rewrites(detection, patches.paragraphs(body))
+                    if detection['rewrite_units'] and not (detection['reference_paragraphs'] or detection['reference_excerpts']):
+                        raise ValueError('本篇未检出可用的人工参考，无法执行同篇参照必改。')
+                    detection['required'] = True
+            source['zhuque_review'] = detection
         before_tone = tone.scan(body)
         source['tone_review'] = {
             **tone.critic_view(before_tone, body, source['paragraphs']),
             'scene_edit_version':1,
-            **({'whole_signoff_version':1} if whole_chapter_review or not authored.strip() else {}),
+            'optional_scene_trials':True,
+            **({'whole_signoff_version':2} if whole_chapter_review or not authored.strip() else {}),
             'scene_commission':tone.SCENE_COMMISSION,
             'writer_commission':tone.WRITER_COMMISSION,
             'compare_scene_trials':bool(whole_chapter_review or not authored.strip()),
@@ -341,6 +373,12 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
              'files':source_files(root,chapter,context_path,reference_path,feedback,(source.get('confirmed_reader') or {}).get('source_paths',())),
              'source_digest':digest(source),'bounds':bounds,'outputs':out}
     if policy_bound:binding['target_policy']=target_policy
+    if round_options is not None:
+        binding['zhuque_options'] = round_options
+    if (prior_binding or {}).get('blind_seed') or (blind_scenes and prior_binding is None and
+            scoped_review and 'tone_review' in source and not fixed):
+        binding['blind_seed']=(prior_binding or {}).get('blind_seed') or secrets.token_hex(32)
+        out.update(revision_blind_packet=folder+'/blind-packet.json',revision_blind_path=folder+'/blind-vote.json')
     if prior_binding is not None and prior_binding!=binding:raise ValueError('同任务修订来源已有变化，请新建任务')
     if before_tone is not None:
         save(safe(root,folder+'/tone-before.json'), before_tone)
@@ -352,7 +390,9 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
     if not safe(root,out['revision_review_repair']).exists():save(safe(root,out['revision_review_repair']),{})
     if scoped_review:
         confirmed='confirmed_reader' in source
-        return {**out,'revision_critique_mode':'confirmed' if confirmed else 'critic',
+        if round_options is not None:
+            out = {**out, 'zhuque_round_mode':'yes' if round_options['enabled'] else 'no'}
+        return {**out,'revision_blind_mode':'yes' if 'blind_seed' in binding else 'no','revision_critique_mode':'confirmed' if confirmed else 'critic',
                 'revision_checkpoint_source':f'story/{chapter}/reader_report.json' if confirmed else 'cache/sc/critique.json'}
     return out
 
@@ -805,7 +845,16 @@ def writer_input(root,folder,critique_path):
     if source.get('tone_review',{}).get('compare_scene_trials'):
         scenes=critique.get('scene_pass',[])
         data['scene_trial_windows']=tone.trial_windows(scenes,source['paragraphs'])
+        detection = source.get('zhuque_review', {})
+        if (detection.get('trial_version') == 1 and detection['attention'] and detection['reference_paragraphs']
+                and not source['author_feedback'].strip()):
+            targets.append({'id':'trial-zhuque', 'source':'scene_trial', 'level':'advisory',
+                            'goal':'做一次同篇写法对照。选值得试写的标记处，对照合适的参考原句，交付可匿名比较的正文补丁。'
+                                   '可以重构这段怎样被说出或被看见；沿用本书事实、叙述权限和人物用词。原文更好时可保留。',
+                            'excerpts':[]})
         for i,scene in enumerate(scenes):
+            if source['tone_review'].get('optional_scene_trials') and scene['decision']=='keep':
+                continue
             alternative=scene.get('alternative')
             if not isinstance(alternative,str) or not alternative.strip():
                 continue
@@ -918,14 +967,21 @@ def editor_bound(root,b):
     return data
 
 
-def compose(root,b,source):
+def compose(root,b,source,*,before_blind=False):
     data=editor_bound(root,b);payload=read(safe(root,b['outputs']['revision_patch_path']))
     if payload.get('status')=='needs_replan':
         if set(payload)!={'status','source_sha256','edits','reason','evidence'} or payload['edits']!=[]:
             raise ValueError('冲突响应不能夹带未审核正文补丁')
         raise_conflict(root,b,source,payload,payload.get('reason'),payload.get('evidence'))
+    detection = source.get('zhuque_review', {})
+    if detection.get('required'):
+        proposed = zhuque.compile_rewrites(detection, payload)
+    else:
+        if 'rewrites' in payload:
+            raise ValueError('当前任务没有朱雀必改清单，请提交正常的 edits。')
+        proposed = payload['edits']
     working=pending.current(root,b,digest)
-    merged=pending.merge(source['source_body'],(working or {}).get('edits',[]),payload['edits'],patches)
+    merged=pending.merge(source['source_body'],(working or {}).get('edits',[]),proposed,patches)
     # A prior equivalent judgment grants only removal, never publication. The
     # native append-only event binds the exact proposals and original review.
     events = guard.store().events(root)
@@ -945,6 +1001,18 @@ def compose(root,b,source):
             removable=equivalent_indices(expanded,old,reasons)
             if removable!=pruning['indices']:raise ValueError('等价撤回凭据与原始判断不符')
             merged=[edit for index,edit in enumerate(merged) if index not in removable]
+    blind_record=None
+    if 'blind_seed' in b and not before_blind:
+        public,decoder=blind.packet(source['source_body'],merged,data.get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+        for event in reversed(events):
+            vote=event['data']
+            if (event['kind']=='blind_scene_selection' and vote.get('task_id')==b['task_id']
+                    and vote['binding_digest']==digest(b) and vote['edits_digest']==digest(merged)
+                    and vote['report']['ballot']==public['ballot']):
+                merged=blind.select(public,decoder,merged,vote['report'])
+                blind_record=digest(vote['report'])
+                rechecking_subset=True
+                break
     candidate=patches.apply_patches(source['source_body'],{'source_sha256':payload['source_sha256'],'edits':merged},protected_phrases=source['book_contract']['protected_phrases'])
     if source.get('review_protocol')!=SCOPED_REVIEW:
         if any(row['id'].startswith('precision-') for row in data['goals']):check_precision_goals(source,merged,data['goals'])
@@ -952,6 +1020,8 @@ def compose(root,b,source):
         check_scene_goals(merged,data['goals'],source)
     if source.get('fixed_edit') and sha(candidate.encode())!=source['fixed_edit']['candidate_sha256']:
         raise ValueError('候选超出作者指定的单句删除范围')
+    if detection.get('required'):
+        zhuque.check_coverage(detection, merged)
     measured=quality.measurement(candidate.encode(),b['chapter_number'],b.get('target_policy',b['bounds']))
     if quality.is_blocking(measured):
         path=safe(root,b['outputs']['revision_dir']+'/length-candidates.json');history=read(path) if path.is_file() else []
@@ -973,20 +1043,33 @@ def compose(root,b,source):
     if source.get('review_protocol')==SCOPED_REVIEW:context['review_protocol']=SCOPED_REVIEW
     if source.get('tone_review',{}).get('scene_edit_version')==1:
         context['deletion_review_version']=1
-    if data.get('scene_trial_windows') and source.get('tone_review',{}).get('whole_signoff_version')==1:
+    signoff_version=source.get('tone_review',{}).get('whole_signoff_version')
+    windows=data.get('scene_trial_windows') or []
+    if blind_record:
+        context['blind_vote_digest']=blind_record
+        if not windows:
+            windows=[{'anchor':r[0]['id'],'first':r[0]['id'],'last':r[-1]['id']} for r in blind.scene_ranges(source['paragraphs'],[])]
+    if (windows and signoff_version in (1,2)) or blind_record:
         context['whole_review_phase']='signoff' if rechecking_subset else 'selection'
         if rechecking_subset:
             # Stamp each required scene verdict with the exact candidate. A report
             # for an earlier subset cannot approve the current join by accident.
             touched={e['paragraph_id'] for e in merged if e['old']!=e['replacement']}
-            for win in data['scene_trial_windows']:
+            for win in windows:
                 ids=sorted(p for p in touched if int(win['first'][1:])<=int(p[1:])<=int(win['last'][1:]))
                 if ids:
+                    if signoff_version==2:
+                        for goal in context['goals']:
+                            if goal.get('source')=='local_critic' and goal.get('paragraph_id')==win['anchor']:
+                                grouped={e['paragraph_id'] for e in merged if e.get('group_id')==goal['id']}
+                                goal['paragraph_ids']=sorted({win['anchor']} | grouped.intersection(ids))
                     context['goals'].append({'id':'final-'+context['candidate_sha256'][:12]+'-'+win['anchor'],
                         'source':'scene_signoff','level':'mandatory','paragraph_ids':ids,
                         'goal':'通读当前整稿，核对本场所有改动和前后衔接。事实、视角、人物声音、删去的作用、重复及新写内容都可签发填 resolved；有具体损失或矛盾填 remaining 并说明。'})
-    if data.get('scene_trial_windows'):
-        context['untried_scene_windows']=tone.untried_windows(data['scene_trial_windows'],merged,first_read=not rechecking_subset)
+    if data.get('scene_trial_windows') and (merged or not blind_record):
+        context['untried_scene_windows']=tone.untried_windows(
+            data['scene_trial_windows'], merged, first_read=not rechecking_subset,
+            require_trials=not source.get('tone_review',{}).get('optional_scene_trials'))
     if source.get('added_text_review'):
         tracked = tracked_addition_goals(events,b)
         additions = [row for row in tracked if 'scene_anchor' not in row]
@@ -1010,12 +1093,48 @@ def candidate(root,folder):
     except (ValueError,KeyError,TypeError,FileNotFoundError) as exc:
         guard.retry(root,'local-revision/'+b['task_id'],'agent_pl',str(exc))
         raise Retry('agent_pl',str(exc)) from exc
+    if 'blind_seed' in b:
+        raw=compose(root,b,source,before_blind=True)
+        public,_=blind.packet(source['source_body'],raw['edits'],editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+        save(safe(root,b['outputs']['revision_blind_packet']),public)
     save(safe(root,b['outputs']['revision_review_input']),context)
     if b['outputs'].get('revision_review_repair'):
         active=repair_record(root,b,context)
         save(safe(root,b['outputs']['revision_review_repair']),active or {})
     if b['outputs'].get('revision_review_model'):save_model(safe(root,b['outputs']['revision_review_model']),context,'reviewer')
     return b['outputs']
+
+
+def accept_blind(root,folder,actual):
+    b,source=bound(root,folder)
+    raw=compose(root,b,source,before_blind=True)
+    edits=raw['edits']
+    public,decoder=blind.packet(source['source_body'],edits,editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+    path=safe(root,b['outputs']['revision_blind_packet'])
+    if public!=read(path):
+        save(path,public)
+        raise Retry('agent_blind_scene','票面已有变化，请重新对读本张票面。')
+    report=read(safe(root,b['outputs']['revision_blind_path']))
+    if report!=json.loads(actual):
+        raise ValueError('匿名选票与本次模型实际输出不符。')
+    try:
+        chosen=blind.select(public,decoder,edits,report)
+        patches.apply_patches(source['source_body'],{'source_sha256':b['body_sha256'],'edits':chosen},
+                              protected_phrases=source['book_contract']['protected_phrases'])
+    except (KeyError,TypeError,ValueError) as exc:
+        raise Retry('agent_blind_scene',str(exc)) from exc
+    if source.get('zhuque_review',{}).get('required'):
+        try:
+            zhuque.check_coverage(source['zhuque_review'], chosen)
+        except ValueError as exc:
+            reasons = ' '.join(row['reason'] for row in report['scenes'] if row['prefer'] != 'tie')
+            raise Retry('agent_pl',str(exc)+' 对读意见：'+reasons) from exc
+    record={'task_id':b['task_id'],'binding_digest':digest(b),'edits_digest':digest(edits),'report':report}
+    if not any(e['kind']=='blind_scene_selection' and e['data']==record for e in guard.store().events(root)):
+        guard.store().event(root,'blind_scene_selection',record)
+    selected=compose(root,b,source)
+    save(safe(root,b['outputs']['revision_review_input']),selected)
+    save_model(safe(root,b['outputs']['revision_review_model']),selected,'reviewer')
 
 
 def repair_record(root,b,context):
@@ -1199,7 +1318,8 @@ def scoped_assessment(report,context):
                 or not isinstance(quotes,list) or not quotes
                 or any(not isinstance(q,str) or not q.strip() or q not in candidate for q in quotes)
                 or ids and not any(q in region or region.strip() and region in q for region in regions for q in quotes)):
-            raise ValueError('问题结论须引用原编号所在位置的当前候选原文')
+            raise ValueError(f'{key} 的问题结论须引用原编号所在位置的当前候选原文。'
+                             '请核对该编号的定位和候选正文；整稿签发时从 signoff_evidence 同编号条目中逐字引用连续片段。')
         required=goal.get('level') in ('hard','mandatory')
         problem=''
         if key in pending_additions:problem=pending_additions[key]
@@ -1370,7 +1490,38 @@ def scoped_publication(context, assessment, binding):
     return {**publication,'open_issues':open_issues},[]
 
 
-def commit(root,folder,expected_review):
+def stage_whole_text(root, folder, b, source, publication):
+    path = folder + '/zhuque-round-input.json'
+    data = {**b['zhuque_options'], 'body': publication['candidate'], 'source_sha256': publication['candidate_sha256'],
+            'original_body': source['source_body'], 'book_contract': source['book_contract'],
+            'length_bounds': b.get('target_policy', b['bounds']), 'chapter_number': b['chapter_number']}
+    save(safe(root,path),data)
+    return {'zhuque_round_input':path}
+
+
+def accept_whole_text(root, folder, b, publication, proof):
+    path = folder + '/zhuque-round-result.json'
+    raw = safe(root,path).read_bytes()
+    if json.loads(proof or '{}') != {'sha256':sha(raw)}:
+        raise ValueError('朱雀整篇结果和本次节点回执不一致。')
+    result = json.loads(raw)
+    body = result['candidate']
+    after = sha(body.encode('utf-8'))
+    report = result['report']
+    ratio = report['labels_ratio']['2']
+    if (result['source_sha256'] != publication['candidate_sha256'] or result['candidate_sha256'] != after
+            or report.get('status') != 'success' or report.get('text_sha256') != zhuque.text_digest(body)
+            or type(ratio) not in (int,float) or not 0 <= ratio <= .30):
+        raise ValueError('朱雀报告未绑定本次完整正文，或疑似比例仍超过 30%。')
+    length = quality.measurement(body.encode('utf-8'),b['chapter_number'],b.get('target_policy',b['bounds']))
+    if quality.is_blocking(length):
+        raise ValueError('整篇复测候选超出本书既定篇幅。')
+    metadata = {'path':path,'sha256':sha(raw),'source_sha256':result['source_sha256'],
+                'rounds':result['rounds'],'suspected':ratio}
+    return {**publication,'candidate':body,'candidate_sha256':after,'length':length}, metadata
+
+
+def commit(root,folder,expected_review,*,stage_only=False,round_proof=None):
     execution_fence=guard.assert_current(root)
     b=read(safe(root,folder+'/source-binding.json'));saved=read(safe(root,b['outputs']['revision_review_input']))
     accepted_sha=saved['candidate_sha256']
@@ -1389,6 +1540,9 @@ def commit(root,folder,expected_review):
     except (ValueError,KeyError,TypeError,FileNotFoundError) as exc:
         guard.retry(root,'local-revision/'+b['task_id'],'agent_pl',str(exc))
         raise Retry('agent_pl',str(exc)) from exc
+    if 'blind_seed' in b and not context.get('blind_vote_digest'):
+        candidate(root,folder)
+        raise Retry('agent_blind_scene','当前两个版本尚待匿名对读，请提交本张票面。')
     if context!=saved:
         # The host retries the writer without resetting intermediate completed
         # nodes. Rebuild here and force a fresh reviewer before publication.
@@ -1492,11 +1646,26 @@ def commit(root,folder,expected_review):
         message='本轮表达已通过复核，最终正文仍须满足明确篇幅。保留已有表达，只补可见的反应或后果。'+json.dumps(context['length'],ensure_ascii=False)
         guard.retry(root,'local-revision/'+b['task_id'],'agent_pl',message)
         raise Retry('agent_pl',message)
+    if source.get('zhuque_review',{}).get('required'):
+        try:
+            zhuque.check_coverage(source['zhuque_review'], publication['edits'])
+        except ValueError as exc:
+            raise Retry('agent_pl',str(exc)) from exc
+    round_metadata = None
+    if stage_only:
+        if not b.get('zhuque_options',{}).get('enabled'):
+            raise ValueError('这次任务没有开启朱雀全文检测。')
+        return stage_whole_text(root,folder,b,source,publication)
+    if b.get('zhuque_options',{}).get('enabled'):
+        publication, round_metadata = accept_whole_text(root,folder,b,publication,round_proof)
     receipt={'schema':1,'task_id':b['task_id'],'before_sha256':b['body_sha256'],'after_sha256':publication['candidate_sha256'],
              'book_contract_sha256':b['book_contract_sha256'],'review_digest':digest(report),'patch_digest':context['patch_digest'],
              'changed_spans':len(publication['edits']),'length':publication['length'],'accepted':True,
              'expanded_review_digest':digest(expanded)}
+    if round_metadata:
+        receipt['zhuque_whole_text'] = round_metadata
     if scoped:receipt.update(review_protocol=SCOPED_REVIEW,open_issues=publication['open_issues'],published_edits_digest=digest(publication['edits']))
+    if 'blind_seed' in b:receipt['blind_vote_digest']=context['blind_vote_digest']
     if 'tone_review' in source:
         before_tone = read(safe(root,folder+'/tone-before.json'))
         if digest(before_tone) != source['tone_review']['snapshot_digest'] or before_tone['sha256'] != b['body_sha256']:
@@ -1506,6 +1675,16 @@ def commit(root,folder,expected_review):
             raise ValueError('文体复测版本与采用稿或原检测器不一致')
         tone_report = tone.comparison(before_tone, after_tone, report.get('issue_outcomes', []))
         receipt['tone_report'] = folder + '/tone-report.md'
+    if 'zhuque_review' in source:
+        before = source['zhuque_review']
+        report_path = safe(root, folder+'/zhuque-report.json')
+        comparison = read(report_path) if report_path.is_file() else {}
+        if comparison.get('after_sha256') != receipt['after_sha256'] or comparison.get('before_sha256') != b['body_sha256']:
+            after = before if receipt['after_sha256'] == b['body_sha256'] else zhuque.analyze(
+                publication['candidate'], patches.paragraphs, os.environ.get('XS2_ZHUQUE_KEY_FILE', ''))
+            comparison = {'before_sha256': b['body_sha256'], 'after_sha256': receipt['after_sha256'],
+                          'before': before, 'after': after}
+        receipt['zhuque_report'] = folder+'/zhuque-report.json'
     # Prepare bytes outside the database lock, then keep epoch verification,
     # final source validation, canonical replacement and receipt in one lock.
     p=safe(root,b['body_path'])
@@ -1523,6 +1702,8 @@ def commit(root,folder,expected_review):
             if 'tone_report' in receipt:
                 save(safe(root,folder+'/tone-after.json'), after_tone)
                 quality.atomic_text(safe(root,receipt['tone_report']), tone_report)
+            if 'zhuque_report' in receipt:
+                save(report_path, comparison)
             save(safe(root,folder+'/receipt.json'),receipt)
     finally:
         if temporary is not None and temporary.exists():temporary.unlink()
@@ -1538,6 +1719,14 @@ def verify_attempt(root,task):
     if sha(safe(root,b['body_path']).read_bytes())!=receipt.get('after_sha256'):
         raise ValueError('局部修订发布后正文已有变化，不能沿用旧完成记录')
     b,source=bound(root,folder,accepted_sha=receipt['after_sha256']);context=compose(root,b,source)
+    if 'blind_seed' in b:
+        raw=compose(root,b,source,before_blind=True)
+        public,_=blind.packet(source['source_body'],raw['edits'],editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+        vote=read(safe(root,b['outputs']['revision_blind_path']))
+        if (read(safe(root,b['outputs']['revision_blind_packet']))!=public
+                or json.loads(values.get('revision_blind_result') or 'null')!=vote
+                or digest(vote)!=receipt.get('blind_vote_digest') or digest(vote)!=context.get('blind_vote_digest')):
+            raise ValueError('匿名对读凭据与本次票面和实际选择不符。')
     if b['outputs'].get('revision_review_model'):
         verify_model(read(safe(root,b['outputs']['revision_review_model'])),context,'reviewer')
     report=read(safe(root,b['outputs']['revision_review_path']))
@@ -1547,6 +1736,10 @@ def verify_attempt(root,task):
                 read(safe(root,b['outputs']['revision_review_expanded']))!=expanded):raise ValueError('展开审查凭据与实际回复不符')
     if context.get('review_protocol')==SCOPED_REVIEW:
         publication,reasons=scoped_publication(context,scoped_assessment(report,context),b)
+        if b.get('zhuque_options',{}).get('enabled'):
+            publication, metadata = accept_whole_text(root,folder,b,publication,values.get('zhuque_round_checksum'))
+            if receipt.get('zhuque_whole_text') != metadata:
+                raise ValueError('朱雀全文验收记录与本次任务不一致。')
         if (reasons or receipt.get('review_protocol')!=SCOPED_REVIEW
                 or receipt.get('open_issues')!=publication['open_issues']
                 or receipt.get('published_edits_digest')!=digest(publication['edits'])
@@ -1731,7 +1924,7 @@ def retry_feedback(root,folder,error):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=['prepare','writer-input','candidate','commit'])
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=['prepare','writer-input','candidate','accept-blind','specific-review','stage-whole-text','skip-whole-text','commit'])
     parser.add_argument('--chapter',default='0001');parser.add_argument('--target',default='');parser.add_argument('--dir',default='')
     parser.add_argument('--context',default='cache/story-support/context.md')
     parser.add_argument('--learning-context',default='learning/context/polish.md')
@@ -1739,6 +1932,9 @@ def main():
     parser.add_argument('--dialogue-check',action='store_true')
     parser.add_argument('--dialogue-check-version',type=int,choices=range(1,packet.COMPACT_EXCHANGE_REVIEW_VERSION+1),default=1)
     parser.add_argument('--scoped-review',action='store_true')
+    parser.add_argument('--blind-scenes',action='store_true')
+    parser.add_argument('--whole-text-detection',action='store_true')
+    parser.add_argument('--round-proof',default='')
     parser.add_argument('--advisory-length',action='store_true')
     parser.add_argument('--review-scope',choices=('current_issues','whole_chapter'),default='current_issues')
     parser.add_argument('--critique',default='cache/sc/critique.json');parser.add_argument('--review-stdin',action='store_true')
@@ -1747,10 +1943,21 @@ def main():
         if args.action=='prepare':out=prepare(root,args.chapter,os.environ.get('TASK_ID',''),args.target,args.context,args.learning_context,args.feedback,
                                              dialogue_check=args.dialogue_check,dialogue_check_version=args.dialogue_check_version,
                                              scoped_review=args.scoped_review,whole_chapter_review=args.review_scope=='whole_chapter',
-                                             advisory=args.advisory_length)
+                                             advisory=args.advisory_length,blind_scenes=args.blind_scenes,whole_text_detection=args.whole_text_detection)
         elif args.action=='writer-input':out=writer_input(root,args.dir,args.critique)
         elif args.action=='candidate':out=candidate(root,args.dir)
-        else:commit(root,args.dir,sys.stdin.read() if args.review_stdin else None);out={}
+        elif args.action=='accept-blind':accept_blind(root,args.dir,sys.stdin.read());out={}
+        elif args.action=='specific-review':
+            binding,_=bound(root,args.dir)
+            if 'blind_seed' in binding:raise ValueError('本轮普通润色需要完成匿名对读。')
+            out={}
+        elif args.action=='skip-whole-text':
+            binding,_=bound(root,args.dir)
+            if binding.get('zhuque_options',{}).get('enabled'):
+                raise ValueError('本书已启用朱雀全文检测，须完成检测后签发。')
+            out={}
+        elif args.action=='stage-whole-text':out=commit(root,args.dir,sys.stdin.read(),stage_only=True)
+        else:commit(root,args.dir,sys.stdin.read() if args.review_stdin else None,round_proof=args.round_proof);out={}
     except Retry as exc:
         out=locations(args.dir);quality.atomic_text(safe(root,out['revision_feedback_file']),retry_feedback(root,args.dir,exc))
         print('<WF_REJECT_UPSTREAM target="'+exc.target+'">'+escape(str(exc))+'</WF_REJECT_UPSTREAM>');return

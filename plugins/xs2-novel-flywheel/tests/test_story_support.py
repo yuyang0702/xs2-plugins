@@ -2,6 +2,7 @@ from runtime_graph import literary_graph
 import importlib.util
 import json
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
@@ -371,6 +372,8 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                 assert '{{'+key+'}}' in node['first_message']
                 prep=next(n for n in data['nodes'] if n['id']=='script_local_prepare')
                 assert '{{revision_context_path}}' in prep['node_params']['script_argv']
+            elif node['id'] == 'agent_blind_scene':
+                assert set(re.findall(r'\{\{(\w+)\}\}',node['first_message']))=={'revision_blind_packet'}
             elif node['id'] == 'agent_fragment_review':
                 # This one consumes the same shared source inside a hash-bound
                 # snapshot; do not inject a second, unbound live copy.

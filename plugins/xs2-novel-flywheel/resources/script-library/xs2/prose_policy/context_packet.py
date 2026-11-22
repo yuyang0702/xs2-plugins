@@ -264,6 +264,8 @@ def local(data,role):
                     deliverable='本轮是逐场对照试写。每个 first 到 last 区间选一处提交可与原稿比较的实际替代写法。'
                                 '优先发展现场转折，允许在区间中选比 anchor 更合适的段落。'
                                 'keep 提醒你原场的长处。你提交候选，独立审稿者决定是否采用；作者明示的保留要求优先。')
+                if data['tone_review'].get('optional_scene_trials'):
+                    result['scene_workshop']['deliverable']='区间仅定位上下文。可以只改一处，也可另提有实际收益的写法或保留全章。'
         goal_plans=((data.get('composition_plan') or {}).get('plan') or {}).get('goal_plans')
         if goal_plans:
             result['composition_plan']={'plan':{'goal_plans':copy.deepcopy(goal_plans)}}

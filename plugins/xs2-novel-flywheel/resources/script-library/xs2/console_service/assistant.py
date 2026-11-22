@@ -654,11 +654,18 @@ class NovelAssistantJobs:
         async def call(system, user, parse):
             return await self._structured_call(payload, deadline, system, user, parse, attempt_timeout=120)
 
+        rehearsal_model = payload['_trial_writer'].get('rehearsal_model')
+        rehearsal_payload = ({**payload, '_model_override': rehearsal_model, '_model_params': {}}
+                             if rehearsal_model and rehearsal_model != payload.get('_model_override') else payload)
+
+        async def rehearse(system, user, parse):
+            return await self._structured_call(rehearsal_payload, deadline, system, user, parse, attempt_timeout=120)
+
         def progress(message):
             self._update(root, request_id, message=message)
 
         try:
-            trial = await role_rehearsal.compare(task, payload['_trial_writer'], call, progress)
+            trial = await role_rehearsal.compare(task, payload['_trial_writer'], call, progress, rehearsal_call=rehearse)
             if not self.character_loader().is_current(root, task['target']):
                 result = {'status': 'failed', 'error_code': 'character_stale', 'message': '试读依据已变化，请刷新后重试。'}
             else:

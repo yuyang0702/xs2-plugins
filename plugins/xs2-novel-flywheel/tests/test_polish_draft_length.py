@@ -28,7 +28,8 @@ def test_content_polish_measures_patch_candidate_before_audit_and_length_only_ke
     data=literary_graph(json.loads((PLUGIN/'resources/workflows/polish/definition.json').read_text(encoding='utf8')))
     edges={(e['source'],e['target']) for e in data['edges']}
     assert ('agent_pl','script_local_candidate') in edges
-    assert ('script_local_candidate','agent_local_review') in edges
+    assert {('script_local_candidate','gw_blind_scene'),('gw_blind_scene','agent_blind_scene'),
+            ('script_blind_select','agent_local_review')} <= edges
     assert ('script_focused_execution','agent_pp') in edges
     assert ('agent_pl','agent_pp') not in edges
 

@@ -138,8 +138,8 @@ def test_scene_pass_binds_writer_targets_and_respects_keep(tmp_path):
     writer=m.read(tmp_path/out['revision_editor_model'])
     assert writer['scene_workshop']['scene_pass']==rows
     assert writer['scene_workshop']['assignment']
-    goal,trial=writer['goals']
-    assert trial['id']=='trial-1' and rows[1]['alternative'] in trial['goal']
+    goal,=writer['goals']
+    assert '只改一处' in writer['scene_workshop']['deliverable']
     assert goal['paragraph_ids']==['p0001'] and rows[0]['action'] in goal['goal']
     frozen=m.patches.paragraphs('她问了三遍。\n\n他把门打开。')
     assert m.tone.verified_scenes([dict(rows[0],paragraph_id='p0002')],frozen)==rows[:1]
@@ -220,3 +220,37 @@ def test_scene_trial_subset_requires_fresh_independent_review(tmp_path):
     assert receipt['changed_spans']==1 and receipt['after_sha256']==context['candidate_sha256']
     task={'task_id':'scene-subset','parameter_values':{'revision_dir':out['revision_dir'],'revision_review_result':raw}}
     assert m.verify_attempt(tmp_path,task)==receipt
+
+
+def test_signoff_accepts_grouped_dialogue_after_anchor_but_rejects_another_scene(tmp_path):
+    import json
+    import pytest
+
+    m = module()
+    lines = ['她敲了门。', '“回来啦？”', '天暗了。', '他拉开窗。']
+    put(tmp_path, 'story/0001/chapter.md', '\n\n'.join(lines))
+    out = m.prepare(tmp_path, '0001', 'group-scope', scoped_review=True)
+    scenes = [{'paragraph_id': pid, 'quote': quote, 'action': '让问话承接动作。',
+               'decision': 'revise', 'impact': '让场景连贯。'}
+              for pid, quote in [('p0001', lines[0]), ('p0004', lines[3])]]
+    put(tmp_path, 'critique.json', {'issues': [], 'scene_pass': scenes})
+    m.writer_input(tmp_path, out['revision_dir'], 'critique.json')
+    edits = [{'paragraph_id': 'p0002', 'old': lines[1], 'replacement': '“是你？”',
+              'occurrence': 1, 'group_id': 'scene-edit-0'},
+             {'paragraph_id': 'p0004', 'old': lines[3], 'replacement': '他推开窗。',
+              'occurrence': 1, 'group_id': 'scene-edit-1'}]
+    selection = json.loads(scoped_report(m, tmp_path, out, edits))
+    selection['change_reviews'][1]['effect'] = 'improved'
+    put(tmp_path, out['revision_review_path'], selection)
+    with pytest.raises(m.Retry, match='整稿签发'):
+        m.commit(tmp_path, out['revision_dir'], json.dumps(selection, ensure_ascii=False))
+    context = m.read(tmp_path / out['revision_review_input'])
+    evidence = m.signoff_evidence(context)
+    assert evidence['scene-edit-0'] == [lines[0], '“是你？”']
+    outcomes = [{'id': key, 'status': 'resolved', 'excerpts': [values[-1]],
+                 'reason': '问话承接了场内动作。'} for key, values in evidence.items()]
+    final = {**selection, 'change_reviews': [], 'added_text_reviews': [], 'issue_outcomes': outcomes}
+    assert not m.scoped_assessment(final, context)['open']
+    next(row for row in outcomes if row['id'] == 'scene-edit-0')['excerpts'] = ['他推开窗。']
+    with pytest.raises(ValueError, match='scene-edit-0'):
+        m.scoped_assessment(final, context)

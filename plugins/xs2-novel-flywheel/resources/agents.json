@@ -1122,6 +1122,50 @@
           "type": "json_object"
         }
       }
+    },
+    "xs2-blind-scene-reader": {
+      "description": "匿名对读小说场景并选择原句。",
+      "prompt_template": "xs2-blind-scene-reader",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-whole-manuscript-editor": {
+      "description": "依本篇通过段落改写或校核指定小说片段，兼顾本书原意与人物声音。",
+      "prompt_template": "xs2-whole-manuscript-editor",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
     }
   }
 }
