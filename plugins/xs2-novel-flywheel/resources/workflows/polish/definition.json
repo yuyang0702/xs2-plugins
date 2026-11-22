@@ -1,7 +1,7 @@
 {
   "workflow_id": "polish",
   "name": "章节润色管线",
-  "version": 38,
+  "version": 39,
   "nodes": [
     {
       "id": "script_production_start",
@@ -1129,7 +1129,9 @@
           "{{revision_dir}}",
           "--review-stdin",
           "--round-proof",
-          "{{zhuque_round_checksum}}"
+          "{{zhuque_round_checksum}}",
+          "--continuity-receipt",
+          "{{continuity_receipt}}"
         ],
         "script_stdin_variable": "revision_review_result"
       },
@@ -2309,12 +2311,12 @@
       "first_message": ""
     },
     {
-      "id": "script_zhuque_stage",
-      "label": "冻结通过对读的整篇正文",
+      "id": "script_continuity_stage",
+      "label": "签发前组装已验收的全文",
       "node_type": "script",
       "position": {
-        "x": 400,
-        "y": 200
+        "x": 1470,
+        "y": 990
       },
       "var_bindings": {
         "chapter_number": {
@@ -2446,6 +2448,381 @@
       "enable_reject_upstream": false,
       "max_reject_count": 3,
       "first_message": ""
+    },
+    {
+      "id": "script_budget_agent_continuity_review",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "polish",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_continuity_review"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1470,
+        "y": 1190
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "agent_continuity_review",
+      "label": "合稿全文连贯性审稿",
+      "node_type": "agent",
+      "agent_type": "xs2-continuity-reviewer",
+      "first_message": "{{continuity_review_input}}",
+      "var_bindings": {
+        "continuity_review_input": {
+          "var_key": "continuity_review_input",
+          "mode": "reference"
+        }
+      },
+      "node_params": {
+        "first_message_source_variable": "continuity_review_input",
+        "json_output_schema": {
+          "type": "object",
+          "properties": {
+            "sha256": {
+              "type": "string"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "sha256",
+            "issues"
+          ],
+          "additionalProperties": false
+        },
+        "json_repair_policy": "validate_only"
+      },
+      "position": {
+        "x": 1470,
+        "y": 1290
+      },
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "require_non_empty_output": true,
+      "output_variable": "continuity_review_result"
+    },
+    {
+      "id": "script_budget_agent_continuity_writer",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "polish",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_continuity_writer"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1470,
+        "y": 1590
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "agent_continuity_writer",
+      "label": "定点返修连贯性问题",
+      "node_type": "agent",
+      "agent_type": "xs2-continuity-writer",
+      "first_message": "{{continuity_writer_input}}",
+      "var_bindings": {
+        "continuity_writer_input": {
+          "var_key": "continuity_writer_input",
+          "mode": "reference"
+        }
+      },
+      "node_params": {
+        "first_message_source_variable": "continuity_writer_input",
+        "json_output_schema": {
+          "type": "object",
+          "properties": {
+            "sha256": {
+              "type": "string"
+            },
+            "edits": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "sha256",
+            "edits"
+          ],
+          "additionalProperties": false
+        },
+        "json_repair_policy": "validate_only"
+      },
+      "position": {
+        "x": 1470,
+        "y": 1690
+      },
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "require_non_empty_output": true,
+      "output_variable": "continuity_writer_result"
+    },
+    {
+      "id": "script_budget_agent_continuity_verify",
+      "label": "运行版本与输入预算",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "production_guard",
+        "script_type": "python",
+        "script_argv": [
+          "budget",
+          "--stage",
+          "polish",
+          "--chapter",
+          "{{chapter_number}}",
+          "--node",
+          "agent_continuity_verify"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1470,
+        "y": 1890
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "agent_continuity_verify",
+      "label": "返修后重新通读全文",
+      "node_type": "agent",
+      "agent_type": "xs2-continuity-reviewer",
+      "first_message": "{{continuity_verify_input}}",
+      "var_bindings": {
+        "continuity_verify_input": {
+          "var_key": "continuity_verify_input",
+          "mode": "reference"
+        }
+      },
+      "node_params": {
+        "first_message_source_variable": "continuity_verify_input",
+        "json_output_schema": {
+          "type": "object",
+          "properties": {
+            "sha256": {
+              "type": "string"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "sha256",
+            "issues"
+          ],
+          "additionalProperties": false
+        },
+        "json_repair_policy": "validate_only"
+      },
+      "position": {
+        "x": 1470,
+        "y": 1990
+      },
+      "auto_flow": true,
+      "enable_complete_node_task": false,
+      "require_non_empty_output": true,
+      "output_variable": "continuity_verify_result"
+    },
+    {
+      "id": "script_continuity_select",
+      "label": "确认确需返修的段落",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "select"
+        ],
+        "timeout": 40,
+        "script_stdin_variable": "continuity_review_result"
+      },
+      "position": {
+        "x": 1470,
+        "y": 1390
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "script_continuity_candidate",
+      "label": "应用定点补丁",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "candidate"
+        ],
+        "timeout": 40,
+        "script_stdin_variable": "continuity_writer_result"
+      },
+      "position": {
+        "x": 1470,
+        "y": 1790
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "script_continuity_finish",
+      "label": "确认连贯性检查通过",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "finish",
+          "--target",
+          "{{target_word_count}}"
+        ],
+        "timeout": 40,
+        "script_stdin_variable": "continuity_verify_result"
+      },
+      "position": {
+        "x": 1470,
+        "y": 2090
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "script_continuity_prepare",
+      "label": "冻结合稿供全文审稿",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "prepare",
+          "--mode",
+          "polish",
+          "--chapter",
+          "{{chapter_number}}",
+          "--staged",
+          "{{continuity_stage_path}}"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1470,
+        "y": 1090
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "script_continuity_prepare_focused",
+      "label": "冻结合稿供全文审稿",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "prepare",
+          "--mode",
+          "focused",
+          "--chapter",
+          "{{chapter_number}}"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1820,
+        "y": 1090
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "script_continuity_skip_repair",
+      "label": "无明确问题，沿用原合稿",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "skip-repair"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1800,
+        "y": 1790
+      },
+      "auto_flow": true
+    },
+    {
+      "id": "script_continuity_focused_ready",
+      "label": "篇幅返修全文已复核",
+      "node_type": "script",
+      "agent_type": "default",
+      "node_params": {
+        "script_source": "library",
+        "script_group": "xs2",
+        "script_name": "manuscript_continuity",
+        "script_type": "python",
+        "script_argv": [
+          "focused-ready"
+        ],
+        "timeout": 40
+      },
+      "position": {
+        "x": 1820,
+        "y": 2290
+      },
+      "auto_flow": true
     }
   ],
   "edges": [
@@ -2511,11 +2888,6 @@
       "target": "script_budget_agent_pp"
     },
     {
-      "id": "edge-fragment-sync",
-      "source": "script_focused_commit",
-      "target": "script_sync_polish"
-    },
-    {
       "id": "edge-review-context-agent",
       "source": "script_fragment_review_context",
       "target": "script_budget_agent_fragment_review"
@@ -2544,11 +2916,6 @@
       "id": "edge-local-script_local_candidate-agent_local_review",
       "source": "script_local_candidate",
       "target": "gw_blind_scene"
-    },
-    {
-      "id": "edge-review-zhuque-gate",
-      "source": "agent_local_review",
-      "target": "gw_zhuque_whole_text"
     },
     {
       "id": "edge-local-script_local_commit-script_sync_polish",
@@ -2720,20 +3087,6 @@
       }
     },
     {
-      "id": "edge-gw_zhuque_whole_text-script_zhuque_stage",
-      "source": "gw_zhuque_whole_text",
-      "target": "script_zhuque_stage",
-      "condition": {
-        "expression": "{{zhuque_round_mode}} == yes",
-        "label": "启用全文复测"
-      }
-    },
-    {
-      "id": "edge-script_zhuque_stage-script_budget_agent_zhuque_rounds",
-      "source": "script_zhuque_stage",
-      "target": "script_budget_agent_zhuque_rounds"
-    },
-    {
       "id": "edge-script_budget_agent_zhuque_rounds-agent_zhuque_rounds",
       "source": "script_budget_agent_zhuque_rounds",
       "target": "agent_zhuque_rounds"
@@ -2747,6 +3100,126 @@
       "id": "edge-script_zhuque_skip-script_local_commit",
       "source": "script_zhuque_skip",
       "target": "script_local_commit"
+    },
+    {
+      "id": "edge-continuity-script_budget_agent_continuity_review-agent_continuity_review",
+      "source": "script_budget_agent_continuity_review",
+      "target": "agent_continuity_review"
+    },
+    {
+      "id": "edge-continuity-script_budget_agent_continuity_writer-agent_continuity_writer",
+      "source": "script_budget_agent_continuity_writer",
+      "target": "agent_continuity_writer"
+    },
+    {
+      "id": "edge-continuity-script_budget_agent_continuity_verify-agent_continuity_verify",
+      "source": "script_budget_agent_continuity_verify",
+      "target": "agent_continuity_verify"
+    },
+    {
+      "id": "edge-continuity-agent_continuity_review-script_continuity_select",
+      "source": "agent_continuity_review",
+      "target": "script_continuity_select"
+    },
+    {
+      "id": "edge-continuity-script_continuity_select-gw_continuity_repair",
+      "source": "script_continuity_select",
+      "target": "gw_continuity_repair"
+    },
+    {
+      "id": "edge-continuity-gw_continuity_repair-script_budget_agent_continuity_writer",
+      "source": "gw_continuity_repair",
+      "target": "script_budget_agent_continuity_writer",
+      "condition": {
+        "expression": "{{continuity_needs_repair}} == yes"
+      }
+    },
+    {
+      "id": "edge-continuity-gw_continuity_repair-script_continuity_skip_repair",
+      "source": "gw_continuity_repair",
+      "target": "script_continuity_skip_repair",
+      "condition": {
+        "is_default": true
+      }
+    },
+    {
+      "id": "edge-continuity-agent_continuity_writer-script_continuity_candidate",
+      "source": "agent_continuity_writer",
+      "target": "script_continuity_candidate"
+    },
+    {
+      "id": "edge-continuity-script_continuity_candidate-script_budget_agent_continuity_verify",
+      "source": "script_continuity_candidate",
+      "target": "script_budget_agent_continuity_verify"
+    },
+    {
+      "id": "edge-continuity-agent_continuity_verify-script_continuity_finish",
+      "source": "agent_continuity_verify",
+      "target": "script_continuity_finish"
+    },
+    {
+      "id": "edge-continuity-script_continuity_prepare-script_budget_agent_continuity_review",
+      "source": "script_continuity_prepare",
+      "target": "script_budget_agent_continuity_review"
+    },
+    {
+      "id": "edge-continuity-script_continuity_prepare_focused-script_budget_agent_continuity_review",
+      "source": "script_continuity_prepare_focused",
+      "target": "script_budget_agent_continuity_review"
+    },
+    {
+      "id": "edge-continuity-agent_local_review-script_continuity_stage",
+      "source": "agent_local_review",
+      "target": "script_continuity_stage"
+    },
+    {
+      "id": "edge-continuity-script_continuity_stage-script_continuity_prepare",
+      "source": "script_continuity_stage",
+      "target": "script_continuity_prepare"
+    },
+    {
+      "id": "edge-continuity-script_focused_commit-script_continuity_prepare_focused",
+      "source": "script_focused_commit",
+      "target": "script_continuity_prepare_focused"
+    },
+    {
+      "id": "edge-continuity-script_continuity_finish-gw_continuity_publication",
+      "source": "script_continuity_finish",
+      "target": "gw_continuity_publication"
+    },
+    {
+      "id": "edge-continuity-gw_continuity_publication-gw_zhuque_whole_text",
+      "source": "gw_continuity_publication",
+      "target": "gw_zhuque_whole_text",
+      "condition": {
+        "expression": "{{continuity_mode}} == polish"
+      }
+    },
+    {
+      "id": "edge-continuity-gw_continuity_publication-script_continuity_focused_ready",
+      "source": "gw_continuity_publication",
+      "target": "script_continuity_focused_ready",
+      "condition": {
+        "is_default": true
+      }
+    },
+    {
+      "id": "edge-continuity-gw_zhuque_whole_text-script_budget_agent_zhuque_rounds",
+      "source": "gw_zhuque_whole_text",
+      "target": "script_budget_agent_zhuque_rounds",
+      "condition": {
+        "expression": "{{zhuque_round_mode}} == yes"
+      }
+    },
+    {
+      "id": "edge-continuity-script_continuity_skip_repair-script_continuity_finish",
+      "source": "script_continuity_skip_repair",
+      "target": "script_continuity_finish"
+    },
+    {
+      "id": "edge-continuity-script_continuity_focused_ready-script_sync_polish",
+      "source": "script_continuity_focused_ready",
+      "target": "script_sync_polish"
     }
   ],
   "variables": [
@@ -3575,6 +4048,96 @@
       "hidden": true,
       "required": false,
       "source_type": "output"
+    },
+    {
+      "key": "continuity_review_input",
+      "name": "continuity_review_input",
+      "type": "file",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_writer_input",
+      "name": "continuity_writer_input",
+      "type": "file",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_verify_input",
+      "name": "continuity_verify_input",
+      "type": "file",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_review_result",
+      "name": "continuity_review_result",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_writer_result",
+      "name": "continuity_writer_result",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_verify_result",
+      "name": "continuity_verify_result",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_needs_repair",
+      "name": "continuity_needs_repair",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_receipt",
+      "name": "continuity_receipt",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_mode",
+      "name": "continuity_mode",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
+    },
+    {
+      "key": "continuity_stage_path",
+      "name": "continuity_stage_path",
+      "type": "text",
+      "source_type": "output",
+      "default": "",
+      "hidden": true,
+      "required": false
     }
   ],
   "gateways": [
@@ -3622,6 +4185,26 @@
         "x": 620,
         "y": 260
       }
+    },
+    {
+      "id": "gw_continuity_repair",
+      "gateway_type": "condition",
+      "label": "是否有明确连贯性问题",
+      "position": {
+        "x": 1470,
+        "y": 1490
+      },
+      "converge_gateway_id": null
+    },
+    {
+      "id": "gw_continuity_publication",
+      "gateway_type": "condition",
+      "label": "返回对应发布流程",
+      "position": {
+        "x": 1470,
+        "y": 2190
+      },
+      "converge_gateway_id": null
     }
   ],
   "execution_schemes": [

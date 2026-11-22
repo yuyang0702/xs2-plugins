@@ -387,9 +387,12 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                     assert '{{' + variable + '}}' in node['first_message']
             elif stage == 'polish' and node['id'] == 'agent_zhuque_rounds':
                 assert node['node_params']['zhuque_rounds_input'] == 'zhuque_round_input'
-                assert any(e['source'] == 'script_zhuque_stage' and e['target'] == node['id'] for e in data['edges'])
+                assert any(e['source'] == 'gw_zhuque_whole_text' and e['target'] == node['id'] for e in data['edges'])
             elif node['id'] == 'agent_blind_scene':
                 assert set(re.findall(r'\{\{(\w+)\}\}',node['first_message']))=={'revision_blind_packet'}
+            elif node['id'].startswith('agent_continuity_'):
+                assert node['node_params']['first_message_source_variable'] in {
+                    'continuity_review_input', 'continuity_writer_input', 'continuity_verify_input'}
             elif node['id'] == 'agent_fragment_review':
                 # This one consumes the same shared source inside a hash-bound
                 # snapshot; do not inject a second, unbound live copy.

@@ -28,6 +28,7 @@ report_repair=load('local_revision_report_repair',HERE/'prose_policy/report_repa
 tone=load('local_revision_tone',HERE/'local_revision/tone_review.py')
 blind=load('local_revision_blind',HERE/'local_revision/blind_scene.py')
 zhuque=load('local_revision_zhuque',HERE/'local_revision/zhuque_review.py')
+continuity=load('local_revision_continuity',HERE/'manuscript_continuity/manuscript_continuity.py')
 SCOPED_REVIEW='local-review-v3'
 
 
@@ -1577,7 +1578,7 @@ def stage_whole_text(root, folder, b, source, publication):
             'original_body': source['source_body'], 'book_contract': source['book_contract'],
             'length_bounds': b.get('target_policy', b['bounds']), 'chapter_number': b['chapter_number']}
     save(safe(root,path),data)
-    return {'zhuque_round_input':path}
+    return {'zhuque_round_input':path, 'continuity_stage_path':path}
 
 
 def accept_whole_text(root, folder, b, publication, proof):
@@ -1602,7 +1603,17 @@ def accept_whole_text(root, folder, b, publication, proof):
     return {**publication,'candidate':body,'candidate_sha256':after,'length':length}, metadata
 
 
-def commit(root,folder,expected_review,*,stage_only=False,round_proof=None):
+def continuity_publication(root, b, publication, receipt):
+    if not receipt or not receipt.strip():
+        return publication
+    body = continuity.adopt_staged(root, receipt, b['task_id'], publication['candidate_sha256'])
+    length = quality.measurement(body.encode('utf-8'), b['chapter_number'], b.get('target_policy', b['bounds']))
+    if quality.is_blocking(length):
+        raise ValueError('连贯性返修超出本书既定篇幅。')
+    return {**publication, 'candidate': body, 'candidate_sha256': sha(body.encode('utf-8')), 'length': length}
+
+
+def commit(root,folder,expected_review,*,stage_only=False,round_proof=None,continuity_receipt=None):
     execution_fence=guard.assert_current(root)
     b=read(safe(root,folder+'/source-binding.json'));saved=read(safe(root,b['outputs']['revision_review_input']))
     accepted_sha=saved['candidate_sha256']
@@ -1738,9 +1749,10 @@ def commit(root,folder,expected_review,*,stage_only=False,round_proof=None):
         raise Retry('agent_pl', str(exc)) from exc
     round_metadata = None
     if stage_only:
-        if not b.get('zhuque_options',{}).get('enabled'):
-            raise ValueError('这次任务没有开启朱雀全文检测。')
         return stage_whole_text(root,folder,b,source,publication)
+    if continuity_receipt is not None and not continuity_receipt.strip():
+        raise ValueError('正式润色发布前须取得全文连贯性验收凭据。')
+    publication = continuity_publication(root, b, publication, continuity_receipt)
     if b.get('zhuque_options',{}).get('enabled'):
         publication, round_metadata = accept_whole_text(root,folder,b,publication,round_proof)
     receipt={'schema':1,'task_id':b['task_id'],'before_sha256':b['body_sha256'],'after_sha256':publication['candidate_sha256'],
@@ -1821,6 +1833,8 @@ def verify_attempt(root,task):
                 read(safe(root,b['outputs']['revision_review_expanded']))!=expanded):raise ValueError('展开审查凭据与实际回复不符')
     if context.get('review_protocol')==SCOPED_REVIEW:
         publication,reasons=scoped_publication(context,scoped_assessment(report,context),b)
+        if publication is not None:
+            publication = continuity_publication(root, b, publication, values.get('continuity_receipt', ''))
         if b.get('zhuque_options',{}).get('enabled'):
             publication, metadata = accept_whole_text(root,folder,b,publication,values.get('zhuque_round_checksum'))
             if receipt.get('zhuque_whole_text') != metadata:
@@ -2020,6 +2034,7 @@ def main():
     parser.add_argument('--blind-scenes',action='store_true')
     parser.add_argument('--whole-text-detection',action='store_true')
     parser.add_argument('--round-proof',default='')
+    parser.add_argument('--continuity-receipt')
     parser.add_argument('--advisory-length',action='store_true')
     parser.add_argument('--review-scope',choices=('current_issues','whole_chapter'),default='current_issues')
     parser.add_argument('--critique',default='cache/sc/critique.json');parser.add_argument('--review-stdin',action='store_true')
@@ -2042,7 +2057,7 @@ def main():
                 raise ValueError('本书已启用朱雀全文检测，须完成检测后签发。')
             out={}
         elif args.action=='stage-whole-text':out=commit(root,args.dir,sys.stdin.read(),stage_only=True)
-        else:commit(root,args.dir,sys.stdin.read() if args.review_stdin else None,round_proof=args.round_proof);out={}
+        else:commit(root,args.dir,sys.stdin.read() if args.review_stdin else None,round_proof=args.round_proof,continuity_receipt=args.continuity_receipt);out={}
     except Retry as exc:
         out=locations(args.dir);quality.atomic_text(safe(root,out['revision_feedback_file']),retry_feedback(root,args.dir,exc))
         print('<WF_REJECT_UPSTREAM target="'+exc.target+'">'+escape(str(exc))+'</WF_REJECT_UPSTREAM>');return

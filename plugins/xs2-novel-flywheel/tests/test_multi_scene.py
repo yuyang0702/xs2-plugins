@@ -42,7 +42,8 @@ def test_normal_mvp_routes_all_scene_writers_through_gate_before_body():
     assert ('script_multi_scene_6', 'script_multi_assemble') in edges
     assert ('script_multi_assemble', 'script_guard_prepare') in edges
     assert ('script_guard_expression_commit', 'script_guard_finish') in edges
-    assert ('script_guard_finish', 'script_si_post') in edges
+    assert ('script_guard_finish', 'script_continuity_prepare') in edges
+    assert ('script_continuity_finish', 'script_si_post') in edges
     assert ('script_multi_plan', 'gw-mqdqscyd-0') in edges
     assert ('gw-mqdqscyd-0', 'gw-multi-active-1') in edges
     assert ('agent_sw', 'script_guard_prepare') in edges

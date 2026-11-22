@@ -167,8 +167,10 @@ def test_review_seed_runs_actual_guards_then_si_conversion_and_render(tmp_path,m
     monkeypatch.setattr('sys.argv',['si','--input','cache/si/chapter.json']);si.main()
     renderer=guard.load('checkpoint_renderer',PLUGIN/'resources/script-library/nvl/local_archive/local_archive.py')
     monkeypatch.setattr('sys.argv',['archive','render','--inputs','cache/si/body.json','--outputs','story/0001/chapter.md']);renderer.main()
-    task={'task_id':'review-new','snapshot_definition':definition,'parameter_values':options['parameter_values'],
-        'disabled_node_ids':[n['id'] for n in definition['nodes'] if n['id'] not in checkpoint['selected_node_ids']],
+    # This manually assembled receipt represents a task that predates the new gate.
+    historical={**definition,'nodes':[n for n in definition['nodes'] if 'continuity_' not in n['id']]}
+    task={'task_id':'review-new','snapshot_definition':historical,'parameter_values':options['parameter_values'],
+        'disabled_node_ids':[n['id'] for n in historical['nodes'] if n['id'] not in checkpoint['selected_node_ids']],
         'node_states':{key:{'status':'completed'} for key in checkpoint['selected_node_ids']}}
     module.verify(tmp_path,state,task)
     # A later tail failure must switch to the existing body-publication recovery,
@@ -209,6 +211,11 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
         node_type='agent'
         async def execute(self,ctx):
             key=ctx.node_def.id;calls.append(key)
+            if key=='agent_continuity_review':
+                packet=(tmp_path/ctx.parameter_values['continuity_review_input']).read_text(encoding='utf-8')
+                source=json.loads(packet.split('\n\n',1)[1])
+                return NodeResult(status='completed',outputs={'continuity_review_result':
+                    json.dumps({'sha256':source['sha256'],'issues':[]})})
             phase_agents={'facts','expression'}
             expected={'inspect'} if inspect_first else {'repair','audit'}
             assert key in {f'agent_guard_{phase}_{action}' for phase in phase_agents for action in expected}
@@ -226,7 +233,8 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
         node_type='script'
         async def execute(self,ctx):
             node=ctx.node_def;params=node.node_params
-            if node.id in ('sync_up_si','script_check_originality'):return NodeResult(status='completed')
+            if node.id.startswith('script_budget_') or node.id in ('sync_up_si','script_check_originality'):
+                return NodeResult(status='completed')
             args=params.get('script_argv')
             if args is None:
                 import shlex
@@ -234,7 +242,9 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
             args=[await resolve_placeholders(a,ctx.parameter_values,ctx.definition.variables,str(tmp_path)) for a in args]
             file=PLUGIN/'resources/script-library'/params['script_group']/params['script_name']/(params['script_name']+'.py')
             env={**os.environ,'TASK_ID':'review-graph','PYTHONIOENCODING':'utf-8','PYTHONUTF8':'1'}
-            result=subprocess.run([sys.executable,str(file),*args],cwd=tmp_path,env=env,capture_output=True,text=True,encoding='utf-8')
+            stdin=ctx.parameter_values.get(params.get('script_stdin_variable',''))
+            result=subprocess.run([sys.executable,str(file),*args],cwd=tmp_path,env=env,input=stdin,
+                                  capture_output=True,text=True,encoding='utf-8')
             assert result.returncode==0,result.stderr
             assert 'WF_REJECT' not in result.stdout,result.stdout
             return NodeResult(status='completed',outputs=_parse_wf_vars(result.stdout))
@@ -249,5 +259,6 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
             needs_approval=False,run_record=WorkflowRunRecord(workflow_id=wf.workflow_id))
     outcome=asyncio.run(run())
     if outcome!='completed':raise AssertionError(json.dumps({key:(node.status,node.error) for key,node in task.node_states.items() if key in options['selected_node_ids']}))
-    assert len(calls)==(1 if inspect_first else 4)
+    assert calls[-1]=='agent_continuity_review'
+    assert len(calls)==(2 if inspect_first else 5)
     module.verify(tmp_path,state,task.to_dict())

@@ -55,10 +55,11 @@ def test_installed_graph_has_one_full_text_gate_before_publication():
     edges = {(e['source'],e['target']):e for e in graph['edges']}
     assert '--whole-text-detection' in nodes['script_local_prepare']['node_params']['script_argv']
     gate = 'gw_zhuque_whole_text'
-    assert ('agent_local_review',gate) in edges
+    assert ('agent_local_review','script_continuity_stage') in edges
+    assert ('gw_continuity_publication',gate) in edges
     assert edges[gate,'script_zhuque_skip']['condition']['is_default']
     assert ('script_zhuque_skip','script_local_commit') in edges
-    assert edges[gate,'script_zhuque_stage']['condition']['expression'] == '{{zhuque_round_mode}} == yes'
+    assert edges[gate,'script_budget_agent_zhuque_rounds']['condition']['expression'] == '{{zhuque_round_mode}} == yes'
     assert ('agent_zhuque_rounds','script_local_commit') in edges
     agent = nodes['agent_zhuque_rounds']
     assert agent['node_params']['zhuque_rounds_input'] == 'zhuque_round_input'

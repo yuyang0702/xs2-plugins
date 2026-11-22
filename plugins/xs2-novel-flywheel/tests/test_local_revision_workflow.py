@@ -22,9 +22,10 @@ def test_content_polish_uses_patches_and_independent_review_length_only_stays_se
     assert {('script_local_candidate','gw_blind_scene'),('gw_blind_scene','agent_blind_scene'),
             ('agent_blind_scene','script_blind_select'),('script_blind_select','agent_local_review'),
             ('gw_blind_scene','script_specific_review'),('script_specific_review','agent_local_review'),
-            ('agent_local_review','gw_zhuque_whole_text'),('gw_zhuque_whole_text','script_zhuque_skip'),
+            ('agent_local_review','script_continuity_stage'),('gw_continuity_publication','gw_zhuque_whole_text'),
+            ('gw_zhuque_whole_text','script_zhuque_skip'),
             ('script_zhuque_skip','script_local_commit'),
-            ('gw_zhuque_whole_text','script_zhuque_stage'),('script_zhuque_stage','agent_zhuque_rounds'),
+            ('gw_zhuque_whole_text','agent_zhuque_rounds'),
             ('agent_zhuque_rounds','script_local_commit')} <= edges
     assert nodes['script_local_commit']['node_params']['script_stdin_variable']=='revision_review_result'
     assert ('script_focused_execution','agent_pp') in edges and ('agent_pp','script_fragment_review_context') in edges
@@ -208,7 +209,7 @@ runpy.run_path(sys.argv[1], run_name='__main__')
     return library
 
 
-@pytest.mark.parametrize('first_problem',['stale','quality','combined','catalog_refs','unknown_catalog_refs','planned_budget','native_conflict','cached_budget','compact_report','retained_progress','confirmed_reader','blind','zhuque'])
+@pytest.mark.parametrize('first_problem',['stale','quality','combined','catalog_refs','unknown_catalog_refs','planned_budget','native_conflict','cached_budget','compact_report','retained_progress','confirmed_reader','blind','zhuque','continuity'])
 def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_on_stdin(tmp_path,monkeypatch,first_problem):
     monkeypatch.setenv('XS2_ZHUQUE_KEY_FILE', '')
     import asyncio,os,shlex,sys
@@ -289,6 +290,22 @@ def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_o
                 side='A' if '第二段简明。' in scene['A'] else 'B'
                 output={'ballot':ballot['ballot'],'scenes':[{'id':scene['id'],'prefer':side,'exceptions':[],
                          'voice_quote':'第二段简明。','redundant_quote':'','reason':'这一句收得干净。'}]}
+            elif node=='agent_continuity_review':
+                packet=json.loads(kwargs['task_description'].split('\n\n',1)[1])
+                assert packet['正文'] and '伏笔' in kwargs['task_description']
+                output={'sha256':packet['sha256'],'issues':[]}
+                if first_problem=='continuity':
+                    one,two,*_=packet['正文']
+                    output['issues']=[{'category':'payoff','target':one['id'],'problem':'测试返修范围。',
+                        'evidence':[{'id':r['id'],'quote':r['text']} for r in (one,two)]}]
+            elif node=='agent_continuity_writer':
+                packet=json.loads(kwargs['task_description'].split('\n\n',1)[1])
+                assert packet['目标']==['p0001']
+                output={'sha256':packet['sha256'],'edits':[{'id':'p0001','text':'第一段也保留。'}]}
+            elif node=='agent_continuity_verify':
+                packet=json.loads(kwargs['task_description'].split('\n\n',1)[1])
+                assert '第一段也保留。' in kwargs['task_description'] and len(packet['正文'])>=3
+                output={'sha256':packet['sha256'],'issues':[]}
             elif node=='agent_zhuque_rounds':
                 prompt = kwargs['task_description']
                 if '独立审校本轮改写' in prompt:
@@ -406,11 +423,16 @@ def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_o
     expected['retained_progress']=['agent_sc','agent_pl','agent_local_review','agent_pl','agent_local_review']
     expected['blind']=['agent_sc','agent_pl','agent_blind_scene','agent_local_review']
     expected['zhuque'] = expected['blind'] + ['agent_zhuque_rounds'] * 3
+    expected['continuity']=['agent_sc','agent_pl','agent_local_review','agent_continuity_writer','agent_continuity_verify']
+    expected[first_problem].insert(
+        3 if first_problem=='continuity' else expected[first_problem].index('agent_zhuque_rounds') if first_problem=='zhuque' else len(expected[first_problem]),
+        'agent_continuity_review')
     assert calls==expected[first_problem]
     policy().verify_completion(tmp_path,state,'polish',task.to_dict())
     replacement='第二段简明。' if first_problem in ('blind','zhuque','stale','catalog_refs','unknown_catalog_refs','planned_budget','cached_budget','compact_report','confirmed_reader') else '第二段只保留新信息。'
     result=BODY.replace('第二段重复说明。',replacement)
     if first_problem in ('quality','combined'):result=BODY
+    if first_problem=='continuity':result=BODY.replace('第一段保留。','第一段也保留。')
     if first_problem=='retained_progress':result=BODY.replace('第二段重复说明。','第二段简明。').replace('第一段保留。','第一段仍旧保留。')
     if first_problem=='zhuque':
         signed = result

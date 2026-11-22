@@ -1166,6 +1166,50 @@
           "type": "json_object"
         }
       }
+    },
+    "xs2-continuity-reviewer": {
+      "description": "根据完整正文判断具体连贯性冲突，逐字核对证据，允许叙事留白。",
+      "prompt_template": "xs2-continuity-reviewer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 1,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    "xs2-continuity-writer": {
+      "description": "解决已证实的连贯性问题，保持叙述口吻与原有故事，只修授权段。",
+      "prompt_template": "xs2-continuity-writer",
+      "tools": [],
+      "disallowed_tools": null,
+      "max_turns": 3,
+      "system_prompt_template": "",
+      "copy_main_workspace": false,
+      "available_for_sub_session": true,
+      "visible_skill_group_ids": [],
+      "visible_rule_group_ids": [],
+      "model_params": {
+        "thinking_enabled": true,
+        "reasoning_effort": "high",
+        "temperature": 0.4,
+        "top_p": 0.8,
+        "presence_penalty": 0,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
     }
   }
 }

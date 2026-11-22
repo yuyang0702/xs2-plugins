@@ -801,6 +801,8 @@ def dialogue_writer_node(definition, writer_type):
 
 def _is_body_writer(node, stage):
     identity = node['id']
+    if identity == 'agent_continuity_writer':
+        return stage in {'mvp', 'polish'}
     if stage == 'mvp':
         if identity == 'agent_guard_expression_repair':
             return True

@@ -17,11 +17,24 @@ PHASES=('facts','expression')
 PRECHECK_SCRIPTS={f'script_guard_{phase}_{step}':'draft_guard'
                   for phase in PHASES for step in ('precheck','accept')}
 PRECHECK_AGENTS={f'agent_guard_{phase}_inspect':'xs2-draft-auditor' for phase in PHASES}
+CONTINUITY_AGENTS={'agent_continuity_review':'xs2-continuity-reviewer',
+                   'agent_continuity_writer':'xs2-continuity-writer',
+                   'agent_continuity_verify':'xs2-continuity-reviewer'}
+CONTINUITY_SCRIPTS={**{f'script_continuity_{step}':'manuscript_continuity'
+                      for step in ('prepare','select','candidate','finish','skip_repair')},
+                    **{f'script_budget_{node}':'production_guard' for node in CONTINUITY_AGENTS}}
 INSPECT_SELECTED=[*SELECTED,*PRECHECK_SCRIPTS,*PRECHECK_AGENTS]
 EXPRESSION_COMMIT=['script_guard_prepare','script_guard_expression_commit','script_guard_finish',
                    'script_si_post','script_render_si','sync_up_si','script_check_originality']
 EXPRESSION_FILES=('facts-approved.json','facts-audit.json','expression-input.json',
                   'expression-draft.json','expression-audit.json')
+
+
+def continuity_nodes(nodes):
+    if 'script_continuity_prepare' not in nodes:
+        return []
+    return [key for key in (*CONTINUITY_SCRIPTS, *CONTINUITY_AGENTS)
+            if not key.startswith('script_budget_') or key in nodes]
 
 
 def expression_files(directory):
@@ -212,8 +225,9 @@ def options(root,state,definition,source):
     nodes={n['id']:n for n in definition.get('nodes',[])}
     workflow_id=definition.get('workflow_id','')
     prefix=workflow_id[:-len('mvp')] if workflow_id.endswith('-mvp') else ''
-    selected=checkpoint['selected_node_ids']
-    scripts={**SCRIPTS,**PRECHECK_SCRIPTS};agents={**AGENTS,**PRECHECK_AGENTS}
+    selected=[*checkpoint['selected_node_ids'], *continuity_nodes(nodes)]
+    scripts={**SCRIPTS,**PRECHECK_SCRIPTS,**CONTINUITY_SCRIPTS}
+    agents={**AGENTS,**PRECHECK_AGENTS,**CONTINUITY_AGENTS}
     for key in (key for key in selected if key in scripts):
         name=scripts[key]
         node=nodes.get(key,{});params=node.get('node_params',{})
@@ -266,9 +280,23 @@ def verify(root,state,task,require_tail=True):
             or binding.get('task_id')!=task['task_id'] or binding.get('source_sha256')!=g.body_digest(read(root,checkpoint['source_file'])['body'])
             or receipt.get('audit_sha256')!=common._digest(common._path(root,directory+'/expression-audit.json'))
             or blocking_review(g,common._path(root,directory),audit,body,contract,'expression',
-                               retained_original=receipt.get('retained_original',False))
-            or read(root,'cache/si/chapter.json').get('body')!=body or read(root,'cache/si/body.json').get('body')!=body):
+                               retained_original=receipt.get('retained_original',False))):
         raise ValueError('恢复成稿与新任务最终核验凭据不一致')
+    final=read(root,'cache/si/chapter.json').get('body')
+    continuity=(task.get('parameter_values') or {}).get('continuity_receipt')
+    definitions={node['id'] for node in (task.get('snapshot_definition') or {}).get('nodes',[])}
+    if 'script_continuity_prepare' in definitions and not continuity:
+        raise ValueError('恢复成稿尚未完成全文连贯性检查')
+    if continuity:
+        proof=read(root,continuity)
+        if (not completed('script_continuity_finish') or proof['mode']!='draft' or proof['task']!=task['task_id']
+                or not isinstance(final,str) or proof['source']!='cache/si/chapter.json'
+                or proof['before']!=hashlib.sha256(body.encode()).hexdigest()
+                or proof['after']!=hashlib.sha256(final.encode()).hexdigest()):
+            raise ValueError('连贯性验收未绑定恢复后的成稿')
+        body=final
+    if final!=body or read(root,'cache/si/body.json').get('body')!=body:
+        raise ValueError('恢复成稿与最终渲染的正文不一致')
     expected=(body.rstrip()+'\n').replace('\n',os.linesep).encode('utf-8')
     if common._path(root,f'story/{checkpoint["chapter"]}/chapter.md').read_bytes()!=expected:
         raise ValueError('恢复渲染正文与新核验稿不一致')

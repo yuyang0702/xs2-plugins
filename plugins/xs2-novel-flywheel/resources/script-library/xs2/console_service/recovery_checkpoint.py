@@ -122,6 +122,8 @@ def validate_selection(task, checkpoint):
     selected = set(checkpoint['selected_node_ids'])
     disabled = set(task.get('disabled_node_ids') or [])
     definitions = task.get('snapshot_definition', {}).get('nodes', [])
+    if checkpoint.get('kind') == 'draft_review':
+        selected.update(_review().continuity_nodes({node['id'] for node in definitions}))
     if any(n['id']=='script_production_start' for n in definitions):
         selected|={'script_production_start','script_production_finish'}
         selected|={'script_budget_'+n['id'] for n in definitions if n['id'] in checkpoint['selected_node_ids'] and n['node_type']=='agent'}

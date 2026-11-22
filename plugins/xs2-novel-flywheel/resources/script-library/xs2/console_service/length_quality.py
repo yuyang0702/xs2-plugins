@@ -948,10 +948,21 @@ def verify_focused_attempt(root, chapter, task, node):
     receipt = json.loads(file.read_text(encoding='utf-8'))
     body = safe_path(root, f'story/{chapter}/chapter.md')
     candidate = safe_path(root, receipt['candidate_path'])
+    expected_body = receipt['body_sha256']
+    continuity = (task.get('parameter_values') or {}).get('continuity_receipt')
+    if continuity:
+        finish = (task.get('node_states') or {}).get('script_continuity_finish') or {}
+        binding = json.loads(safe_path(root, continuity).read_text(encoding='utf-8'))
+        if (finish.get('status') != 'completed' or finish.get('outputs', {}).get('continuity_receipt') != continuity
+                or binding['mode'] != 'focused' or binding['task'] != task.get('task_id')
+                or binding['source'] != f'story/{chapter}/chapter.md' or binding['before'] != expected_body):
+            raise ValueError('篇幅返修的全文连贯性检查未绑定本次正文')
+        expected_body = binding['after']
     if (receipt.get('task_id') != task.get('task_id') or receipt.get('chapter_number') != chapter
             or not candidate.is_file() or hashlib.sha256(candidate.read_bytes()).hexdigest() != receipt['candidate_sha256']
-            or hashlib.sha256(body.read_bytes()).hexdigest() != receipt['body_sha256']
-            or count_prose(body.read_text(encoding='utf-8-sig')) != receipt['actual']):
+            or hashlib.sha256(body.read_bytes()).hexdigest() != expected_body
+            or (expected_body == receipt['body_sha256']
+                and count_prose(body.read_text(encoding='utf-8-sig')) != receipt['actual'])):
         raise ValueError('片段尝试与本次任务或当前正文不匹配')
     if not isinstance(receipt.get('accepted'), bool):
         raise ValueError('片段尝试缺少采纳状态')
