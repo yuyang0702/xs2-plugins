@@ -353,6 +353,16 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
             first = 'gw-outline-mode'
             assert any(e['source']==first and e['target']=='script_story_context' and e.get('condition',{}).get('is_default') for e in data['edges'])
         assert any(e['source']=='__start__' and e['target']==first for e in data['edges'])
+        if stage == 'story-plan':
+            nodes = {node['id']: node for node in data['nodes']}
+            planner = nodes['agent_mpvb7xer_1']
+            plan_file = next(v for v in data['variables'] if v['key'] == 'story_plan_file')
+            assert '{{story_support_context}}' in planner['first_message']
+            assert planner['save_output_to_file'] and plan_file['type'] == 'file'
+            assert planner['output_file_path'] == plan_file['default']
+            route = ['script_story_context', 'script_sync_down', planner['id'], 'script_persist_story_plan', 'agent_style']
+            edges = {(e['source'], e['target']) for e in data['edges']}
+            assert set(zip(route, route[1:])) <= edges
         for node in data['nodes']:
             if node['node_type'] != 'agent':
                 continue
@@ -372,6 +382,12 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                 assert '{{'+key+'}}' in node['first_message']
                 prep=next(n for n in data['nodes'] if n['id']=='script_local_prepare')
                 assert '{{revision_context_path}}' in prep['node_params']['script_argv']
+            elif stage == 'story-plan' and node['id'] == 'agent_style':
+                for variable in ('story_plan_file', 'premise', 'style_intent'):
+                    assert '{{' + variable + '}}' in node['first_message']
+            elif stage == 'polish' and node['id'] == 'agent_zhuque_rounds':
+                assert node['node_params']['zhuque_rounds_input'] == 'zhuque_round_input'
+                assert any(e['source'] == 'script_zhuque_stage' and e['target'] == node['id'] for e in data['edges'])
             elif node['id'] == 'agent_blind_scene':
                 assert set(re.findall(r'\{\{(\w+)\}\}',node['first_message']))=={'revision_blind_packet'}
             elif node['id'] == 'agent_fragment_review':
