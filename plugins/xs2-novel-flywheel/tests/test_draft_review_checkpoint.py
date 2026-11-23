@@ -215,7 +215,7 @@ def test_native_selected_graph_replays_review_without_any_authoring_node(tmp_pat
                 packet=(tmp_path/ctx.parameter_values['continuity_review_input']).read_text(encoding='utf-8')
                 source=json.loads(packet.split('\n\n',1)[1])
                 return NodeResult(status='completed',outputs={'continuity_review_result':
-                    json.dumps({'sha256':source['sha256'],'issues':[]})})
+                    json.dumps({'sha256':source['sha256'],'redundancy_checked':True,'pair_checks':dict.fromkeys(source.get('待逐对核对',{}),'distinct'),'issues':[]})})
             phase_agents={'facts','expression'}
             expected={'inspect'} if inspect_first else {'repair','audit'}
             assert key in {f'agent_guard_{phase}_{action}' for phase in phase_agents for action in expected}

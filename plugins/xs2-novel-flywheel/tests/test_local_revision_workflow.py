@@ -293,7 +293,7 @@ def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_o
             elif node=='agent_continuity_review':
                 packet=json.loads(kwargs['task_description'].split('\n\n',1)[1])
                 assert packet['正文'] and '伏笔' in kwargs['task_description']
-                output={'sha256':packet['sha256'],'issues':[]}
+                output={'sha256':packet['sha256'],'redundancy_checked':True,'pair_checks':dict.fromkeys(packet.get('待逐对核对',{}),'distinct'),'issues':[]}
                 if first_problem=='continuity':
                     one,two,*_=packet['正文']
                     output['issues']=[{'category':'payoff','target':one['id'],'problem':'测试返修范围。',
@@ -305,7 +305,7 @@ def test_real_scheduler_retries_only_responsible_role_and_passes_actual_report_o
             elif node=='agent_continuity_verify':
                 packet=json.loads(kwargs['task_description'].split('\n\n',1)[1])
                 assert '第一段也保留。' in kwargs['task_description'] and len(packet['正文'])>=3
-                output={'sha256':packet['sha256'],'issues':[]}
+                output={'sha256':packet['sha256'],'redundancy_checked':True,'pair_checks':dict.fromkeys(packet.get('待逐对核对',{}),'distinct'),'issues':[]}
             elif node=='agent_zhuque_rounds':
                 prompt = kwargs['task_description']
                 if '独立审校本轮改写' in prompt:

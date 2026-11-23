@@ -64,13 +64,18 @@ def _export_status(root, chapter, body):
         return 'missing'
     manifest = _json(manifest_path)
     rows = manifest.get('chapters')
-    if manifest.get('output') != EXPORT or not isinstance(rows, list):
+    verified = production.verified_delivery(root, manifest) if 'delivery' in manifest else None
+    if verified is False:
+        return 'stale'
+    if (verified is None and manifest.get('output') != EXPORT) or not isinstance(rows, list):
         return 'unknown'
     if not any(isinstance(row, dict) and chapter_id(row.get('chapter')) == chapter
                and row.get('path') == BODY.format(chapter=chapter) for row in rows):
         return 'missing'
     if not body or not manifest_path:
         return 'stale'
+    if verified:
+        return 'recorded'
     return 'recorded' if body.stat().st_mtime_ns <= min(artifact.stat().st_mtime_ns, manifest_path.stat().st_mtime_ns) else 'stale'
 
 
@@ -146,6 +151,8 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
     now = datetime.now(timezone.utc).isoformat()
     bodies = list((root / 'story').glob('[0-9][0-9][0-9][0-9]/chapter.md'))
     export = _file(root, EXPORT)
+    manifest = _json(_file(root, 'export/manifest.json'))
+    verified = production.verified_delivery(root, manifest) if 'delivery' in manifest else None
     stages = []
     current = ''
     newest_upstream = None
@@ -176,7 +183,7 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
             complete = False
         elif status in TERMINAL - {'completed'}:
             current = label + '未完成，请处理任务提示'
-        if stage == 'export' and exists and any(body.stat().st_mtime_ns > exists.stat().st_mtime_ns for body in bodies):
+        if stage == 'export' and exists and (verified is False or verified is None and any(body.stat().st_mtime_ns > exists.stat().st_mtime_ns for body in bodies)):
             complete = False
         row = {'id': stage, 'label': label, 'completed': complete, 'status': status or ('completed' if complete else 'not_started')}
         if include_details and chapter_bound and task.get('workspace_override'):
@@ -188,7 +195,7 @@ def project_progress(root, state, tasks, usages=None, *, selected='', include_de
         (item['label'] + '未完成' for item in stages if not item['completed']), '尚未开始'))
     result = {'percent': round(completed / len(stages) * 100), 'completed_count': completed,
               'total_count': len(stages), 'label': label, 'stages': stages, 'chapter_count': len(bodies),
-              'can_download': bool(export), 'export_current': exported}
+              'can_download': bool(export) and verified is not False, 'export_current': exported}
     if include_details:
         result['lifecycle'] = chapter_lifecycle(root, state, chapter)
         if chapter == project_chapter and isinstance(state.get('autoPauseReason'), str) and state['autoPauseReason']:

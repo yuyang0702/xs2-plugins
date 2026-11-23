@@ -139,6 +139,12 @@ def verify_completion(root, state, stage, task):
         state['compositionReviewRefreshRecoveries']={**refreshes,key:{**refreshes[key],'completed':task['task_id']}}
 
 
+def verified_delivery(root, manifest):
+    module = execution_guard().load('novel_delivery_export',
+        Path(__file__).resolve().parents[1] / 'manuscript_export/manuscript_export.py')
+    return module.delivery_matches(root, manifest)
+
+
 def _verify_completion(root, state, stage, task):
     nodes = task.get('node_states') or {}
     values = task.get('parameter_values') or {}
@@ -162,6 +168,10 @@ def _verify_completion(root, state, stage, task):
     artifact = Path(root) / ARTIFACTS[stage].format(chapter=chapter(state))
     if not artifact.is_file() or not artifact.read_text(encoding="utf-8").strip():
         raise ValueError(f"任务结束但缺少有效产物 {artifact.relative_to(root)}，自动流程已暂停。")
+    if stage == "export":
+        manifest_path = Path(root) / "export/manifest.json"
+        if manifest_path.is_file() and verified_delivery(root, json.loads(manifest_path.read_bytes())) is False:
+            raise ValueError("导出完成核验发现正文或下载稿已变动")
     started = task.get("created_at")
     if started:
         try:

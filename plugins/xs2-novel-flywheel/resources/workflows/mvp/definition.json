@@ -7911,6 +7911,12 @@
             "sha256": {
               "type": "string"
             },
+            "redundancy_checked": {
+              "type": "boolean"
+            },
+            "pair_checks": {
+              "type": "object"
+            },
             "issues": {
               "type": "array",
               "items": {
@@ -7920,6 +7926,7 @@
           },
           "required": [
             "sha256",
+            "redundancy_checked",
             "issues"
           ],
           "additionalProperties": false
@@ -8053,6 +8060,12 @@
             "sha256": {
               "type": "string"
             },
+            "redundancy_checked": {
+              "type": "boolean"
+            },
+            "pair_checks": {
+              "type": "object"
+            },
             "issues": {
               "type": "array",
               "items": {
@@ -8062,6 +8075,7 @@
           },
           "required": [
             "sha256",
+            "redundancy_checked",
             "issues"
           ],
           "additionalProperties": false

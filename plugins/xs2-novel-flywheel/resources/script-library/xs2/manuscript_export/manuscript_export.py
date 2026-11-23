@@ -51,7 +51,7 @@ def _atomic_text(path,text):
     path.parent.mkdir(parents=True,exist_ok=True)
     fd,temporary=tempfile.mkstemp(prefix='.export-',suffix='.tmp',dir=path.parent)
     try:
-        with os.fdopen(fd,'w',encoding='utf-8') as stream:
+        with os.fdopen(fd,'w',encoding='utf-8',newline='') as stream:
             stream.write(text);stream.flush();os.fsync(stream.fileno())
         os.replace(temporary,path)
     finally:Path(temporary).unlink(missing_ok=True)
@@ -199,6 +199,26 @@ def _validated_handoff(value, lead, opening):
     return value
 
 
+def delivery_matches(root, report):
+    """Check the frozen chapter set and the actual page and download artifacts."""
+    proof = report.get("delivery")
+    if proof is None:
+        return None  # Older exports have only the historical progress checks.
+    if not isinstance(proof, dict):
+        return False
+    sources, artifacts = proof.get("chapters"), proof.get("artifacts")
+    if not isinstance(sources, dict) or not isinstance(artifacts, dict) or "export/manuscript.md" not in artifacts:
+        return False
+    root = Path(root).resolve()
+    if set(sources) != {p.relative_to(root).as_posix() for p in (root / "story").glob("*/chapter.md")}:
+        return False
+    try:
+        return all(hashlib.sha256(_artifact_path(root, name).read_bytes()).hexdigest() == expected
+                   for files in (sources, artifacts) for name, expected in files.items())
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def build_manuscript(output: str, manifest: str, *, mode='book', binding='', task_id='',
                      lead_review='') -> dict[str, object]:
     root = Path.cwd().resolve()
@@ -312,8 +332,31 @@ def build_manuscript(output: str, manifest: str, *, mode='book', binding='', tas
                 or any(path.read_bytes()!=raw for path,raw in sources.items())):
             raise ValueError('导出期间章节来源已有变化，未发布')
         manuscript = "\n\n---\n\n".join(sections) + ("\n" if sections else "")
-        _atomic_text(target, lead + '\n\n' + manuscript if lead else manuscript)
-        _atomic_text(manifest_path,json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+        rendered = lead + '\n\n' + manuscript if lead else manuscript
+        page = _artifact_path(root, 'export/manuscript.md')
+        default_manifest = _artifact_path(root, 'export/manifest.json')
+        artifacts = {page: rendered, target: rendered}
+        if project.get('mode') == 'short' and len(exported) == 1:
+            submission = _artifact_path(root, 'export/知乎投稿正文.txt')
+            if submission in artifacts:
+                raise ValueError('投稿稿与 Markdown 导出不能共用路径')
+            chapter_text = sources[root / exported[0]['path']].decode('utf-8-sig')
+            artifacts[submission] = lead + '\n\n' + chapter_text if lead else chapter_text
+        manifests = {manifest_path, default_manifest}
+        if manifests.intersection(artifacts):
+            raise ValueError('导出清单不能覆盖作品页或下载稿')
+        report['delivery'] = {
+            'chapters': {p.relative_to(root).as_posix(): hashlib.sha256(raw).hexdigest()
+                         for p, raw in sources.items()},
+            'artifacts': {p.relative_to(root).as_posix(): hashlib.sha256(text.encode('utf8')).hexdigest()
+                          for p, text in artifacts.items()},
+        }
+        for file, text in artifacts.items():
+            _atomic_text(file, text)
+        if not delivery_matches(root, report):
+            raise ValueError('作品正文、展示稿或下载稿与本轮导出不一致，请重新导出')
+        for file in manifests:
+            _atomic_text(file, json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     return report
 
 
