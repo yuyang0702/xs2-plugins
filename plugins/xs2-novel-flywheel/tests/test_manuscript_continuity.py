@@ -123,7 +123,7 @@ def test_event_retelling_keeps_revised_sentence_and_drops_only_old_evidence(gate
                     {"sha256": gate.sha(before), "redundancy_checked": True, "issues": []})
     drop, keep = {"id": "p0002", "quote": old}, {"id": "p0001", "quote": retained}
     issue = {"category": "redundancy", "target": "p0002", "problem": "收到的是同一张照片",
-             "evidence": [drop, keep]}
+             "evidence": [drop, keep], "function_check": {"shared_function": "交代收到照片的日期", "loses_function": False}}
     report = {"sha256": gate.sha(before), "redundancy_checked": True, "pair_checks": dict.fromkeys(gate.repeat_pairs(before), "redundant"), "issues": [issue]}
     with pytest.raises(ValueError, match="保留本轮"):
         gate.select(tmp_path, folder, binding, before, dict(report, issues=[
@@ -149,3 +149,61 @@ def test_same_paragraph_retelling_keeps_unique_action_and_deliberate_echo(gate):
                        "edits": [{"id": "p0001", "text": after}]}) == after
     echo = "陈导来电邀她参加巡演。\n\n周屿拨给陈导，承认是他擅自替她拒绝。"
     assert gate.edited(echo, [], {"sha256": gate.sha(echo), "edits": []}) == echo
+
+
+@pytest.mark.parametrize("phase,reviewer", [("select", "agent_continuity_review"), ("finish", "agent_continuity_verify")])
+def test_invalid_citation_returns_to_same_reader_without_touching_text(gate, tmp_path, monkeypatch, capsys, phase, reviewer):
+    import io
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TASK_ID", "test")
+    monkeypatch.setattr(gate.guard, "assert_current", lambda root: None)
+    charged = []
+    monkeypatch.setattr(gate.guard, "retry", lambda root, scope, target, reason: charged.append(target))
+    original = "窗口只在白天开放。\n\n我在午夜按规定领到了证件。"
+    target = tmp_path / "cache/si/chapter.json"
+    gate.save(target, {"body": original})
+    folder = gate.task_folder(tmp_path, "test")
+    gate.prepare(tmp_path, folder, "draft", "0001", "")
+    binding = gate.read(folder / "binding.json")
+    issue = {"category": "rules", "target": "p0002", "problem": "夜间无法按规定领证",
+             "evidence": [{"id": "p0001", "quote": "白天开放"}, {"id": "p0002", "quote": "午夜"}]}
+    report = {"sha256": gate.sha(original), "issues": [issue], "redundancy_checked": True}
+    if phase == "finish":
+        gate.select(tmp_path, folder, binding, original, report)
+        gate.candidate(tmp_path, folder, binding, original, {"sha256": gate.sha(original), "edits": [
+            {"id": "p0002", "text": "次日上午，我领到了证件。"}]})
+        snapshot = (folder / "candidate.txt").read_bytes()
+        report["sha256"] = gate.sha(snapshot.decode())
+    issue["evidence"][1]["quote"] = "不存在的引文"
+    monkeypatch.setattr(gate.sys, "argv", ["continuity", phase])
+    monkeypatch.setattr(gate.sys, "stdin", io.StringIO(json.dumps(report)))
+    gate.main()
+    name = "review" if phase == "select" else "verify"
+    _, packet = (folder / f"{name}.txt").read_text("utf8").split("\n\n", 1)
+    assert "p0002" in json.loads(packet)["本次报告待修正"]
+    assert charged == [reviewer]
+    assert f'<WF_REJECT_UPSTREAM target="{reviewer}">' in capsys.readouterr().out
+    assert gate.read(target)["body"] == original
+    if phase == "finish":
+        assert (folder / "candidate.txt").read_bytes() == snapshot
+    else:
+        assert not (folder / "writer.txt").exists()
+
+
+def test_recurring_line_with_changed_emotional_function_is_retained(gate, tmp_path):
+    body = "出门时，她替我理好衣领，说了句「早点回来」。\n\n门外的脚步声越来越近。这次说「早点回来」的人，换成了我。"
+    path = tmp_path / "cache/si/chapter.json"
+    gate.save(path, {"body": body})
+    folder = gate.task_folder(tmp_path, "echo")
+    gate.prepare(tmp_path, folder, "draft", "0001", "")
+    binding = gate.read(folder / "binding.json")
+    checks = dict.fromkeys(gate.repeat_pairs(body), "distinct")
+    clean = {"sha256": gate.sha(body), "redundancy_checked": True, "pair_checks": checks, "issues": []}
+    issue = {"category": "redundancy", "target": "p0001", "problem": "同一句话",
+             "function_check": {"shared_function": "嘱咐对方", "loses_function": True},
+             "evidence": [{"id": key, "quote": "早点回来"} for key in ("p0001", "p0002")]}
+    with pytest.raises(gate.ReviewCorrection, match="情绪递进"):
+        gate.select(tmp_path, folder, binding, body, dict(clean, issues=[issue]))
+    assert gate.select(tmp_path, folder, binding, body, clean)["continuity_needs_repair"] == "no"
+    gate.finish(tmp_path, folder, binding, body, None, "echo", "")
+    assert gate.read(path)["body"] == body

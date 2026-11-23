@@ -170,7 +170,11 @@ def test_reused_caller_prefix_cannot_merge_distinct_logical_role_groups(native):
     guard.retry(root,'shared-prefix/task-a','writer','connection reset from writing')
     guard.retry(root,'shared-prefix/task-a','agent_local_review','connection reset from review')
     assert len(guard.retry_history(root,'scene-writing/task-a'))==1
-    assert len(guard.retry_history(root,'local-revision/task-a'))==1
+    assert len(guard.retry_history(root,'local-review/task-a'))==1
+    guard.retry(root,'local-revision/task-a','agent_pl','补丁改变了人物的身份')
+    assert [r['target'] for r in guard.retry_history(root,'local-revision/task-a')]==['agent_pl']
+    for reader in ('agent_continuity_review','agent_continuity_verify'):
+        assert guard._logical_group(reader) != guard._logical_group('agent_continuity_writer')
 
 
 @pytest.mark.parametrize('source',['body','declared_rules','book_contract'])

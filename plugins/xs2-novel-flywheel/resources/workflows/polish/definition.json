@@ -1,7 +1,7 @@
 {
   "workflow_id": "polish",
   "name": "章节润色管线",
-  "version": 39,
+  "version": 40,
   "nodes": [
     {
       "id": "script_production_start",
@@ -2158,7 +2158,7 @@
       "node_type": "agent",
       "agent_type": "xs2-blind-scene-reader",
       "system_prompt_template": "",
-      "first_message": "按下方 JSON 格式提交选票。当票面的 reading_task 为 meaning_preservation 时，两版意思、事实、人物立场和事件先后相同且表达通顺即选 tie。单纯个人偏好也选 tie。确有误改或无法理解才选择保全原意的一版并指出具体差别。\n你是两版小说的匿名读者，每场 A、B 顺序独立。先连读前后场，按本书的叙述距离、人物声音和这场承担的作用比较。直接讲述、慢写、技术说明、有意重复或跳跃都可以成立；新写法也可以胜出。关注有没有读得更明白或更有余味，以及是否改错既有事实、提前揭底或冲淡伏笔。prefer 选 A、B 或 tie。读感相当、两版相同或只有个人措辞偏好时填 tie，exceptions 留空；程序会保留底稿。偏好明确时可整场选择，只有另一版的局部确有增益且拼接连贯时才列反选编号。空串代表该处省略。voice_quote 可引对白、独白或叙述，tie 时可空。两处引文都逐字摘本场连续几个字，保留原字，勿另加引号或省略号。redundant_quote 无例可空。reason 简述本场实际取舍，不猜测版本来源。\n{{revision_blind_packet}}\n<OUTPUT_SCHEMA>\n{\"type\": \"object\", \"properties\": {\"ballot\": {\"type\": \"string\"}, \"scenes\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"prefer\": {\"enum\": [\"A\", \"B\", \"tie\"]}, \"exceptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"voice_quote\": {\"type\": \"string\"}, \"redundant_quote\": {\"type\": \"string\"}, \"reason\": {\"type\": \"string\"}}, \"required\": [\"id\", \"prefer\", \"exceptions\", \"voice_quote\", \"redundant_quote\", \"reason\"], \"additionalProperties\": false}}}, \"additionalProperties\": false, \"required\": [\"ballot\", \"scenes\"]}\n</OUTPUT_SCHEMA>",
+      "first_message": "按下方 JSON 格式提交选票。当票面的 reading_task 为 meaning_preservation 时，两版意思、事实、人物立场和事件先后相同且表达通顺即选 tie。单纯个人偏好也选 tie。确有误改或无法理解才选择保全原意的一版并指出具体差别。\n你是两版小说的匿名读者，每场 A、B 顺序独立。先连读前后场，按本书的叙述距离、人物声音和这场承担的作用比较。直接讲述、慢写、技术说明、有意重复或跳跃都可以成立；新写法也可以胜出。关注有没有读得更明白或更有余味，以及是否改错既有事实、提前揭底或冲淡伏笔。prefer 选 A、B 或 tie。读感相当、两版相同或只有个人措辞偏好时填 tie，exceptions 留空。票面 reading_task 为 creative_equivalence 时，平票须分别用布尔值 same_meaning 与 same_voice 说明两版原意和人物口吻是否一致。偏好明确时可整场选择，只有另一版的局部确有增益且拼接连贯时才列反选编号。空串代表该处省略。voice_quote 可引对白、独白或叙述，tie 时可空。两处引文都逐字摘本场连续几个字，保留原字，勿另加引号或省略号。redundant_quote 无例可空。reason 简述本场实际取舍，不猜测版本来源。\n{{revision_blind_packet}}\n<OUTPUT_SCHEMA>\n{\"type\": \"object\", \"properties\": {\"ballot\": {\"type\": \"string\"}, \"scenes\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"prefer\": {\"enum\": [\"A\", \"B\", \"tie\"]}, \"exceptions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"voice_quote\": {\"type\": \"string\"}, \"redundant_quote\": {\"type\": \"string\"}, \"reason\": {\"type\": \"string\"}, \"same_meaning\": {\"type\": \"boolean\"}, \"same_voice\": {\"type\": \"boolean\"}}, \"required\": [\"id\", \"prefer\", \"exceptions\", \"voice_quote\", \"redundant_quote\", \"reason\"], \"additionalProperties\": false}}}, \"additionalProperties\": false, \"required\": [\"ballot\", \"scenes\"]}\n</OUTPUT_SCHEMA>",
       "var_bindings": {},
       "node_params": {
         "json_output_schema": {
@@ -2196,6 +2196,12 @@
                   },
                   "reason": {
                     "type": "string"
+                  },
+                  "same_meaning": {
+                    "type": "boolean"
+                  },
+                  "same_voice": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -2525,7 +2531,8 @@
       "auto_flow": true,
       "enable_complete_node_task": false,
       "require_non_empty_output": true,
-      "output_variable": "continuity_review_result"
+      "output_variable": "continuity_review_result",
+      "auto_retry_count": 2
     },
     {
       "id": "script_budget_agent_continuity_writer",
@@ -2674,7 +2681,8 @@
       "auto_flow": true,
       "enable_complete_node_task": false,
       "require_non_empty_output": true,
-      "output_variable": "continuity_verify_result"
+      "output_variable": "continuity_verify_result",
+      "auto_retry_count": 2
     },
     {
       "id": "script_continuity_select",
@@ -2696,7 +2704,8 @@
         "x": 1470,
         "y": 1390
       },
-      "auto_flow": true
+      "auto_flow": true,
+      "enable_reject_upstream": true
     },
     {
       "id": "script_continuity_candidate",
@@ -2742,7 +2751,8 @@
         "x": 1470,
         "y": 2090
       },
-      "auto_flow": true
+      "auto_flow": true,
+      "enable_reject_upstream": true
     },
     {
       "id": "script_continuity_prepare",

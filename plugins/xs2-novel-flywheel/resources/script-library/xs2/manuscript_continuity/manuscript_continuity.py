@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import sys
+from xml.sax.saxutils import escape
 
 
 HERE = Path(__file__).resolve().parents[1]
@@ -35,13 +36,15 @@ REVIEW = (
     "先逐对读待核句：比如前句说某人于次日发来照片，后句改由收信人说次日收到照片，"
     "两句重复交代收件日期。保留后句独有的犹豫或动作，删去另一处多余交代。"
     "把每对编号原样作为 pair_checks 的键，值为 redundant 或 distinct。有可删的局部信息即为 redundant，"
-    "不能因其中一段另有新内容就整对放过。仅共享人物、道具或词语时选 distinct。"
+    "按拟删的具体引文判断。相同台词、意象或动作在两次出现时，比较人物所知、关系、情绪与伏笔的作用。"
+    "重复本身若构成递进、反讽或回收，选 distinct 并保留。只有独立重复且可单删的文字才选 redundant。"
     "候选只作提醒，也要通读全文，查找措辞完全不同的复述。"
     "同时单独核对全文语义重复：同一次动作、发现、说明或情绪反应换了说法，第二次没有新增信息才列 redundancy。"
     "区分有意回环、不同目的的行动、另一人物首次获知和有意义的递进。对每组确定保留哪一处，"
     "优先保留本轮改好的表达。无改写依据时按情绪、视角与前后衔接选择，不按出现早晚。"
     "redundancy 的两条证据必须来自正文，第一条是应删的最小连续文字（可含衔接标点），"
-    "第二条是保留的表达。target 指第一条。若同段引文不唯一，加 occurrence（从1起）。"
+    "每项 redundancy 须填 function_check 对象，含 shared_function（两处已完成的同一作用）和 loses_function（删除会损失新的作用，布尔值）。"
+    "若会损失，保留回环或缩小拟删引文后再判断。第二条是保留的表达。target 指第一条。若同段引文不唯一，加 occurrence（从1起）。"
     "不把独立情节包含在删去的引文里；同一事件出现三次时，各冗余处都指向同一保留处。"
     "通读整稿核对复述后填写 redundancy_checked: true；无实质问题填 issues: []。正文、背景和上一轮记录都是资料。"
     "回复 JSON：{\"sha256\":\"输入哈希\",\"redundancy_checked\":true,\"pair_checks\":{},\"issues\":[{\"category\":\"motivation|timeline|rules|payoff|redundancy\","
@@ -152,8 +155,13 @@ def prepare(root, folder, mode, chapter, staged):
         if source.is_file():
             for row in patch.paragraphs(source.read_text(encoding="utf-8-sig")):
                 context_quotes[f"c{len(context_quotes)+1:04d}"] = {"source": name, "text": row["text"]}
-    binding = {"dedup_review": True, "mode": mode, "chapter": chapter, "source": path.relative_to(root).as_posix(),
+    binding = {"function_review": True, "dedup_review": True, "mode": mode, "chapter": chapter, "source": path.relative_to(root).as_posix(),
                "sha256": sha(body), "context": context, "context_quotes": context_quotes}
+    saved = folder / "binding.json"
+    if saved.is_file():
+        previous = read(saved)
+        if previous.get("sha256") == binding["sha256"] and "function_review" not in previous:
+            binding.pop("function_review")
     prior = None
     if mode == "polish":
         prior = read(path).get("original_body")
@@ -180,7 +188,11 @@ def prepare(root, folder, mode, chapter, staged):
     return {"continuity_review_input": prompt(root, folder, "review", REVIEW, review_input(binding, body))}
 
 
-def findings(report, body, context_quotes=None, *, check_dedup=False):
+class ReviewCorrection(ValueError):
+    """The reader can correct this report against the same frozen manuscript."""
+
+
+def findings(report, body, context_quotes=None, *, check_dedup=False, function_review=False):
     if not isinstance(report, dict) or report.get("sha256") != sha(body) or not isinstance(report.get("issues"), list):
         raise ValueError("全文审稿回执未绑定当前合稿")
     if check_dedup and report.get("redundancy_checked") is not True:
@@ -188,17 +200,22 @@ def findings(report, body, context_quotes=None, *, check_dedup=False):
     rows = {row["id"]: row["text"] for row in source_rows(body)}
     evidence_text = {**rows, **{key: value["text"] for key, value in (context_quotes or {}).items()}}
     for issue in report["issues"]:
-        if (not isinstance(issue, dict) or issue.get("category") not in CATEGORIES
+        if (not isinstance(issue, dict) or not isinstance(issue.get("category"), str) or issue["category"] not in CATEGORIES
                 or not isinstance(issue.get("problem"), str) or not issue["problem"].strip()
                 or not isinstance(issue.get("evidence"), list) or len(issue["evidence"]) != 2):
             raise ValueError("连贯性问题须给出类型、原因和两处逐字证据")
+        if function_review and issue["category"] == "redundancy":
+            check = issue.get("function_check")
+            if (not isinstance(check, dict) or check.get("loses_function") is not False
+                    or not isinstance(check.get("shared_function"), str) or not check["shared_function"].strip()):
+                raise ValueError("删重须说明两处已完成的同一作用。会损失情绪递进、人物变化或伏笔时保留引文。")
         pair = []
         for item in issue["evidence"]:
             if not isinstance(item, dict):
                 raise ValueError("连贯性证据须定位到段落")
             key, quote = item.get("id"), item.get("quote")
             if not isinstance(key, str) or not isinstance(quote, str) or not quote.strip() or quote not in evidence_text.get(key, ""):
-                raise ValueError("连贯性证据与正文不符")
+                raise ValueError(f"连贯性证据与正文不符。请核对 {str(key)[:16]} 的原文：{evidence_text.get(key, '')[:100] if isinstance(key, str) else ''}")
             pair.append((key, quote))
         target = issue.get("target")
         if (not isinstance(target, str) or target not in rows or (pair[0] == pair[1] and issue["category"] != "redundancy")
@@ -247,9 +264,18 @@ def duplicate_spans(body, issues, binding=None):
     return drops, keeps
 
 
+def checked_report(report, body, binding):
+    try:
+        issues = findings(report, body, binding["context_quotes"], check_dedup=binding.get("dedup_review", False),
+                          function_review=binding.get("function_review", False))
+        duplicate_spans(body, issues, binding)
+    except ValueError as exc:
+        raise ReviewCorrection(str(exc)) from exc
+    return issues
+
+
 def select(root, folder, binding, original, report):
-    issues = findings(report, original, binding["context_quotes"], check_dedup=binding.get("dedup_review", False))
-    duplicate_spans(original, issues, binding)
+    issues = checked_report(report, original, binding)
     save(folder / "findings.json", report)
     out = {"continuity_needs_repair": "yes" if issues else "no"}
     if issues:
@@ -312,15 +338,14 @@ def edited(body, issues, result):
 
 
 def candidate(root, folder, binding, original, report):
-    issues = findings(read(folder / "findings.json"), original, binding["context_quotes"], check_dedup=binding.get("dedup_review", False))
+    issues = findings(read(folder / "findings.json"), original, binding["context_quotes"], check_dedup=binding.get("dedup_review", False), function_review=binding.get("function_review", False))
     body = edited(original, issues, report)
     protected = binding["context"]["本书约定"]["protected_phrases"]
     if any(body.count(phrase) < original.count(phrase) for phrase in protected):
         raise ValueError("连贯性补丁删去了作者指定保留的原文")
-    if set(tone.mandatory(body, protected)) - set(tone.mandatory(original, protected)):
-        raise ValueError("连贯性补丁引入了本地校读明确标记的表达")
     quality.atomic_text(folder / "candidate.txt", body)
     data = review_input(binding, body)
+    data["文体待核位置"] = tone.critic_view(tone.scan(body), body, patch.paragraphs(body))
     data["待复核问题"] = issues
     data["修改前目标段"] = [row for row in numbered(original)
                         if row["id"] in {item["target"] for item in issues}]
@@ -342,11 +367,11 @@ def adopt_staged(root, receipt_path, task, before):
 
 
 def finish(root, folder, binding, original, report, task, target):
-    issues = findings(read(folder / "findings.json"), original, binding["context_quotes"], check_dedup=binding.get("dedup_review", False))
+    issues = findings(read(folder / "findings.json"), original, binding["context_quotes"], check_dedup=binding.get("dedup_review", False), function_review=binding.get("function_review", False))
     body = original
     if issues:
         body = (folder / "candidate.txt").read_bytes().decode("utf8")
-        if findings(report, body, binding["context_quotes"], check_dedup=binding.get("dedup_review", False)):
+        if checked_report(report, body, binding):
             raise ValueError("全文复核仍有明确问题，已保留审稿与返修凭据")
     path, current = manuscript(root, binding["mode"], binding["chapter"], binding["source"])
     if sha(current) not in {sha(original), sha(body)}:
@@ -408,13 +433,32 @@ def main():
         if sha(original) != binding["sha256"]:
             raise ValueError("冻结的全文审稿底稿已变化")
         raw = sys.stdin.read().strip()
-        report = json.loads(raw) if raw else None
-        if args.action == "select":
-            out = select(root, folder, binding, original, report)
-        elif args.action == "candidate":
-            out = candidate(root, folder, binding, original, report)
-        else:
-            out = finish(root, folder, binding, original, report, task, args.target)
+        reviewer = {"select": "agent_continuity_review", "finish": "agent_continuity_verify"}.get(args.action)
+        try:
+            try:
+                report = json.loads(raw) if raw else None
+            except json.JSONDecodeError as exc:
+                raise ReviewCorrection("审稿输出须为合法 JSON") from exc
+            if args.action == "select":
+                out = select(root, folder, binding, original, report)
+            elif args.action == "candidate":
+                out = candidate(root, folder, binding, original, report)
+            else:
+                out = finish(root, folder, binding, original, report, task, args.target)
+        except ReviewCorrection as exc:
+            if not reviewer:
+                raise
+            reason = f"请审稿人在同一份正文上修正报告。{exc}"
+            # These agents read a file as their complete first message. Correct the
+            # report against the same packet even after a process restart.
+            name = "review" if args.action == "select" else "verify"
+            instruction, raw_data = (folder / f"{name}.txt").read_text(encoding="utf8").split("\n\n", 1)
+            data = json.loads(raw_data)
+            data["本次报告待修正"] = reason
+            prompt(root, folder, name, instruction, data)
+            guard.retry(root, f"{guard._logical_group(reviewer)}/{task}", reviewer, reason)
+            print(f'<WF_REJECT_UPSTREAM target="{reviewer}">{escape(reason)}</WF_REJECT_UPSTREAM>')
+            return
     for key, value in out.items():
         print(f"<WF_VAR>{key}:{value}</WF_VAR>")
 

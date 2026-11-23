@@ -10,7 +10,9 @@ def logical_step(target):
     if target in ('agent_opening_lead','agent_opening_lead_review'):return 'opening-lead'
     if target.startswith('agent_composition_'):return 'composition'
     if target.startswith('agent_guard_'):return 'draft-review'
-    if target in ('agent_sc','agent_pl','agent_local_review'):return 'local-revision'
+    if target in ('agent_local_review','agent_blind_scene','agent_continuity_review','agent_continuity_verify'):
+        return target.removeprefix('agent_').replace('_','-')
+    if target in ('agent_sc','agent_pl'):return 'local-revision'
     if target in ('agent_blind_reader','agent_context_reader','agent_reader'):return 'reader-review'
     if target in ('agent_obs','agent_arb'):return 'archive-review'
     if 'rolling' in target:return 'rolling-plan'

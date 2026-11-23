@@ -21,18 +21,16 @@ def test_assembled_draft_sends_clear_hit_to_writer_after_clean_model_audit(tmp_p
     assert not (folder/'final-receipt.json').exists()
 
 
-def test_confirmed_reader_only_requires_local_hits_in_target_paragraph(tmp_path):
+def test_confirmed_reader_does_not_have_to_rephrase_a_contextual_hit(tmp_path):
     body = '她碰了碰窗框。“还没回来。”不是钥匙，而是门闩。\n\n说白了，邻居还在等。'
     m, out, _ = scoped_setup(tmp_path, raw=body.encode())
     assert out['revision_critique_mode'] == 'confirmed'
     src = m.read(tmp_path/out['revision_source_input'])
     assert src['local_tone']['marks'] == {'p0001':['不是钥匙，而是']}
-    with pytest.raises(ValueError, match='不是钥匙，而是'):
-        m.check_local_tone(src, [])
+    m.check_local_tone(src, [])
     edit = {'paragraph_id':'p0001','old':'不是钥匙，而是门闩','replacement':'她指的是门闩','occurrence':1}
     m.check_local_tone(src, [edit])
-    with pytest.raises(ValueError, match='不是钥匙，而是'):
-        m.check_local_tone(src, [], [edit])
+    m.check_local_tone(src, [], [edit])
 
 
 def test_plain_single_patch_scans_source_and_result_offline(tmp_path, monkeypatch):
@@ -82,7 +80,7 @@ def test_scoped_edit_checks_rule_at_join_and_leaves_same_phrase_elsewhere():
         m.check_local_tone(source, [], [corrected])
 
 
-def test_blind_tie_keeps_only_required_paraphrase_and_double_checks_its_meaning(tmp_path):
+def test_blind_tie_allows_the_original_wording_when_only_style_candidates_are_present(tmp_path):
     m = module()
     body = '不是钥匙，而是门闩。\n\n他等在桥上。'
     put(tmp_path, 'story/0001/chapter.md', body)
@@ -100,7 +98,5 @@ def test_blind_tie_keeps_only_required_paraphrase_and_double_checks_its_meaning(
     put(tmp_path, out['revision_blind_path'], vote)
     m.accept_blind(tmp_path, out['revision_dir'], json.dumps(vote, ensure_ascii=False))
     context = m.read(tmp_path/out['revision_review_input'])
-    assert context['candidate'] == src['source_body'].replace(edits[0]['old'], edits[0]['replacement'])
-    row = {'edit_index':0, 'before_excerpt':'门闩','after_excerpt':'门闩','reason':'两句所指相同。','effect':'equivalent'}
-    assert not m.patches.review_changes(context['edits'], [row], accept_equivalent=context['local_rephrased_indices'])
-    assert m.patches.review_changes(context['edits'], [{**row, 'effect':'regressed'}], accept_equivalent=[0])
+    assert context['candidate'] == src['source_body']
+    assert not context['edits']

@@ -75,7 +75,7 @@ def model_view(data,role):
         view['zhuque_review']['guidance'] = zhuque.GUIDANCE
         if detection.get('required'):
             view['zhuque_review'].update(rewrite_units=detection['rewrite_units'], guidance=zhuque.REWRITE_GUIDANCE)
-    if role != 'critic':
+    if role == 'writer':
         view.pop('tone_review', None)
     if role in ('critic', 'writer') and 'local_tone' in data:
         view['local_tone'] = data['local_tone']
@@ -286,13 +286,13 @@ def local_tone_policy(source, whole_chapter_review=False):
         marks = {p['id']: marks[p['id']] for p in source['paragraphs']
                  if p['id'] in marks and any(q in p['text'] for q in quotes)}
     edited_only = bool(fixed or (authored.strip() and not whole_chapter_review))
-    instruction = tone.REPHRASE
+    instruction = tone.GUIDANCE
     if edited_only:
         if len(source['paragraphs']) > 1:
             marks = {key:[hit for hit in hits if hit in authored] for key, hits in marks.items()}
             marks = {key:hits for key, hits in marks.items() if hits}
         instruction += '仅处理作者指定片段内的命中，段外原句仅供定位。'
-    return {'revision':tone.REVISION, 'instruction':instruction, 'marks':marks, 'edited_only':edited_only}
+    return {'revision':tone.REVISION, 'mode':'contextual', 'instruction':instruction, 'marks':marks, 'edited_only':edited_only}
 
 
 def prepare(root,chapter,task_id,target='',context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,*,dialogue_check=False,dialogue_check_version=1,scoped_review=False,whole_chapter_review=False,advisory=False,blind_scenes=False,whole_text_detection=False):
@@ -377,7 +377,7 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
                 if detection.get('status') != 'success':
                     raise ValueError('朱雀检测未完成，无法确定必改范围：'+str(detection.get('reason')))
                 if 'rewrite_units' in detection:
-                    tone.annotate_rewrites(detection, patches.paragraphs(body))
+                    tone.annotate_rewrites(detection, patches.paragraphs(body), contextual=True)
                     if detection['rewrite_units'] and not (detection['reference_paragraphs'] or detection['reference_excerpts']):
                         raise ValueError('本篇未检出可用的人工参考，无法执行同篇参照必改。')
                     detection['required'] = True
@@ -395,8 +395,18 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
         }
     if previous_source is None:
         source['local_tone'] = local_tone_policy(source, whole_chapter_review)
+        if scoped_review and authored.strip():
+            source['author_targets'] = explicit_author_goals(source)
     elif 'local_tone' in previous_source:
         source['local_tone'] = previous_source['local_tone']
+        if 'author_targets' in previous_source:
+            source['author_targets'] = previous_source['author_targets']
+    if scoped_review and (previous_source is None or previous_source.get('review_feedback_version')):
+        source['review_feedback_version'] = 1
+    if blind_scenes and previous_source is None and scoped_review and not fixed:
+        source['blind_tie_policy'] = blind.tie_policy(authored, source['paragraphs'])
+    elif previous_source and 'blind_tie_policy' in previous_source:
+        source['blind_tie_policy'] = previous_source['blind_tie_policy']
     binding={'schema':1,'task_id':task_id,'chapter_number':chapter,'body_path':body_path,'body_sha256':sha(raw),
              'book_contract_sha256':frozen['sha256'],'state':state(root),'context_path':context_path,'reference_path':reference_path,'feedback_path':feedback,
              'files':source_files(root,chapter,context_path,reference_path,feedback,(source.get('confirmed_reader') or {}).get('source_paths',())),
@@ -838,7 +848,7 @@ def writer_input(root,folder,critique_path):
                 if critique.get('scene_pass') and not verified:
                     raise ValueError('逐场审读意见没有可定位的引文。请引用单段中连续的一小句。')
                 critique={**critique,'scene_pass':verified}
-            targets=scoped_critic_goals(source,critique)
+            targets=source.get('author_targets', []) + scoped_critic_goals(source,critique)
         else:targets=goals(source,critique)
     except ValueError as exc:
         reason='整场表达目标复查：'+str(exc)
@@ -943,6 +953,96 @@ def critic_source_excerpts(row, body):
     return excerpts
 
 
+def explicit_author_goals(source):
+    """Bind unambiguous editorial commands to the frozen chapter before self-review."""
+    rows = {row['id']:row['text'] for row in source['paragraphs']}
+    action = r'删(?:掉|除|去)?|去掉|改(?:写|为|成)?|重写|换个说法'
+    target = r'(?:(?P<paragraph>p[0-9]{4,})(?![0-9])|「(?P<quote>[^」\n]+)」|“(?P<quotation>[^”\n]+)”)'
+    verb_first = re.compile(rf'^(?:请\s*)?(?:直接|必须|只|仅)?\s*(?P<action>{action})\s*(?:原\s*)?{target}')
+    target_first = re.compile(
+        rf'^(?:请\s*)?(?:把|将|原)\s*{target}(?:\s*中)?\s*'
+        rf'(?:(?P<whole>整段)\s*(?:首句|从)?\s*|(?:仅|只)\s*)?'
+        r'(?:「(?P<excerpt>[^」\n]+)」\s*(?:(?:至|到)\s*「(?P<end_excerpt>[^」\n]+)」\s*)?)?'
+        rf'(?:仅|只)?\s*(?P<action>{action})'
+        r'(?:\s*(?:首句|末句)?\s*「(?P<following_quote>[^」\n]+)」)?')
+    result = {}
+    commands = re.finditer(r'(?:「[^」\n]*」|“[^”\n]*”|[^。；\n「“])+', source['author_feedback'])
+    for item in commands:
+        command = re.sub(r'^\s*(?:[-*]\s+|[0-9]+[.、]\s*)?', '', item[0]).strip()
+        match = verb_first.match(command) or target_first.match(command)
+        if not match:
+            continue
+        fields = match.groupdict()
+        paragraph = fields['paragraph']
+        deletes = fields['action'].startswith('删') or fields['action'] == '去掉'
+        quote = fields['quote'] or fields['quotation'] or fields.get('excerpt')
+        if deletes:
+            quote = quote or fields.get('following_quote')
+        if paragraph is None:
+            matching = [key for key, text in rows.items() if quote in text]
+            if len(matching) != 1:
+                continue
+            paragraph = matching[0]
+        text = rows.get(paragraph, '')
+        if not text or quote and (quote not in text or text.count(quote) != 1):
+            continue
+        end_quote = fields.get('end_excerpt')
+        if end_quote:
+            end = text.find(end_quote, text.index(quote) + len(quote))
+            if end < 0 or text.count(end_quote) != 1:
+                continue
+            quote = text[text.index(quote):end + len(end_quote)]
+        # A line beginning with an ID may ask to remove just a sentence; an
+        # unquoted fragment is left to the independent review to interpret.
+        tail = command[match.end():].lstrip()
+        if re.match(r'^(?:[–—~至到-]|或|也可以|任选|吗|[？?])', tail):
+            continue
+        if fields.get('whole'):
+            quote = text
+        replacement_match = re.search(r'改[为成]\s*「([^」\n]+)」', tail)
+        replacement = replacement_match[1] if replacement_match else (
+            fields.get('following_quote') if fields['action'] in ('改为', '改成') else None)
+        exact_delete = deletes and replacement is None and (quote is not None or match.re is verb_first and
+                                    not tail.rstrip('。！.!').strip())
+        anchor = quote or text
+        result.setdefault((paragraph, anchor), {
+            'id':f'author-{len(result)+1}', 'source':'explicit_author', 'level':'mandatory',
+            'goal':command, 'required_source':command, 'paragraph_id':paragraph, 'excerpts':[anchor],
+            'explicit_delete':exact_delete, 'explicit_replacement':replacement})
+    return list(result.values())
+
+
+def author_edit_indices(source, goals, edits):
+    """Require coverage of exact author targets and protect the writer's linked patches."""
+    authored = [goal for goal in goals if goal.get('required_source')]
+    if not authored:
+        return set()
+    rows = {row['id']:row for row in source['paragraphs']}
+    body = source['source_body']
+    spans = patches._patch_spans(body, edits)
+    selected = set()
+    for goal in authored:
+        if goal.get('source') != 'explicit_author':
+            for quote in goal['excerpts']:
+                first = body.find(quote)
+                if first >= 0 and body.find(quote, first + 1) < 0:
+                    selected.update(i for a,b,i in spans if a < first + len(quote) and first < b)
+            continue
+        row = rows[goal['paragraph_id']]
+        quote, = goal['excerpts']
+        first = row['start'] + row['text'].index(quote)
+        last = first + len(quote)
+        matches = {i for a,b,i in spans if a < last and first < b and edits[i]['old'] != edits[i]['replacement']}
+        after = patches._scoped_paragraph(row, edits) if matches else row['text']
+        replacement = goal.get('explicit_replacement')
+        if (not matches or goal['explicit_delete'] and quote in after
+                or replacement and replacement not in after):
+            raise ValueError(f"{row['id']} 尚未落实作者指定的删改：{goal['goal']}")
+        selected.update(matches)
+    groups = {edits[i]['group_id'] for i in selected if edits[i].get('group_id')}
+    return selected | {i for i, edit in enumerate(edits) if edit.get('group_id') in groups}
+
+
 def scoped_critic_goals(source,critique):
     result=[]
     for index,row in enumerate(critique['issues']):
@@ -998,6 +1098,8 @@ def editor_bound(root,b):
 
 def check_local_tone(source, edits, proposed=()):
     review = source.get('local_tone') or local_tone_policy(source)
+    if review.get('mode') == 'contextual':
+        return
     protected = source['book_contract']['protected_phrases']
     pending = {}
     if review['edited_only']:
@@ -1034,7 +1136,15 @@ def check_local_tone(source, edits, proposed=()):
 
 
 def local_rephrases(source, edits):
+    if source.get('local_tone', {}).get('mode') == 'contextual':
+        return []
     return tone.rephrased_indices(source['source_body'], edits, patches, source['book_contract']['protected_phrases'])
+
+
+def blind_packet(source, edits, windows, seed):
+    return blind.packet(source['source_body'], edits, windows, seed, patches,
+                        required=source.get('zhuque_review', {}).get('required', False),
+                        policy=source.get('blind_tie_policy'))
 
 
 def compose(root,b,source,*,before_blind=False):
@@ -1073,17 +1183,19 @@ def compose(root,b,source,*,before_blind=False):
             merged=[edit for index,edit in enumerate(merged) if index not in removable]
     blind_record=None
     if 'blind_seed' in b and not before_blind:
-        public,decoder=blind.packet(source['source_body'],merged,data.get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+        public,decoder=blind_packet(source,merged,data.get('scene_trial_windows',[]),b['blind_seed'])
         for event in reversed(events):
             vote=event['data']
             if (event['kind']=='blind_scene_selection' and vote.get('task_id')==b['task_id']
                     and vote['binding_digest']==digest(b) and vote['edits_digest']==digest(merged)
                     and vote['report']['ballot']==public['ballot']):
-                merged=blind.select(public,decoder,merged,vote['report'],keep_on_tie=local_rephrases(source, merged))
+                merged=blind.select(public,decoder,merged,vote['report'],keep_on_tie=local_rephrases(source, merged),
+                                    required_indices=author_edit_indices(source, data['goals'], merged), policy=source.get('blind_tie_policy'))
                 blind_record=digest(vote['report'])
                 rechecking_subset=True
                 break
     candidate=patches.apply_patches(source['source_body'],{'source_sha256':payload['source_sha256'],'edits':merged},protected_phrases=source['book_contract']['protected_phrases'])
+    required_edits = author_edit_indices(source, data['goals'], merged)
     check_local_tone(source, merged, proposed)
     if source.get('review_protocol')!=SCOPED_REVIEW:
         if any(row['id'].startswith('precision-') for row in data['goals']):check_precision_goals(source,merged,data['goals'])
@@ -1106,12 +1218,16 @@ def compose(root,b,source,*,before_blind=False):
              'book_contract_sha256':b['book_contract_sha256'],'confirmed_context':source['confirmed_context'],
              'author_feedback':source['author_feedback'],'goals':[g for g in data['goals'] if g.get('source')!='scene_trial'],'edits':merged,
              'patch_digest':digest(payload),'evidence_catalog':evidence.catalog(candidate),'length':measured}
-    rephrased = local_rephrases(source, merged)
+    if 'review_feedback_version' in source:
+        context['review_feedback_version'] = source['review_feedback_version']
+    rephrased = sorted(set(local_rephrases(source, merged)) | required_edits)
     if rephrased:
         context['local_rephrased_indices'] = rephrased
     if data.get('writer_view_version')==packet.FOCUSED_WRITER_VERSION:
         context.update(writer_view_version=packet.FOCUSED_WRITER_VERSION,reader_report=source['reader_report'],
                        critique=data['critique'])
+    if source.get('local_tone', {}).get('mode') == 'contextual' and merged:
+        context['tone_review'] = tone.critic_view(tone.scan(candidate), candidate, patches.paragraphs(candidate))
     if source.get('precision_review_version')==2:context['precision_review_version']=2
     if 'reviewer_view_version' in data:context['reviewer_view_version']=data['reviewer_view_version']
     if source.get('review_protocol')==SCOPED_REVIEW:context['review_protocol']=SCOPED_REVIEW
@@ -1169,7 +1285,7 @@ def candidate(root,folder):
         raise Retry('agent_pl',str(exc)) from exc
     if 'blind_seed' in b:
         raw=compose(root,b,source,before_blind=True)
-        public,_=blind.packet(source['source_body'],raw['edits'],editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+        public,_=blind_packet(source,raw['edits'],editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'])
         save(safe(root,b['outputs']['revision_blind_packet']),public)
     save(safe(root,b['outputs']['revision_review_input']),context)
     if b['outputs'].get('revision_review_repair'):
@@ -1183,7 +1299,7 @@ def accept_blind(root,folder,actual):
     b,source=bound(root,folder)
     raw=compose(root,b,source,before_blind=True)
     edits=raw['edits']
-    public,decoder=blind.packet(source['source_body'],edits,editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+    public,decoder=blind_packet(source,edits,editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'])
     path=safe(root,b['outputs']['revision_blind_packet'])
     if public!=read(path):
         save(path,public)
@@ -1192,12 +1308,14 @@ def accept_blind(root,folder,actual):
     if report!=json.loads(actual):
         raise ValueError('匿名选票与本次模型实际输出不符。')
     try:
-        chosen=blind.select(public,decoder,edits,report,keep_on_tie=local_rephrases(source, edits))
+        chosen=blind.select(public,decoder,edits,report,keep_on_tie=local_rephrases(source, edits),
+                            required_indices=author_edit_indices(source, raw['goals'], edits), policy=source.get('blind_tie_policy'))
         patches.apply_patches(source['source_body'],{'source_sha256':b['body_sha256'],'edits':chosen},
                               protected_phrases=source['book_contract']['protected_phrases'])
     except (KeyError,TypeError,ValueError) as exc:
         raise Retry('agent_blind_scene',str(exc)) from exc
     try:
+        author_edit_indices(source, raw['goals'], chosen)
         check_local_tone(source, chosen, edits)
     except ValueError as exc:
         raise Retry('agent_pl', str(exc)) from exc
@@ -1397,8 +1515,9 @@ def scoped_assessment(report,context):
                 or not isinstance(quotes,list) or not quotes
                 or any(not isinstance(q,str) or not q.strip() or q not in candidate for q in quotes)
                 or ids and not any(q in region or region.strip() and region in q for region in regions for q in quotes)):
+            examples = ' / '.join(region.strip()[:90] for region in sorted(set(regions))[:3] if region.strip())
             raise ValueError(f'{key} 的问题结论须引用原编号所在位置的当前候选原文。'
-                             '请核对该编号的定位和候选正文；整稿签发时从 signoff_evidence 同编号条目中逐字引用连续片段。')
+                             f'请审稿人核对本编号后重交报告。当前候选定位示例：{examples or key}。')
         required=goal.get('level') in ('hard','mandatory')
         problem=''
         if key in pending_additions:problem=pending_additions[key]
@@ -1408,7 +1527,10 @@ def scoped_assessment(report,context):
             # preserves explicit dialogue. "keep" documents why the line stays.
             local_outcome={**outcome,'status':'not_applicable' if status=='keep' else status}
             problem=patches.scene_outcome_problem(body,edits,candidate,goal,local_outcome)
-        elif status=='resolved' and not touched[key]:problem='原位置尚无依据表明本轮改动已解决问题。'
+        elif status=='resolved' and not touched[key]:
+            if context.get('review_feedback_version'):
+                raise ValueError(f'{key} 原定位没有改动。请审稿人复核：原句可以保留填 keep，仍有具体问题填 remaining 并引正文。')
+            problem='原位置尚无依据表明本轮改动已解决问题。'
         if problem:
             still_open[key]=problem
             if required:hard.append(key+' 原有必改问题仍未解决：'+problem)
@@ -1647,7 +1769,12 @@ def commit(root,folder,expected_review,*,stage_only=False,round_proof=None,conti
         raise Retry('agent_local_review','候选补丁已有变化，已重建复查输入；请独立复查新候选，旧报告不能发布')
     if b['outputs'].get('revision_review_model'):
         verify_model(read(safe(root,b['outputs']['revision_review_model'])),context,'reviewer')
-    report=read(safe(root,b['outputs']['revision_review_path']))
+    try:
+        report=read(safe(root,b['outputs']['revision_review_path']))
+    except json.JSONDecodeError as exc:
+        reason = '审稿报告的 JSON 格式有误，请审稿人按原候选重交。'
+        guard.retry(root,'local-review/'+b['task_id'],'agent_local_review',reason)
+        raise Retry('agent_local_review', reason) from exc
     actual_matches=False
     try:actual_matches=isinstance(expected_review,str) and json.loads(expected_review)==report
     except (ValueError,TypeError):pass
@@ -1694,7 +1821,7 @@ def commit(root,folder,expected_review,*,stage_only=False,round_proof=None,conti
             targeted=report_repair.request(report,context,str(exc))
             if targeted:save_repair(root,b,context,targeted)
             elif '需要完整独立复审' in str(exc):save_repair(root,b,context,None)
-        guard.retry(root,'local-revision/'+b['task_id'],'agent_local_review',str(exc))
+        guard.retry(root,'local-review/'+b['task_id'],'agent_local_review',str(exc))
         raise Retry('agent_local_review',str(exc)) from exc
     if b['outputs'].get('revision_review_expanded'):save(safe(root,b['outputs']['revision_review_expanded']),expanded)
     if scoped and reasons:
@@ -1755,6 +1882,14 @@ def commit(root,folder,expected_review,*,stage_only=False,round_proof=None,conti
     publication = continuity_publication(root, b, publication, continuity_receipt)
     if b.get('zhuque_options',{}).get('enabled'):
         publication, round_metadata = accept_whole_text(root,folder,b,publication,round_proof)
+    for goal in context['goals']:
+        if goal.get('explicit_delete'):
+            quote, = goal['excerpts']
+            if publication['candidate'].count(quote) > context['candidate'].count(quote):
+                raise ValueError('后续校读恢复了作者指定删除的文字：'+goal['paragraph_id'])
+        replacement = goal.get('explicit_replacement')
+        if replacement and publication['candidate'].count(replacement) < context['candidate'].count(replacement):
+            raise ValueError('后续校读改动了作者给定的新句：'+goal['paragraph_id'])
     receipt={'schema':1,'task_id':b['task_id'],'before_sha256':b['body_sha256'],'after_sha256':publication['candidate_sha256'],
              'book_contract_sha256':b['book_contract_sha256'],'review_digest':digest(report),'patch_digest':context['patch_digest'],
              'changed_spans':len(publication['edits']),'length':publication['length'],'accepted':True,
@@ -1818,7 +1953,7 @@ def verify_attempt(root,task):
     b,source=bound(root,folder,accepted_sha=receipt['after_sha256']);context=compose(root,b,source)
     if 'blind_seed' in b:
         raw=compose(root,b,source,before_blind=True)
-        public,_=blind.packet(source['source_body'],raw['edits'],editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'],patches, required=source.get('zhuque_review',{}).get('required',False))
+        public,_=blind_packet(source,raw['edits'],editor_bound(root,b).get('scene_trial_windows',[]),b['blind_seed'])
         vote=read(safe(root,b['outputs']['revision_blind_path']))
         if (read(safe(root,b['outputs']['revision_blind_packet']))!=public
                 or json.loads(values.get('revision_blind_result') or 'null')!=vote

@@ -1,7 +1,7 @@
 {
   "workflow_id": "mvp",
   "name": "章节生产管线",
-  "version": 42,
+  "version": 43,
   "nodes": [
     {
       "id": "script_production_start",
@@ -7940,7 +7940,8 @@
       "auto_flow": true,
       "enable_complete_node_task": false,
       "require_non_empty_output": true,
-      "output_variable": "continuity_review_result"
+      "output_variable": "continuity_review_result",
+      "auto_retry_count": 2
     },
     {
       "id": "script_budget_agent_continuity_writer",
@@ -8089,7 +8090,8 @@
       "auto_flow": true,
       "enable_complete_node_task": false,
       "require_non_empty_output": true,
-      "output_variable": "continuity_verify_result"
+      "output_variable": "continuity_verify_result",
+      "auto_retry_count": 2
     },
     {
       "id": "script_continuity_select",
@@ -8111,7 +8113,8 @@
         "x": 1200,
         "y": 3480
       },
-      "auto_flow": true
+      "auto_flow": true,
+      "enable_reject_upstream": true
     },
     {
       "id": "script_continuity_candidate",
@@ -8157,7 +8160,8 @@
         "x": 1200,
         "y": 4180
       },
-      "auto_flow": true
+      "auto_flow": true,
+      "enable_reject_upstream": true
     },
     {
       "id": "script_continuity_prepare",

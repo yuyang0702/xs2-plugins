@@ -236,12 +236,12 @@ def scoped_remaining(original, updated, original_scope, new_scope, required, pro
     return list(dict.fromkeys(hits))
 
 
-def fragment_review(text):
+def fragment_review(text, *, contextual=False):
     """Give the writer evidence from exactly the text it is allowed to change."""
     view = critic_view(scan(text), text, [{"id": "target", "start": 0, "end": len(text)}])
     return {
-        "guidance": "mandatory_phrases 中每一处须更换说法并保留信息。语义候选结合语境判断，保住人物口吻、笑点和必要细节。",
-        "mandatory_phrases": mandatory(text),
+        "guidance": GUIDANCE if contextual else "mandatory_phrases 中每一处须更换说法并保留信息。语义候选结合语境判断，保住人物口吻、笑点和必要细节。",
+        "literal_candidates" if contextual else "mandatory_phrases": mandatory(text),
         "hints": [{k: v for k, v in h.items() if k != "paragraph"} for h in view["hints"][:8]],
     }
 
@@ -292,11 +292,11 @@ def include_rule_hits(units, paragraphs):
     return [u for para in paragraphs for u in by_paragraph.get(para["id"], [])]
 
 
-def annotate_rewrites(report, paragraphs=None):
-    if paragraphs is not None and "rewrite_units" in report:
+def annotate_rewrites(report, paragraphs=None, *, contextual=False):
+    if not contextual and paragraphs is not None and "rewrite_units" in report:
         report["rewrite_units"] = include_rule_hits(report["rewrite_units"], paragraphs)
     for unit in report.get("rewrite_units", []):
-        unit["lieflat_review"] = fragment_review(unit["old"])
+        unit["lieflat_review"] = fragment_review(unit["old"], contextual=contextual)
 
 
 def comparison(before, after, outcomes=()):

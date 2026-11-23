@@ -145,6 +145,64 @@ def test_scoped_polish_refuses_to_close_a_mandatory_author_goal_as_keep(tmp_path
     assert (tmp_path/'story/0001/chapter.md').read_bytes() == raw
 
 
+def test_exact_author_deletions_survive_critic_omission_and_blind_vote(tmp_path):
+    m = module()
+    body = '她推开门。\n\n门现在开着。\n\n天早就黑了。\n\n灯还亮着。'
+    put(tmp_path, 'story/0001/chapter.md', body)
+    put(tmp_path, 'feedback.md', '删掉 p0002。\n删除「天早就黑了。」\n可以试试改写 p0004。')
+    out = m.prepare(tmp_path, '0001', 'explicit-author', feedback_path='feedback.md',
+                    scoped_review=True, blind_scenes=True)
+    put(tmp_path, 'critique.json', {'issues':[]})
+    m.writer_input(tmp_path, out['revision_dir'], 'critique.json')
+    data = m.read(tmp_path/out['revision_input'])
+    assert [(g['level'], g['paragraph_id']) for g in data['goals']] == [
+        ('mandatory', 'p0002'), ('mandatory', 'p0003')]
+    edits = [{'paragraph_id':p['id'], 'old':p['text'], 'occurrence':1, 'replacement':replacement}
+             for p, replacement in zip(data['paragraphs'][1:], ['', '', '灯泡发出白光。'])]
+    put(tmp_path, out['revision_patch_path'], {'source_sha256':data['source_sha256'], 'edits':edits[1:]})
+    with pytest.raises(m.Retry, match='p0002'):
+        m.candidate(tmp_path, out['revision_dir'])
+    put(tmp_path, out['revision_patch_path'], {'source_sha256':data['source_sha256'], 'edits':edits})
+    m.candidate(tmp_path, out['revision_dir'])
+    public = m.read(tmp_path/out['revision_blind_packet'])
+    vote = {'ballot':public['ballot'], 'scenes':[
+        {'id':s['id'], 'prefer':'A' if '门现在开着。' in s['A'] else 'B', 'exceptions':[],
+         'voice_quote':'门现在开着。', 'redundant_quote':'', 'reason':'偏好原稿。'}
+        for s in public['scenes']]}
+    put(tmp_path, out['revision_blind_path'], vote)
+    m.accept_blind(tmp_path, out['revision_dir'], json.dumps(vote, ensure_ascii=False))
+    reviewed = m.read(tmp_path/out['revision_review_input'])
+    assert reviewed['edits'] == edits[:2]
+    assert [p['text'] for p in m.patches.paragraphs(reviewed['candidate'])] == ['她推开门。', '灯还亮着。']
+    report = {'protocol':'local-review-v3','compatible':True,'issues':[],
+              'change_reviews':[], 'added_text_reviews':[],
+              'issue_outcomes':[{'id':key,'status':'resolved','excerpts':[evidence[0]],
+                                 'reason':'按作者要求删去该处，邻段保持连贯。'}
+                                for key,evidence in m.signoff_evidence(reviewed).items()]}
+    put(tmp_path, out['revision_review_path'], report)
+    receipt = m.commit(tmp_path, out['revision_dir'], json.dumps(report, ensure_ascii=False))
+    assert receipt['changed_spans'] == 2
+    assert receipt['after_sha256'] == m.sha((tmp_path/'story/0001/chapter.md').read_bytes())
+
+
+def test_exact_author_commands_require_the_specified_replacement_and_ignore_options():
+    m = module()
+    body = '她开门往外看。\n\n他没回头。后面空荡荡的。\n\n天亮了。'
+    source = {'source_body':body, 'paragraphs':m.patches.paragraphs(body),
+              'author_feedback':('原 p0001 「她开门往外看。」改为「她把门推开。」；'
+                                 '原 p0002 整段首句「他没回头。」至「后面空荡荡的。」删掉。\n'
+                                 '删掉 p0003 吗？可以试试改写 p0003。')}
+    goals = m.explicit_author_goals(source)
+    assert [(g['paragraph_id'], g['explicit_delete'], g['explicit_replacement']) for g in goals] == [
+        ('p0001', False, '她把门推开。'), ('p0002', True, None)]
+    edits = [{'paragraph_id':p['id'], 'occurrence':1, 'old':p['text'], 'replacement':new}
+             for p,new in zip(source['paragraphs'], ['她打开了门。', ''])]
+    with pytest.raises(ValueError, match='p0001'):
+        m.author_edit_indices(source, goals, edits)
+    edits[0]['replacement'] = '她把门推开。'
+    assert m.author_edit_indices(source, goals, edits) == {0,1}
+
+
 def test_exact_local_publication_keeps_untouched_bytes_and_recovers_after_publication(tmp_path):
     m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
     expected=approved(m,out,tmp_path);m.commit(tmp_path,out['revision_dir'],expected)
