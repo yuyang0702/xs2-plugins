@@ -457,7 +457,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     fragment, expansion_evidence = focused_fragment(root, body, result)
     if fragment is None:
         raise ValueError('没有与当前正文绑定的有效扩写位置，须按内容与篇幅冲突重新规划。')
-    book=book_rules.freeze(root,task_id)['contract'] if task_id else book_rules.resolve(root)
+    book=book_rules.freeze(root,task_id,chapter=chapter)['contract'] if task_id else book_rules.resolve(root)
     binding = {'chapter_number': chapter, 'author_feedback_file': prior, 'receipt': receipt,
                'book_contract_sha256':book_rules.digest(book),
                'narrative_pov': state.get('values', {}).get('narrative_pov', 'third_person')}
@@ -500,7 +500,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     instruction += ('\n【当前正文；仅供定位与查重，不得交付整章】\n' + body.decode('utf-8-sig')
                     + '\n【原始作者约束；本次只在局部片段内落实】\n' + author
                     + '\n【叙事视角】\n' + str(binding['narrative_pov'])
-                    + '\n'+book_rules.prompt(book)
+                    + '\n'+book_rules.prompt(book_rules.chapter_view(root,chapter,book))
                     + '\n【已确认背景；计划不等于已发生或人物已知】\n' + focused_shared_context(shared))
     previous_attempt = safe_path(root, f'quality/length/{chapter}-last-attempt.json')
     if previous_attempt.is_file():

@@ -705,7 +705,7 @@
       "key": "learning_context",
       "name": "已确认参考机制",
       "type": "text",
-      "default": "learning/active_context.md",
+      "default": "learning/context/post-hoc.md",
       "required": false,
       "description": "用户确认后的抽象创作机制；没有选择时为空",
       "options": [],

@@ -10,6 +10,7 @@ from test_local_revision import setup,patch,approved
 
 def planned(root):
     adopt(root)
+    put(root, 'planning/chapters/0001.json', {'reference_ids': ['mechanism-opening']})
     put(root,'.novel-project.json',{'mode':'short','values':{'chapter_number':'0001','target_word_count':'100-200'}})
     m=composition();r=m.prepare(root,'0001','reading-plan','100-200',ownership='author')
     assert r['enabled']
@@ -54,7 +55,9 @@ def test_blind_reading_reference_does_not_block():
 
 
 def test_local_review_can_pass_without_applying_selected_reference(tmp_path):
-    adopt(tmp_path);m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
+    adopt(tmp_path)
+    put(tmp_path, 'planning/chapters/0001.json', {'reference_ids': ['mechanism-opening']})
+    m,out=setup(tmp_path);patch(m,out,tmp_path);m.candidate(tmp_path,out['revision_dir'])
     report=json.loads(approved(m,out,tmp_path))
     context=json.loads((tmp_path/out['revision_review_input']).read_text(encoding='utf8'))
     assert m.review_decision(report,context)==[]

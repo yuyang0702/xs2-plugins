@@ -727,7 +727,7 @@ def record_reference_delivery(root, stage, chapter, task, native):
     if not all(path.is_file() and path.resolve().is_relative_to(root) for path in (prepared, context, body)):
         return
     receipt = _read(prepared)
-    if not (receipt.get('candidate_ids') or receipt.get('dialogue', {}).get('matches')):
+    if not (receipt.get('candidate_ids') or receipt.get('reference_ids') or receipt.get('dialogue', {}).get('matches')):
         return
     effective = native.get('parameter_values', {})
     context_sha = hashlib.sha256(context.read_text(encoding='utf-8-sig').encode()).hexdigest()

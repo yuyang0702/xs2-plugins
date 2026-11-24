@@ -189,12 +189,21 @@ def planning_sources(root, chapter, policy_runtime='', task_id=None, *, advisory
         file=length.safe_path(root,name)
         if file.is_file():
             text=policy.effective_text(root,name) if policy else file.read_text(encoding='utf-8-sig')
+            if name == 'outline/near_term_outline.md':
+                scoped = book_policy.references().chapter_section(text, chapter)
+                if scoped or re.search(r'^#{1,6}\s+(?:第\s*)?\d+\s*章', text, re.M):
+                    text = scoped
             parts.append(f'## {name}\n{text}')
     project=root/'.novel-project.json'
     if project.is_file():
         values=read_json(project).get('values',{})
-        parts.append('## 作者当前要求\n'+'\n'.join(str(values.get(k) or '') for k in ('premise','human_intent','world_intent','advisor_guidance')))
-    parts.append(book_policy.prompt(book_policy.resolve(root)))
+        parts.append('## 作者当前要求\n'+'\n'.join(str(values.get(k) or '') for k in ('premise','human_intent','world_intent')))
+        if values.get('advisor_guidance'):
+            parts.append('## 已采用的顾问建议（可按场景取舍）\n'+str(values['advisor_guidance']))
+    parts.append(book_policy.prompt(book_policy.chapter_view(root, chapter, book_policy.resolve(root))))
+    guidance = book_policy.references().selected_guidance(root, chapter)
+    if guidance:
+        parts.append('## 本章可选参考\n' + '\n'.join(guidance))
     entry=Path(__file__).resolve().parents[1]/'composition_plan/composition_plan.py'
     spec=importlib.util.spec_from_file_location('scene_composition_budget',entry)
     composer=importlib.util.module_from_spec(spec);spec.loader.exec_module(composer)
@@ -339,7 +348,7 @@ def main():
     parser.add_argument('--pov', choices=('first_person', 'third_person'), required=True)
     parser.add_argument('--scene', type=int, choices=range(1, len(WRITERS) + 1))
     parser.add_argument('--reason', default='场景返修后仍未通过，重新按本场边界交付')
-    parser.add_argument('--chapter',default='0001')
+    parser.add_argument('--chapter')
     parser.add_argument('--policy-runtime',default='')
     parser.add_argument('--advisory-length',action='store_true')
     args = parser.parse_args()
@@ -351,7 +360,9 @@ def main():
         raise ValueError('场景产物需要有效任务标识')
     relative = f'cache/multi/{task}'
     directory = length.safe_path(root, relative)
-    current_profile=book_policy.freeze(root,task)['contract']
+    frozen = book_policy.freeze(root,task,chapter=args.chapter)
+    args.chapter = frozen['chapter'] or '0001'
+    current_profile = frozen['contract']
     profile_file=directory/'book-contract.json'
     profile=read_json(profile_file) if profile_file.is_file() else None
     if profile is not None and profile!=current_profile:raise ValueError('本书文风或世界规则已有变化，请新建任务')

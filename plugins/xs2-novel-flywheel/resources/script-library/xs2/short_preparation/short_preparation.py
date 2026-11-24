@@ -413,6 +413,7 @@ def single_writer_brief(root, chapter, effective, task_id, overrides, author):
     contract_path = _path(root, f'cache/book-contract/{task_id}/contract.json') if task_id else None
     if contract_path and contract_path.is_file():
         contract = json.loads(contract_path.read_text(encoding='utf-8-sig'))
+        contract = _library('prose_policy/book_contract.py').chapter_view(root, chapter, contract)
         fields = ('genre', 'narrator_scope', 'style_intent', 'intentional_devices', 'protected_phrases',
                   'allow_repeated_passages')
         scoped = {key: contract[key] for key in fields if contract.get(key)}
@@ -485,9 +486,11 @@ def prepare_context(root, chapter, *, policy_runtime="", task_id=None, single_wr
     else:
         context = '\n\n'.join(f'## {name}\n\n{text}' for name, text in effective.items())
     if not single_writer and project_path.is_file():
-        fields = ('premise', 'source_idea', 'advisor_guidance', 'world_intent', 'human_intent')
+        fields = ('premise', 'source_idea', 'world_intent', 'human_intent')
         context += '\n\n## 作者确认要求\n' + '\n'.join(dict.fromkeys(
             str(values[key]) for key in fields if values.get(key)))
+        if values.get('advisor_guidance'):
+            context += '\n\n## 创作建议\n' + str(values['advisor_guidance'])
     if len(context) > 80000:
         raise ValueError('SHORT_CONTEXT_OVERFLOW: 资料总量超过轻量完整上下文范围，请使用完整准备；未截断任何证据')
     guide = sources['outline/near_term_outline.md']

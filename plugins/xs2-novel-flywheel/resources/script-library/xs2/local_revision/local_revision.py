@@ -298,7 +298,7 @@ def local_tone_policy(source, whole_chapter_review=False):
 def prepare(root,chapter,task_id,target='',context_path='cache/story-support/context.md',reference_path='learning/context/polish.md',feedback_path=None,*,dialogue_check=False,dialogue_check_version=1,scoped_review=False,whole_chapter_review=False,advisory=False,blind_scenes=False,whole_text_detection=False):
     root=Path(root).resolve();chapter=quality.chapter_number(chapter)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',task_id or ''):raise ValueError('局部修订缺少有效任务编号')
-    frozen=book.freeze(root,task_id);folder=f'cache/local-revision/{task_id}';out=locations(folder)
+    frozen=book.freeze(root,task_id,chapter=chapter);folder=f'cache/local-revision/{task_id}';out=locations(folder)
     body_path=f'story/{chapter}/chapter.md';raw=safe(root,body_path).read_bytes();body=raw.decode('utf-8')
     if not body.strip():raise ValueError('局部修订需要非空原文')
     planner=load('local_composition',HERE/'composition_plan/composition_plan.py')
@@ -334,7 +334,7 @@ def prepare(root,chapter,task_id,target='',context_path='cache/story-support/con
     if prior and (prior.get('source_sha256')!=sha(raw) or prior.get('book_contract_sha256')!=frozen['sha256']):prior=None
     if composition:composition={k:v for k,v in composition.items() if k!='prior_revision'}
     source={'source_body':body,'source_sha256':sha(raw),'paragraphs':patches.paragraphs(body),
-            'book_contract':frozen['contract'],'book_contract_sha256':frozen['sha256'],
+            'book_contract':book.chapter_view(root,chapter,frozen['contract']),'book_contract_sha256':frozen['sha256'],
             'author_feedback':authored,'automatic_revision_advice':automatic,'composition_plan':composition,'prior_revision':prior,
             'confirmed_context':confirmed,
             'reader_report':report,'length':quality.measurement(raw,chapter,target_policy if policy_bound else bounds)}
@@ -452,7 +452,7 @@ def bound(root,folder,accepted_sha=None):
         planner=load('local_composition',HERE/'composition_plan/composition_plan.py')
         fixed=planner.fixed_edit(root,b['chapter_number'],b['task_id'],accepted_sha)
         if not fixed or fixed['edit']!=source['fixed_edit']:raise ValueError('作者指定删句的篇幅凭据已有变化')
-    book.freeze(root,b['task_id'])
+    book.freeze(root,b['task_id'],chapter=b['chapter_number'])
     return b,source
 
 

@@ -276,6 +276,7 @@ def test_draft_can_publish_when_an_adopted_reference_does_not_fit(tmp_path,monke
     from test_reading_contract import adopt, checks
 
     adopt(tmp_path)
+    save(tmp_path/'planning/chapters/0001.json', {'reference_ids': ['mechanism-opening']})
     m,d,body=accepted_facts(tmp_path,monkeypatch,capsys)
     _,report=evidence(body);report['checks']['repetition']=True
     reading=m.read(d/'facts-input.json')['book_contract']['reading_contract']

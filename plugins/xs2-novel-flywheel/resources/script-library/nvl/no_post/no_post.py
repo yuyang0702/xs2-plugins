@@ -85,6 +85,10 @@ def validate_output(data, expected_volume=None):
 
 OUTPUT_SCHEMA = {'type': 'object', 'properties': {'volume_number': {'type': 'integer', 'minimum': 1}, 'is_new_volume': {'type': 'boolean'}, 'arc_name': {'type': 'string'}, 'chapter_range': {'type': 'object', 'properties': {'start': {'type': 'integer', 'minimum': 1}, 'end': {'type': 'integer', 'minimum': 1}}, 'required': ['start', 'end']}, 'chapters': {'type': 'array', 'items': {'type': 'object', 'properties': {'number': {'type': 'integer', 'minimum': 1}, 'title': {'type': 'string', 'minLength': 1}, 'summary': {'type': 'string', 'minLength': 1}, 'rhythm': {'type': 'string'}, 'time_advance': {'type': 'string'}}, 'required': ['number', 'title', 'summary']}}, 'character_arcs': {'type': 'array', 'items': {'type': 'object', 'properties': {'name': {'type': 'string'}, 'from': {'type': 'string'}, 'to': {'type': 'string'}, 'change': {'type': 'string'}}, 'required': []}}, 'decision_points': {'type': 'array', 'items': {'type': 'object', 'properties': {'chapter': {'type': 'integer', 'minimum': 1}, 'character': {'type': 'string'}, 'choice': {'type': 'string'}, 'impact': {'type': 'string'}}, 'required': []}}}, 'required': ['chapters'], 'anyOf': [{'properties': {'chapters': {'maxItems': 0}}}, {'required': ['volume_number'], 'properties': {'chapters': {'minItems': 1}}}]}
 
+REFERENCE_IDS = {'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+                 'maxItems': 3, 'uniqueItems': True}
+OUTPUT_SCHEMA['properties']['chapters']['items']['properties']['reference_ids'] = REFERENCE_IDS
+
 
 def main():
     parser = argparse.ArgumentParser(description="NO 输出渲染")
@@ -96,9 +100,20 @@ def main():
     data = load_json(args.input)
     validate_output(data, args.volume_number)
     chapters = data.get("chapters", [])
+    options_path = 'cache/story-support/reference-options.json'
+    if os.path.isfile(options_path):
+        for row in chapters:
+            row.setdefault('reference_ids', [])
+    if any('reference_ids' in row for row in chapters):
+        available = load_json(options_path)['options'] if os.path.isfile(options_path) else []
+        allowed = {row['id'] for row in available}
+        if any(not set(row.get('reference_ids', [])) <= allowed for row in chapters):
+            raise ValueError("章节参考编号不在本次规划候选中")
     if args.scope == "short_full" and chapters:
         if len(chapters) > 1:
             data["chapters"] = [{
+                **({'reference_ids': list(dict.fromkeys(key for row in chapters
+                      for key in row.get('reference_ids', [])))[:3]} if any('reference_ids' in row for row in chapters) else {}),
                 "number": 1, "title": data.get("arc_name") or chapters[0].get("title", "短篇全文"),
                 "summary": "；".join(f"阶段{i + 1}·{chapter.get('title', '')}：{chapter.get('summary', '')}" for i, chapter in enumerate(chapters)),
                 "rhythm": "起因→递进阻碍→高潮→关键伏笔回收→终局（同一短篇全文）",
@@ -123,12 +138,23 @@ def main():
         if chapters[0]["number"] < bounds.get("start", 1) or chapters[-1]["number"] > bounds.get("end", chapters[-1]["number"]):
             raise ValueError("近纲章节号超出已确认卷纲范围")
     previous_path = "cache/no/near_term.json"
+    # This index is derived from validated chapter rows, never from agent extras.
+    data.pop('reference_selections', None)
+    selections = {}
     if not data.get("is_new_volume", False) and os.path.isfile(previous_path):
         previous = load_json(previous_path)
         if previous.get("volume_number") == data.get("volume_number"):
+            selections.update(previous.get('reference_selections', {}))
             previous_numbers = [chapter["number"] for chapter in previous.get("chapters", [])]
             if previous_numbers and chapters[0]["number"] <= max(previous_numbers):
                 raise ValueError("追加近纲不得重复或倒退既有章节号")
+
+    for row in chapters:
+        if 'reference_ids' in row:
+            selections[f"{row['number']:04d}"] = {'reference_ids': row['reference_ids'],
+                                                  'chapter_text': clean(render_chapter(row))}
+    if selections:
+        data['reference_selections'] = selections
 
     outpath = "outline/near_term_outline.md"
     os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)

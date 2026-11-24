@@ -72,7 +72,7 @@ def folder(task):
 
 def code_profile():
     resources=HERE.parent.parent
-    scripts=[Path(__file__),*sorted((HERE/'local_revision').glob('*.py')),*sorted((HERE/'prose_policy').glob('*.py'))]
+    scripts=[Path(__file__),HERE/'reference_distill/reference_choices.py',*sorted((HERE/'local_revision').glob('*.py')),*sorted((HERE/'prose_policy').glob('*.py'))]
     paths={'script-library/xs2/'+p.relative_to(HERE).as_posix():p for p in scripts}
     locator=load('composition_resources',HERE/'production_guard/production_guard.py')
     configs={name:locator.resource(HERE,name) for name in ('agents.json','prompts.json','workflows/mvp/definition.json','workflows/polish/definition.json')}
@@ -143,6 +143,12 @@ def sources(root,chapter):
     return {p:support.digest(root,p) for p in sorted(paths)}
 
 
+def planning_contract(root, chapter, contract=None):
+    if contract is None:
+        contract = book.resolve(root)
+    return book.reading().legacy_book_view(book.chapter_view(root, chapter, contract))
+
+
 def review_refresh_candidate(root,chapter,workflow,task):
     """Recover only a changed plan stranded before its required independent review."""
     guard=load('composition_refresh_guard',HERE/'production_guard/production_guard.py')
@@ -158,7 +164,7 @@ def review_refresh_candidate(root,chapter,workflow,task):
     request=support.load(root,base+'/request.json')
     if (request['chapter']!=chapter or request['task_id']!=task or request['intent']!=intent(root)
             or identity({k:v for k,v in request.items() if k!='request_digest'})!=request['request_digest']
-            or book.resolve(root)!=request['book_contract']):
+            or planning_contract(root,request['chapter'])!=request['book_contract']):
         raise ValueError('旧篇幅规划来源或作者要求已有变化')
     support.verify(root,{p:h for p,h in request['source_hashes'].items() if p!='.novel-project.json'})
     raw_plan=support.load(root,base+'/plan.json');raw_review=support.load(root,base+'/review.json')
@@ -255,7 +261,7 @@ def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedba
     values=support.load(root,'.novel-project.json',{}).get('values',{})
     hashes=sources(root,chapter);feedback=values.get('author_feedback_file') or ''
     author,advice,selected=feedback_layers(root)
-    frozen=book.freeze(root,task)
+    frozen=book.freeze(root,task,chapter=chapter)
     for path in (frozen['path'],frozen['prompt_file']):hashes[path]=support.digest(root,path)
     progress=support.load(root,'observability/report.json',{}).get('progress',{})
     project=support.load(root,'.novel-project.json',{})
@@ -271,7 +277,8 @@ def prepare(root,chapter,task,target,ownership='inherit',*,polish_pass='',feedba
                 ('conflict_plan_mode','chapter_ending_mode','writer_type','preparation_mode','estimated_length','learning_context')}}},
         'intent':intent(root),
         'nominal_target':target,'author_range':list(author_range) if author_range else None,
-        'book_contract':book.reading().legacy_book_view(frozen['contract']),'source_hashes':hashes,
+        'book_contract':planning_contract(root,chapter,frozen['contract']),'book_contract_sha256':frozen['sha256'],
+        'source_hashes':hashes,
         'body':body,'reader_report':support.load(root,f'story/{chapter}/reader_report.json'),
         'chapter_plan':support.load(root,f'planning/chapters/{chapter}.json'),
         'author_feedback':author,'automatic_revision_advice':advice,'authored_selection':selected,
@@ -377,7 +384,7 @@ def prior_revision(request):
     candidate=conflict.get('rejected_candidate')
     if (not isinstance(candidate,str) or report.get('compatible') is not True
             or conflict.get('source_sha256')!=request['source_hashes'].get(f"story/{request['chapter']}/chapter.md")
-            or report.get('book_contract_sha256')!=book.digest(request['book_contract'])):return None
+            or report.get('book_contract_sha256')!=request.get('book_contract_sha256',book.digest(request['book_contract']))):return None
     if report.get('candidate_sha256')!=hashlib.sha256(candidate.encode()).hexdigest():
         raise ValueError('待复核候选与历史诊断来源不符')
     evidence=load('composition_previous_evidence',HERE/'multi_scene/audit_evidence.py')
@@ -405,7 +412,7 @@ def accept(root,task,plan,review):
     if (len(checks)!=len(ids) or {r.get('segment_id') for r in checks}!=set(ids)
             or any(r.get('develops_function') is not True or not r.get('style_basis') or not r.get('reason') for r in checks)):
         raise ValueError('各段阅读作用或本书风格依据未通过独立复查')
-    if book.resolve(root)!=request['book_contract']:raise ValueError('本书规则在规划时变化')
+    if planning_contract(root,request['chapter'])!=request['book_contract']:raise ValueError('本书规则在规划时变化')
     expected={g['id'] for g in request['book_contract'].get('reading_contract',{}).get('objectives',[])}
     goals=review.get('goal_checks',[])
     if (not isinstance(goals,list) or len({r.get('goal_id') for r in goals})!=len(goals) or not {r.get('goal_id') for r in goals}<=expected
@@ -431,7 +438,7 @@ def accept(root,task,plan,review):
 
 def current(root,chapter):
     if policy(root) is None:return None
-    reading=book.resolve(root).get('reading_contract')
+    reading=planning_contract(root,chapter).get('reading_contract')
     path=f'planning/length/{chapter}.json'
     if not support.safe(root,path).is_file():return None
     quota=support.serial()._signed_output(root,path)
@@ -527,7 +534,7 @@ def main():
             accept(root,task,plan,review)
         except ValueError as exc:
             support.verify(root,request['source_hashes'])
-            if book.resolve(root)!=request['book_contract']:raise
+            if planning_contract(root,request['chapter'])!=request['book_contract']:raise
             target='agent_composition_plan' if review.get('verdict')=='revise' else 'agent_composition_review'
             support.write(root,args.dir+'/feedback.md',str(exc)+'\n'+json.dumps(review,ensure_ascii=False))
             _guarded_rejection('<WF_REJECT_UPSTREAM target="'+target+'">按冻结来源修正规划或独立复查，不能直接放行。</WF_REJECT_UPSTREAM>');return

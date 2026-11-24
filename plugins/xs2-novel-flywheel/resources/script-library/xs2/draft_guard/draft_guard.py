@@ -384,10 +384,13 @@ def main():
     args=parser.parse_args();root=Path.cwd();task=os.environ.get('TASK_ID','')
     if args.action=='unprepared':raise ValueError('未准备事实核验，不能跳过检查发布正文')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',task):raise ValueError('修稿需要有效任务标识')
-    current_book=book_policy.freeze(root,task)['contract']
     composer=load('draft_composition',BASE/'composition_plan/composition_plan.py')
     project=read(root/'.novel-project.json') if (root/'.novel-project.json').is_file() else {}
     number=str(project.get('values',{}).get('chapter_number','0001')).zfill(4)
+    frozen = book_policy.freeze(root, task)
+    number = frozen['chapter'] or number
+    current_book = frozen['contract']
+    chapter_book=book_policy.chapter_view(root,number,current_book)
     quota=(composer.reference if args.advisory_length else composer.current)(root,number)
     quota_sha=digest(root/f'planning/length/{number}.json') if quota else ''
     bounds=length.target_range(args.target)
@@ -434,7 +437,7 @@ def main():
         if existing is not None and existing!=binding:raise ValueError('修稿来源或契约已有变化，请创建新任务')
         save(file,binding);save(directory/'contract.json',contract)
         save(directory/'facts-input.json',{'phase':'facts','source_body':source_body,'continuity_contract':contract,
-             'book_contract':current_book,
+             'book_contract':chapter_book,
              'source_constraints':(multi/'planning-sources.md').read_text(encoding='utf-8-sig'),
              'narrative_pov':args.pov,'target_word_count':args.target})
         save(directory/'facts-model.json',packet.local(read(directory/'facts-input.json'),'draft-writer'))
@@ -461,7 +464,7 @@ def main():
         raise ValueError('修稿来源、事实契约或范围已有变化，请创建新任务')
     facts_source=read(directory/'facts-input.json')
     if (body_digest(facts_source['source_body'])!=binding['source_sha256'] or facts_source['continuity_contract']!=contract
-            or book_policy.digest(facts_source.get('book_contract'))!=binding['book_contract_sha256']
+            or facts_source.get('book_contract')!=chapter_book
             or facts_source.get('source_constraints')!=(multi/'planning-sources.md').read_text(encoding='utf-8-sig')):
         raise ValueError('修稿原文或事实输入已有变化，不能沿用绑定')
     phase=args.phase;repair='agent_guard_'+phase+'_repair';precheck=args.action=='precheck'

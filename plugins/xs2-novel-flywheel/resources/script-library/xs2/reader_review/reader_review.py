@@ -94,6 +94,9 @@ def revision_context(root, chapter=None, contract=None):
         delivered = set(reading.delivered_candidates(root, chapter, contract))
         goals = [goal for goal in contract.get('objectives', []) if goal.get('source_dimension')
                  and goal['source_candidate_id'] in delivered]
+        choices = book_contract.references().selected_guidance(root, chapter)
+        if choices:
+            result['optional_scene_references'] = {'guidance': choices, 'review': '仅评价本章实际使用的效果；未采用或另写不构成缺陷。'}
         if goals:
             result['applied_reference_review'] = {'objectives': goals, 'guidance': reading.GUIDANCE}
     return result
@@ -160,7 +163,7 @@ def prepare(root, chapter, task_id,parallel=False,*,protocol=1):
         raise ValueError('独立审稿缺少有效任务编号')
     if protocol not in (1, 2) or (protocol == 2 and not parallel):
         raise ValueError('审稿协议与任务执行方式不匹配')
-    frozen_contract=book_contract.freeze(root,task_id)['contract']
+    frozen_contract=book_contract.freeze(root,task_id,chapter=chapter)['contract']
     raw = _path(root, f'story/{chapter}/chapter.md').read_bytes()
     body = raw.decode('utf-8-sig').replace('\r\n', '\n').replace('\r', '\n')
     if not body.strip():
@@ -180,7 +183,7 @@ def prepare(root, chapter, task_id,parallel=False,*,protocol=1):
                'reader_context_feedback': folder + '/context-feedback.md',
                'reader_review_binding': folder + '/binding.json'}
     payload = {'chapter_number': chapter, 'manuscript': body,
-               'style_contract':book_contract.public_style(frozen_contract),
+               'style_contract':book_contract.public_style(book_contract.chapter_view(root,chapter,frozen_contract)),
                'evidence_catalog':[{k:r[k] for k in ('id','kind','text')} for r in evidence.catalog(body)],
                'genre': values.get('genre', ''), 'language': values.get('language', '中文'),
                'narrative_pov': values.get('narrative_pov', 'third_person'),
@@ -251,7 +254,7 @@ def parallel_support():
 
 def parallel_profile():
     here=Path(__file__).resolve().parents[1];resources=here.parent.parent
-    scripts=[Path(__file__),*sorted((here/'prose_policy').glob('*.py')),*sorted((here/'local_revision').glob('*.py'))]
+    scripts=[Path(__file__),here/'reference_distill/reference_choices.py',*sorted((here/'prose_policy').glob('*.py')),*sorted((here/'local_revision').glob('*.py'))]
     files={str(Path('script-library/xs2')/p.relative_to(here)):p for p in scripts}
     spec=importlib.util.spec_from_file_location('reader_resources',here/'production_guard/production_guard.py')
     locator=importlib.util.module_from_spec(spec);spec.loader.exec_module(locator)
@@ -357,7 +360,8 @@ def _fact_sources(root, binding, sources):
     chapters, _ = parallel_support().pending.support().confirmed(root, before=int(binding['chapter_number']))
     files = ['meta/world_foundation.md', 'meta/character_profiles.md']
     files.extend(f"story/{chapter['chapter']}/confirmed_state.json" for chapter in chapters)
-    result = {'book_contract': json.dumps(book_contract.resolve(root), ensure_ascii=False, indent=2)}
+    view = book_contract.chapter_view(root, binding['chapter_number'], book_contract.resolve(root))
+    result = {'book_contract': json.dumps(view, ensure_ascii=False, indent=2)}
     for name in files:
         if sources.get(name):
             raw = _path(root, name).read_bytes()

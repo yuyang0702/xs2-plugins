@@ -59,6 +59,8 @@ def test_context_uses_only_verified_adopted_blueprint(tmp_path):
     digest = hashlib.sha256(json.dumps(blueprint, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     (learning / 'blueprints/v0001.json').write_text(json.dumps(blueprint), encoding='utf-8')
     (learning / 'active.json').write_text(json.dumps({'version': 1, 'blueprint_path': 'learning/blueprints/v0001.json', 'blueprint_sha256': digest}), encoding='utf-8')
+    (tmp_path / 'outline').mkdir()
+    (tmp_path / 'outline/near_term_outline.md').write_text('### 第1章 · approved guidance', encoding='utf-8')
     result = context(tmp_path)
     assert result.returncode == 0, result.stderr or result.stdout
     text = (learning / 'context/mvp.md').read_text(encoding='utf-8')

@@ -72,6 +72,35 @@ def resolve(root,project=None):
     return result
 
 
+@lru_cache(maxsize=1)
+def references():
+    entry = Path(__file__).resolve().parents[1] / 'reference_distill/reference_choices.py'
+    spec = importlib.util.spec_from_file_location('book_reference_choices', entry)
+    value = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(value)
+    return value
+
+
+def chapter_view(root, chapter, contract):
+    state = safe(root, '.novel-project.json')
+    values = read(state).get('values', {}) if state.is_file() else {}
+    if values.get('author_feedback_file'):
+        instruction = references().chapter_instruction(root, chapter, values)
+        if instruction:
+            contract = {**contract, 'chapter_instruction': instruction}
+    goals = contract.get('reading_contract')
+    if not goals:
+        return contract
+    refs = references()
+    _, blueprint = refs.active_blueprint(root)
+    selected, _ = refs.chapter_selection(root, chapter, blueprint)
+    objectives = [row for row in goals['objectives'] if row['source_candidate_id'] in selected]
+    view = {key: value for key, value in contract.items() if key != 'reading_contract'}
+    if objectives:
+        view['reading_contract'] = {**goals, 'objectives': objectives}
+    return view
+
+
 def public_style(contract):
     result={k:contract[k] for k in ('genre','narrative_pov','narrator_scope','style_intent','intentional_devices',
                                    'protected_phrases','allow_repeated_passages','style_sources','prose_preference')}
@@ -92,14 +121,30 @@ def prompt(contract):
         ('\n'+reading().GUIDANCE+'\n' if contract.get('reading_contract') else ''))
 
 
-def freeze(root,task_id,project=None):
+def freeze(root,task_id,project=None,*,chapter=None):
     if not isinstance(task_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}',task_id):raise ValueError('本书契约需要有效任务编号')
     contract=resolve(root,project=project);relative=f'cache/book-contract/{task_id}';path=safe(root,relative+'/contract.json')
     if path.is_file() and read(path)!=contract:raise ValueError('本书文风或世界规则已有变化，请新建任务')
     path.parent.mkdir(parents=True,exist_ok=True)
     # These are immutable per-task derivatives; original book files are read-only.
-    for name,text in [('contract.json',json.dumps(contract,ensure_ascii=False,indent=2)+'\n'),('prompt.md',prompt(contract))]:
+    scope = safe(root, relative + '/chapter.json')
+    if scope.is_file():
+        bound = read(scope)['chapter']
+        if chapter is not None and chapter != bound:
+            raise ValueError('本次任务已绑定其他章节，请新建任务')
+        chapter = bound
+    if chapter is None and project is None:
+        state = safe(root, '.novel-project.json')
+        value = read(state).get('values', {}).get('chapter_number') if state.is_file() else None
+        chapter = str(value).zfill(4) if value else None
+    if chapter is not None:
+        if not isinstance(chapter, str) or not re.fullmatch(r'[0-9]{4}', chapter):
+            raise ValueError('本书契约需要四位章节编号')
+    model_contract = chapter_view(root, chapter, contract) if chapter else contract
+    for name,text in [('contract.json',json.dumps(contract,ensure_ascii=False,indent=2)+'\n'),('prompt.md',prompt(model_contract))]:
         target=safe(root,relative+'/'+name)
         if not target.exists():target.write_text(text,encoding='utf-8')
         elif target.read_text(encoding='utf-8')!=text:raise ValueError('冻结的本书契约文件已有变化，请新建任务')
-    return {'path':relative+'/contract.json','prompt_file':relative+'/prompt.md','sha256':digest(contract),'contract':contract}
+    if chapter is not None and not scope.is_file():
+        scope.write_text(json.dumps({'chapter': chapter})+'\n', encoding='utf-8')
+    return {'path':relative+'/contract.json','prompt_file':relative+'/prompt.md','sha256':digest(contract),'contract':contract,'chapter':chapter}

@@ -46,6 +46,15 @@ def memory():
     return module
 
 
+@lru_cache(maxsize=1)
+def references():
+    entry = HERE.parent / 'reference_distill/reference_choices.py'
+    spec = importlib.util.spec_from_file_location('story_reference_choices', entry)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def chapter_views():
     spec = importlib.util.spec_from_file_location("story_chapter_views", HERE / "chapter_views.py")
     module = importlib.util.module_from_spec(spec)
@@ -321,29 +330,9 @@ def chapter_start_indexes(root, chapter):
 
 
 def chapter_outline(root, chapter, text=None):
-    """Keep complete target-chapter sections, including nested scene headings."""
     if text is None:
         text = read(root, "outline/near_term_outline.md")
-    headings = list(re.finditer(r"^(#{1,6})[ \t]+([^\n]+)", text, re.M))
-    sections = []
-    active_chapter_level = None
-    for i, heading in enumerate(headings):
-        level = len(heading[1])
-        if active_chapter_level is not None and level <= active_chapter_level:
-            active_chapter_level = None
-        number = re.match(r"(?:第\s*)?([0-9]+)\s*章\b", heading[2])
-        if not number:
-            continue
-        if active_chapter_level is not None:
-            continue
-        if int(number[1]) != int(chapter):
-            active_chapter_level = level
-            continue
-        end = next((following.start() for following in headings[i+1:]
-                    if len(following[1]) <= level), len(text))
-        sections.append(text[heading.start():end].strip())
-        active_chapter_level = level
-    return "\n\n".join(sections)
+    return references().chapter_section(text, chapter)
 
 
 def archive_status(root, _states=None):
@@ -403,6 +392,10 @@ def context(root, chapter="0001", question="", scope="chapter", *, runtime=None,
     indexes = chapter_start_indexes(root, chapter)
     ordered_files = list(dict.fromkeys((*PRIORITY_FILES, *BASE_FILES)))
     for file in ordered_files:
+        # Adoption summaries remain available to the author. Generated chapter
+        # contexts receive their selected methods through the stage projection.
+        if file == "learning/active_context.md" and read(root, "learning/active.json"):
+            continue
         if scope == "chapter" and file == "outline/volume_outline.md":
             continue
         if file in {"meta/current_world.md", "meta/current_characters.md", "meta/hooks.md", "meta/debts.md"} and (states or historical):
@@ -1174,6 +1167,7 @@ def main():
     parser.add_argument("command", choices=["context", "begin-reader", "commit-reader", "begin-review",
         "validate-observation", "reuse-observation", "validate-cached-observation", "commit", "preflight",
         "refresh", "recover", "abandon-commit", "recall", "impact", "serial"])
+    parser.add_argument("--reference-planning", action="store_true")
     parser.add_argument("--chapter", default="0001")
     parser.add_argument("--commit-id", default="")
     parser.add_argument('--query', default='')
@@ -1231,10 +1225,15 @@ def main():
                                             "conflict": args.context_conflict_file})
               if args.command == 'context' else action[args.command](root, args.chapter))
     if args.command == "context":
+        if args.reference_planning:
+            relative = "cache/story-support/reference-options.json"
+            signals = read(root, "outline/volume_outline.md") + read(root, "meta/story_plan.md")
+            write(root, relative, references().planner_options(root, signals, chapter_id(args.chapter)))
+            print(f"<WF_VAR>reference_options_file:{relative}</WF_VAR>")
         if os.environ.get('TASK_ID'):
             contract_spec=importlib.util.spec_from_file_location('story_book_contract',HERE.parent/'prose_policy/book_contract.py')
             contract_module=importlib.util.module_from_spec(contract_spec);contract_spec.loader.exec_module(contract_module)
-            frozen=contract_module.freeze(root,os.environ['TASK_ID'])
+            frozen=contract_module.freeze(root,os.environ['TASK_ID'],chapter=chapter_id(args.chapter))
             print(f"<WF_VAR>book_contract_file:{frozen['prompt_file']}</WF_VAR>")
         runtime = result["prose_policy_runtime"]
         common = runtime.get('common_file') or 'cache/story-support/context.md'
@@ -1256,7 +1255,11 @@ def main():
             if not sep or not re.fullmatch(r"pp_[a-z_]+", key):
                 raise ValueError("无效的工作流叙述资料别名。")
             alias=source_id
-            if runtime['directory']:
+            if key == 'pp_learning_context' and source_id == 'learning/context/post-hoc.md':
+                methods = references().selected_guidance(root, chapter_id(args.chapter))
+                alias = f"cache/story-support/{chapter_id(args.chapter)}/review-references.md"
+                write(root, alias, "可按本章实际采用情况评价，略过参考不构成缺陷。\n" + "\n".join(methods))
+            elif runtime['directory']:
                 policy = _prose_policy()
                 alias = policy.runtime_alias(root, runtime["directory"], source_id, task_id=runtime["task_id"])
                 if alias == source_id:

@@ -286,7 +286,10 @@ def prepare(root,chapter,task):
     views=s.chapter_views()
     ranked_query=' '.join((query,outline,context['memory']['query']))
     world=views.world_view(context,ranked_query,'director')
-    prompt={'window':{'start':chapter,'end':f'{finish:04d}'},'book_contract':book.resolve(root),
+    reference_options = s.references().planner_options(root, signals, chapter)
+    value['reference_options'] = reference_options
+    hashes['learning/active.json'] = s.digest(root, 'learning/active.json')
+    prompt={'reference_options': reference_options, 'window':{'start':chapter,'end':f'{finish:04d}'},'book_contract':{k:v for k,v in book.resolve(root).items() if k != 'reading_contract'},
         'volume':current['volume'],'threads':current['threads'],
         'entry_archive':{'chapter': current['entry'].get('chapter', ''),
                          'indexes':{'debts':views.ledger_view(context['indexes_before']['debts'],ranked_query,'director',chapter=chapter,finish=finish)}},
@@ -325,6 +328,8 @@ def normalize(root,task):
     evidence=request['context']['evidence_texts']
     states=history(root,request['chapter']);latest=states[-1] if states else {}
     for row in rows:
+        if 'reference_ids' in row:
+            s.references().validate_ids(row['reference_ids'], request.get('reference_options', {}).get('options', []))
         if not isinstance(row.get('intent'),str) or not row['intent'].strip():raise ValueError('章节意图缺失')
         if not isinstance(row.get('setup'),list) or not row['setup']:raise ValueError('滚动计划须有实际来源依据')
         for anchor in row['setup']:
@@ -382,7 +387,10 @@ def commit(root,task,approve=False):
         if s.read(root,f'story/{number}/chapter.md').strip():raise ValueError('不能覆盖已经写出的章节')
         old=s.load(root,f'planning/chapters/{number}.json',{})
         if old and old.get('origin')!='rolling':raise ValueError('不能覆盖作者已采用的未来计划')
-    hashes={p:h for p,h in request['source_hashes'].items() if p not in targets and not p.startswith('cache/') and p!='outline/near_term_outline.md'
+    changing_views = {'outline/near_term_outline.md', 'learning/active.json'}
+    if request.get('reference_options', {}).get('blueprint_sha256'):
+        changing_views.add('learning/active_context.md')
+    hashes={p:h for p,h in request['source_hashes'].items() if p not in targets and not p.startswith('cache/') and p not in changing_views
             and not (re.fullmatch(r'story/[0-9]{4}/chapter.md',p) and int(p.split('/')[1])>=int(request['chapter']))}
     publication_guards={p:h for p,h in request['source_hashes'].items() if p not in targets and p!='outline/near_term_outline.md'}
     outline=s.read(root,'outline/near_term_outline.md');old_outline=outline;blocks={}
@@ -412,6 +420,8 @@ def commit(root,task,approve=False):
             plan={**row,'chapter':number,'goal':row['intent'],'origin':'rolling','base_chapter':request['base_chapter'],
                 'source_hashes':hashes,'book_contract_sha256':request['book_contract_sha256'],'serial_receipt':receipt_path,
                 'outline_block_sha256':journal.identity(blocks[number])}
+            if 'reference_options' in request:
+                plan.setdefault('reference_ids', [])
             write(root,file,plan)
         write(root,f'planning/serial/history/{task}/near_term_outline.md',old_outline)
         write(root,'outline/near_term_outline.md',outline)
