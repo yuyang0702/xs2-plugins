@@ -65,6 +65,11 @@ class ReferenceAnalysisUpgrade:
         character_analysis = analyze_character_patterns(candidates, source_metadata, dna_profile)
         conflict_analysis = analyze_conflict_mechanics(candidates, source_metadata, dna_profile)
         technique_analysis = analyze_writing_techniques(candidates, source_metadata, dna_profile)
+        whole_reading = dna_profile.get("cross_chapter_analysis", {})
+        if source_metadata.get("source_mode") == "serial_full":
+            if whole_reading.get("source_sha256") != source_metadata["source"]["text_sha256"]:
+                raise ValueError("整本分析缺少与来源一致的跨章复读报告")
+            self._apply_cross_analysis(whole_reading, plot_analysis, character_analysis, conflict_analysis, technique_analysis)
         
         # Combine all analyses
         combined_analysis = {
@@ -81,10 +86,52 @@ class ReferenceAnalysisUpgrade:
                 plot_analysis, character_analysis, conflict_analysis, technique_analysis
             )
         }
+        if source_metadata.get("source_mode") == "serial_full":
+            self._summarize_cross_reading(combined_analysis["summary"], whole_reading)
         
         combined_analysis["analysis_sha256"] = self.digest(combined_analysis)
         
         return combined_analysis
+
+    @staticmethod
+    def _summarize_cross_reading(summary, reading):
+        sections = {"plot": ("剧情", {"foreshadowing", "plot"}), "character": ("人物", {"character_arc", "relationship"}),
+                    "conflict": ("冲突", {"conflict"}), "technique": ("节奏", {"phase_pacing"})}
+        for key, (label, dimensions) in sections.items():
+            items = [f for f in reading["findings"] if f["dimension"] in dimensions]
+            confirmed = [f for f in items if f["status"] == "confirmed"]
+            possible = [f for f in items if f["status"] == "possible"]
+            heading = f"# {label}分析" if items and "数据不足" in summary[key] else summary[key]
+            lines = [heading, f"跨章复核涉及 {reading['coverage']['reviewed_chapter_count']} 个章节单元。"
+                     f"{label}判断有 {len(confirmed)} 项已确认，{len(possible)} 项待证。"]
+            for rows, status in ((confirmed, "已确认"), (possible, "待证")):
+                if rows:
+                    f = rows[0]
+                    proofs = f["evidence"]
+                    lines.append(f"- {status}（{proofs[0]['chapter_id']} 至 {proofs[-1]['chapter_id']}） {f['statement']}。{f['limits']}")
+            summary[key] = "\n".join(lines)
+
+    @staticmethod
+    def _apply_cross_analysis(reading, plot, character, conflict, technique):
+        """Keep book-level findings distinct from counts of local techniques."""
+        dimensions = plot["plot_dimensions"]
+        arcs = character["character_dimensions"]["character_arcs"]
+        relationships = character["character_dimensions"]["relationships"]
+        order = {row["chapter_id"]: i for i, row in enumerate(reading["chapter_observations"])}
+        groups = {"foreshadowing": dimensions["foreshadowing"], "character_arc": arcs,
+                  "phase_pacing": dimensions["pacing"], "relationship": relationships,
+                  "conflict": conflict, "plot": plot}
+        for dimension, section in groups.items():
+            section["cross_chapter_findings"] = [f for f in reading["findings"] if f["dimension"] == dimension]
+        callbacks = dimensions["foreshadowing"]["cross_chapter_findings"]
+        distances = [order[f["evidence"][-1]["chapter_id"]] - order[f["evidence"][0]["chapter_id"]]
+                     for f in callbacks if f["status"] == "confirmed"]
+        dimensions["foreshadowing"]["setup_payoff_distance"] = {
+            "confirmed_count": len(distances), "mean_chapter_distance": round(sum(distances) / len(distances), 2) if distances else None,
+            "notes": "按已确认呼应的起止章在导入目录中的位置差计算。"}
+        plot["story_arc"] = {"type": "serial_full", "coverage": reading["coverage"], "limitations": reading["limitations"]}
+        dimensions["pacing"]["phase_pacing"] = reading["phase_pacing"]
+        technique["phase_pacing"] = reading["phase_pacing"]
     
     def enhance_candidates(self, combined_analysis: Dict) -> None:
         """Enhance existing candidates.json with analysis data.

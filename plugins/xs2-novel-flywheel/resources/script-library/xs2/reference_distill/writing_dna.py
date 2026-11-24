@@ -9,12 +9,16 @@ import json
 import re
 from dialogue_learning import SOURCE_BOUNDARY, profile_samples
 from distill_schema import DIMENSIONS, LAYERS
+from source_chapters import source_units
 
 UPSTREAM_DOCUMENTS = ("语言DNA.md", "文章结构模板.md", "写作视角与认知框架.md", "视觉风格指南.md", "Writing-DNA.md")
 DOCUMENTS = (*UPSTREAM_DOCUMENTS, "人物写法.md")
 
 
-def prepare(raw, source, mode, save,*,direction='general',focus=''):
+def prepare(raw, source, mode, save,*,direction='general',focus='',units_info=None,completeness=None):
+    inferred, chapters = units_info or source_units(raw, mode)
+    if inferred == "serial_full":
+        direction, focus = "general", ""
     vendor = Path(__file__).parent / "vendor" / "writing-dna-skill"
     skill = (vendor / "SKILL.md").read_text(encoding="utf-8-sig")
     templates = "\n\n".join("# 模板：" + name + "\n" + (vendor / "templates" / "author-corpus" / "zh" / name).read_text(encoding="utf-8-sig") for name in UPSTREAM_DOCUMENTS)
@@ -30,13 +34,8 @@ def prepare(raw, source, mode, save,*,direction='general',focus=''):
         '样本没有体现的作用不补造目标，未经本书选择不生效。')
     save("learning/dna/instructions.md", skill + "\n\n" + adapter+'\n\n## 当前学习侧重点\n'+emphasis)
     save("learning/dna/templates.md", templates)
-    markers = list(SOURCE_BOUNDARY.finditer(raw))
-    units = [{"title": match.group(0).strip("= "), "source_start": match.end(), "source_end": markers[i + 1].start() if i + 1 < len(markers) else len(raw)} for i, match in enumerate(markers)]
-    if not units:
-        units = [{"title": "导入文本（完整性待核实）", "source_start": 0, "source_end": len(raw)}]
-    if mode not in {"auto", "short_full", "serial_chapters"}:
-        raise ValueError("语料类型必须为 auto、short_full 或 serial_chapters")
-    inferred = "serial_chapters" if mode == "auto" and "===== SOURCE CHAPTER" in raw else mode
+    units = [{"id": c["id"], "title": c["title"], "source_start": c["start"], "source_end": c["end"]}
+             for c in chapters]
     # Exclude import wrappers from language measurements, but keep source offsets.
     body = SOURCE_BOUNDARY.sub("", raw)
     sentences = [re.sub(r"\s", "", s) for s in re.split(r"[。！？!?]+", body) if s.strip()]
@@ -58,6 +57,9 @@ def prepare(raw, source, mode, save,*,direction='general',focus=''):
                 "coverage_note": "只分析本次导入样本；章节样本不能代表完整长篇结局或作者全部作品。",
                 "statistics": stats}
     save("learning/dna/metadata.json", metadata)
+    # Only this bounded view is interpolated into each window's model prompt.
+    save("learning/dna/window-metadata.json", {k: v for k, v in metadata.items() if k != "source_units"}
+         | {"chapter_count": len(chapters), "coverage_basis": completeness or {}})
 
 
 def checked_extras(payload, window, raw, text_field, strings, evidence_position):
@@ -138,7 +140,7 @@ def bundle(data, candidates, observations, patterns, load, save):
     )
     selected_patterns = bounded(selected_patterns)
     selected = bounded(selected)
-    result = {**metadata, "covered_window_ids": data["covered_window_ids"],
+    result = {**metadata, "run_id": data.get("run_id"), "source_coverage": data.get("source_coverage", {}), "covered_window_ids": data["covered_window_ids"],
               "dialogue_samples": profile_samples(candidates),
               "dimension_examples": dimension_examples,
               "style_observations": selected, "conflict_patterns": selected_patterns,
@@ -148,6 +150,15 @@ def bundle(data, candidates, observations, patterns, load, save):
               "summary_scope": "总览选取有原文证据的代表写法；完整条目和原文位置见候选档案。",
               "candidate_names": [item["mechanism"] for item in candidates[:80]]}
     save("learning/dna/bundle.json", result)
+    model_view = {k: v for k, v in result.items() if k not in {"source_coverage", "source_units", "covered_window_ids"}}
+    scope = result["source_coverage"]
+    model_view["coverage"] = {"chapters": len(scope.get("chapters", [])),
+                              "analyzed_chapters": len(scope.get("analyzed_chapters", [])),
+                              "windows": len(data["covered_window_ids"]), "complete": scope.get("complete", False)}
+    for key in ("completeness_basis", "catalog_complete", "work_finished", "chapter_boundaries"):
+        if key in scope:
+            model_view["coverage"][key] = scope[key]
+    save("learning/dna/summary-input.json", model_view)
 
 
 def finalize(args, load, save, digest):
@@ -167,10 +178,16 @@ def finalize(args, load, save, digest):
     if packet["statistics"].get("font_obfuscated_chars"):
         limits.append("来源含特殊字体编码，词汇与细微语感结论置信度受限；未自行猜测还原字符。")
     profile = {"schema": "xs2.reference.dna.v1", "source_sha256": analysis["source_sha256"],
+               "source_coverage": packet.get("source_coverage", {}),
                "dialogue_samples": packet.get('dialogue_samples', []),
                "upstream": load("learning/dna/upstream.json"), "source_mode": packet["source_mode"],
                "documents": documents, "limitations": limits,
                "statistics": packet["statistics"], "conflict_count": len(packet["conflict_patterns"])}
+    if packet["source_mode"] == "serial_full":
+        cross = load("learning/dna/cross_chapter.json")
+        if cross.get("source_sha256") != analysis["source_sha256"] or cross.get("run_id") != packet.get("run_id"):
+            raise ValueError("跨章分析与当前语料或分析轮次不一致")
+        profile["cross_chapter_analysis"] = cross
     profile["analysis_sha256"] = digest(profile)
     for name, text in documents.items():
         save("learning/dna/" + name, text)

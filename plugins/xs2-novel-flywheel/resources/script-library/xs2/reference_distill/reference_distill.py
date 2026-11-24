@@ -25,6 +25,7 @@ import writing_dna
 from dialogue_learning import dialogue_context, normalize_dialogue_samples, combine_samples, render_adaptations
 from distill_schema import DIMENSIONS, EXPORT_LAYOUTS, LAYERS, POV_COMPATIBILITY
 from reference_choices import DIMENSION_NAMES, mechanism_scopes
+from source_chapters import CHAPTER_HEADING, chapter_batches, coverage, numbering_gaps, source_units, split_ranges
 @lru_cache(maxsize=1)
 def reading():
     spec=importlib.util.spec_from_file_location('reference_reading_goals',Path(__file__).resolve().parents[1]/'prose_policy/reading_contract.py')
@@ -42,6 +43,8 @@ OPENING_HEADING = re.compile(
 WINDOW_GROUPS = {'candidates': ('candidate', 12), 'style_observations': ('style', 12),
                  'conflict_patterns': ('conflict', 8)}
 MAX_ITEM_REPAIR_ROUNDS = 2
+PROGRESS = "learning/cache/progress.json"
+WINDOW_BATCH_SIZE = 32
 
 # Workflow captures subprocess stdout as UTF-8.  Windows may otherwise select
 # the active console code page (for example GBK), which turns Chinese status
@@ -75,7 +78,7 @@ def save(raw, value):
     target = path(raw)
     target.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(value, ensure_ascii=False, indent=2) if not isinstance(value, str) else value
-    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary = target.with_suffix(target.suffix + "." + uuid4().hex + ".tmp")
     temporary.write_text(text + "\n", encoding="utf-8")
     temporary.replace(target)
 
@@ -114,6 +117,95 @@ def manifest():
     return data, raw
 
 
+def read_packet(entry):
+    if "packet_sha256" not in entry:
+        return entry
+    packet = load(f"learning/cache/{entry['window_id']}.json")
+    if digest(packet) != entry["packet_sha256"]:
+        raise ValueError("窗口与分窗清单的哈希不符")
+    return packet
+
+
+def checkpoint_path(entry):
+    return f"learning/cache/batches/{entry['batch_id']}.json"
+
+
+def batch_ledger(entry, run_id):
+    try:
+        stored = load(checkpoint_path(entry))
+        if stored.get("run_id") == run_id and isinstance(stored.get("validated"), dict):
+            return stored
+    except (FileNotFoundError, ValueError, AttributeError):
+        pass
+    return {"run_id": run_id, "validated": {}}
+
+
+def initial_coverage(data, completed):
+    return {**data.get("completeness", {}), **coverage(data["chapters"], data["windows"], completed)}
+
+
+def write_progress(data, completed):
+    scope = initial_coverage(data, completed)
+    batches = {}
+    for entry in data["windows"]:
+        batch = batches.setdefault(entry["batch_id"], {"total": 0, "validated": 0})
+        batch["total"] += 1
+        batch["validated"] += entry["window_id"] in completed
+    save(PROGRESS, {"run_id": data["run_id"], "source_sha256": data["source"]["text_sha256"],
+                    "source_mode": data["source_mode"], "source_coverage": scope,
+                    "validated_window_ids": sorted(completed), "batches": batches})
+    return scope
+
+
+def record_validation(data, entry, checked):
+    if entry.get("packet_sha256"):
+        checked["packet_sha256"] = entry["packet_sha256"]
+    save(f"learning/cache/{entry['window_id']}.validated.json", checked)
+    if "batch_id" not in entry:  # previous manifest version
+        return
+    receipt = checkpoint_path(entry)
+    ledger = batch_ledger(entry, data["run_id"])
+    ledger["validated"][entry["window_id"]] = digest(checked)
+    save(receipt, ledger)
+    progress = load(PROGRESS)
+    if progress["run_id"] != data["run_id"]:
+        raise ValueError("分窗进度属于其他分析轮次")
+    write_progress(data, set(progress["validated_window_ids"]) | {entry["window_id"]})
+
+
+def recovered_windows(data):
+    """Skip only evidence-validated results with matching run and durable receipts."""
+    completed = set()
+    ledgers = {}
+    for entry in data["windows"]:
+        batch = entry["batch_id"]
+        if batch not in ledgers:
+            ledgers[batch] = batch_ledger(entry, data["run_id"])["validated"]
+        key = entry["window_id"]
+        result = f"learning/cache/{key}.validated.json"
+        if key in ledgers[batch] and path(result).is_file():
+            try:
+                checked = load(result)
+                if (checked["run_id"] == data["run_id"] and checked["source_sha256"] == data["source"]["text_sha256"]
+                        and checked["window_id"] == key and checked.get("packet_sha256") == entry.get("packet_sha256")
+                        and digest(checked) == ledgers[batch][key]):
+                    completed.add(key)
+            except (KeyError, ValueError, TypeError):
+                pass
+    return completed
+
+
+def write_chapter_input(window, raw, pending=None):
+    selected = [segment for segment in window["chapter_segments"]
+                if pending is None or segment["segment_id"] in pending]
+    save(f"learning/cache/{window['window_id']}.input.json", {
+        "analysis": "chapter_batch", "window_id": window["window_id"],
+        "source_sha256": window["source_sha256"],
+        "chapters": [{"segment_id": row["segment_id"], "title": row["title"],
+                      "text": raw[row["source_start"]:row["source_end"]]} for row in selected],
+    })
+
+
 def split(args):
     if not 800 <= args.window <= 12000 or not 0 <= args.overlap < args.window // 2:
         raise ValueError("window 必须为 800～12000，overlap 必须小于窗口的一半")
@@ -131,45 +223,122 @@ def split(args):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(raw, encoding="utf-8")
     source = {"text_sha256": source_hash, "snapshot_path": snapshot, "characters": len(raw)}
-    writing_dna.prepare(raw, source, getattr(args, "source_mode", "auto"), save,
-        direction=getattr(args,'learning_direction','general'),focus=getattr(args,'learning_focus',''))
+    requested_mode = getattr(args, "source_mode", "auto")
+    effective_mode = requested_mode
+    imported = {}
+    if path(args.input) == path("references/url-imported-corpus.txt") and path("references/url-import.json").is_file():
+        receipt = load("references/url-import.json")
+        if receipt.get("corpus_sha256") == source_hash:
+            imported = receipt
+            declared = imported.get("source_mode")
+            if requested_mode == "auto" and declared in ("short_full", "serial_chapters", "serial_full"):
+                effective_mode = declared
+            if requested_mode == "serial_full" and declared == "serial_chapters":
+                raise ValueError("导入记录是长篇章节样本，请重新导入整本目录后分析全文。")
+        elif requested_mode == "serial_full":
+            raise ValueError("网页目录记录与原文哈希不一致，请重新导入整本目录。")
+    mode, chapters = source_units(raw, effective_mode)
+    batch_max_chapters = getattr(args, "batch_max_chapters", None)
+    batch_max_chars = getattr(args, "batch_max_chars", None)
+    batched = mode == "serial_full" and batch_max_chapters is not None
+    if batched and (not 1 <= batch_max_chapters <= 30 or batch_max_chars is None
+                    or not 800 <= batch_max_chars <= 60000):
+        raise ValueError("每批章节上限须在 1～30，每批字符上限须在 800～60000")
+    # Keep the established whole-text windows for older modes. Full books never
+    # spend a model window or its overlap on a neighbouring chapter.
+    ranges = ((start, end, [chapter["id"]]) for chapter in chapters for start, end in
+              split_ranges(raw, chapter["start"], chapter["end"], args.window, args.overlap)) if mode == "serial_full" else (
+              (start, end, [c["id"] for c in chapters if c["start"] < end and start < c["end"]])
+              for start, end in split_ranges(raw, 0, len(raw), args.window, args.overlap))
+    basis = "imported_text"
+    if mode == "serial_full":
+        basis = "user_declared" if requested_mode == "serial_full" else "end_marker"
+    provenance = {"completeness_basis": basis}
+    if imported:
+        provenance.update(completeness_basis="catalog", catalog_complete=imported.get("catalog_complete"),
+                          work_finished=imported.get("work_finished"))
+    if mode == "serial_full":
+        provenance["chapter_boundaries"] = ("source_chapters" if re.search(r"^===== SOURCE CHAPTER", raw, re.M)
+                                            else "headings" if CHAPTER_HEADING.search(raw)
+                                            else "file_boundaries" if len(chapters) > 1 else "unsegmented")
+        provenance["numbering_gaps"] = numbering_gaps(chapters)
+        provenance["whole_book_eligible"] = (not provenance["numbering_gaps"] and provenance.get("catalog_complete") is not False
+                                             and provenance.get("work_finished") is not False)
+        if not provenance["whole_book_eligible"]:
+            gap = next(iter(provenance["numbering_gaps"]), None)
+            reason = (f"章号缺少第 {gap['first_missing']}～{gap['last_missing']} 章" if gap
+                      else "目录未全部导入或作品仍在连载")
+            raise ValueError(f"{reason}。请补齐后重新分析，或选择长篇章节样本。")
+    writing_dna.prepare(raw, source, mode, save, units_info=(mode, chapters),
+                        completeness=provenance,
+                        direction=getattr(args, "learning_direction", "general"),
+                        focus=getattr(args, "learning_focus", ""))
     save("learning/dna/upstream.json", json.loads((Path(__file__).parent / "vendor/writing-dna-skill/UPSTREAM.json").read_text(encoding="utf-8")))
+    settings_data = {"version": 1, "source": source_hash, "window": args.window, "overlap": args.overlap,
+                     "mode": mode, "completeness": provenance}
+    if batched:
+        settings_data.update(version=2, batch_max_chapters=batch_max_chapters, batch_max_chars=batch_max_chars)
+    settings = digest(settings_data)
+    previous = load(MANIFEST) if mode == "serial_full" and path(MANIFEST).is_file() else {}
+    resume = previous.get("settings_sha256") == settings
+    run_id = previous["run_id"] if resume else uuid4().hex
     windows = []
-    start = 0
-    while start < len(raw):
-        upper = min(len(raw), start + args.window)
-        ends = [start + match.end() for match in re.finditer(r"[。！？!?；;\n]", raw[start:upper])]
-        end = max([point for point in ends if point >= start + args.window // 2], default=upper)
-        if upper == len(raw):
-            end = upper
+    chapters_by_id = {chapter["id"]: chapter for chapter in chapters}
+    if batched:
+        groups = ((segments[0]["source_start"], segments[-1]["source_end"],
+                   [seg["chapter_id"] for seg in segments], segments)
+                  for segments in chapter_batches(raw, chapters, batch_max_chapters, batch_max_chars, args.overlap))
+    else:
+        groups = ((start, end, ids, None) for start, end, ids in ranges)
+    for start, end, chapter_ids, segments in groups:
         window_id = f"window-{len(windows) + 1:04d}"
+        batch_id = f"batch-{len(windows) // WINDOW_BATCH_SIZE + 1:04d}"
         packet = {"window_id": window_id, "source_start": start, "source_end": end,
-                  "text": raw[start:end], "source_sha256": source_hash}
-        packet["dialogue_context"] = dialogue_context(raw, start, end)
+                  "text": raw[start:end], "source_sha256": source_hash, "source_mode": mode,
+                  "chapter_ids": chapter_ids, "chapter_id": chapter_ids[0] if len(chapter_ids) == 1 else None,
+                  "batch_id": batch_id}
+        if segments is not None:
+            packet["chapter_segments"] = segments
+            write_chapter_input(packet, raw)
+        elif mode == "serial_full":
+            chapter = chapters_by_id[chapter_ids[0]]
+            packet.update(chapter_title=chapter["title"], chapter_range=[chapter["start"], chapter["end"]])
         # IDs let a model select exact evidence without retyping font-obfuscated
         # characters. Positions and excerpts are generated from the real source.
-        catalog = []
-        for line in re.finditer(r"[^\n]+", packet["text"]):
-            for offset in range(line.start(), line.end(), 160):
-                stop = min(offset + 160, line.end())
-                if packet["text"][offset:stop].strip():
-                    catalog.append({"evidence_id": f"{window_id}-e{len(catalog)+1:04d}",
-                                    "source_start": start + offset, "source_end": start + stop,
-                                    "excerpt": raw[start + offset:start + stop]})
-        packet["evidence_catalog"] = catalog
-        windows.append(packet)
-        if len(windows) > 100:
-            raise ValueError("超过 Core 的 100 窗口上限，请分卷导入或增大窗口")
-        if end == len(raw):
-            break
-        start = end - args.overlap
-    save(MANIFEST, {"schema": "xs2.reference.windows.v1", "run_id": uuid4().hex, "source": source, "windows": windows})
-    for window in windows:
-        save(f"learning/cache/{window['window_id']}.json", window)
-        save(f"learning/cache/{window['window_id']}.feedback.md",'')
-    ids = json.dumps([item["window_id"] for item in windows])
+        if segments is None:
+            packet["dialogue_context"] = dialogue_context(raw, start, end, packet.get("chapter_range"))
+            catalog = []
+            for line in re.finditer(r"[^\n]+", packet["text"]):
+                for offset in range(line.start(), line.end(), 160):
+                    stop = min(offset + 160, line.end())
+                    if packet["text"][offset:stop].strip():
+                        catalog.append({"evidence_id": f"{window_id}-e{len(catalog)+1:04d}",
+                                        "source_start": start + offset, "source_end": start + stop,
+                                        "excerpt": raw[start + offset:start + stop]})
+            packet["evidence_catalog"] = catalog
+        save(f"learning/cache/{window_id}.json", packet)
+        if mode == "serial_full":
+            entry = {k: v for k, v in packet.items() if k not in {"text", "dialogue_context", "evidence_catalog"}}
+            windows.append({**entry, "packet_sha256": digest(packet)})
+        else:
+            windows.append(packet)
+        feedback = f"learning/cache/{window_id}.feedback.md"
+        if not resume or not path(feedback).is_file():
+            save(feedback, "")
+    data = {"schema": "xs2.reference.windows.v2", "run_id": run_id, "source": source, "source_mode": mode,
+            "chapters": chapters, "windows": windows, "settings_sha256": settings, "completeness": provenance}
+    if batched:
+        data["chapter_batch_limits"] = {"chapters": batch_max_chapters, "characters": batch_max_chars}
+    completed = recovered_windows(data) if resume else set()
+    data["source_coverage"] = write_progress(data, completed)
+    save(MANIFEST, data)
+    metadata = load("learning/dna/metadata.json")
+    save("learning/dna/metadata.json", {**metadata, "source_coverage": data["source_coverage"]})
+    ids = json.dumps([item["window_id"] for item in windows if item["window_id"] not in completed])
+    print(f"<WF_VAR>source_mode:{mode}</WF_VAR>")
+    print(f"<WF_VAR>chapter_batch_mode:{str(batched).lower()}</WF_VAR>")
     print(f"<WF_VAR>window_ids:{ids}</WF_VAR>")
-    print(f"<script_out>已完整分窗：{len(windows)} 个窗口</script_out>")
+    print(f"<script_out>已完整分窗：{len(chapters)} 章，{len(windows)} 个窗口，复用 {len(completed)} 个已校验窗口。</script_out>")
 
 
 def evidence_position(proof, window, raw):
@@ -308,9 +477,10 @@ def _checked_candidate(item, window, raw, source_sha256):
 
 def normalize(args):
     data, raw = manifest()
-    window = next((item for item in data["windows"] if item["window_id"] == args.window_id), None)
-    if window is None:
+    entry = next((item for item in data["windows"] if item["window_id"] == args.window_id), None)
+    if entry is None:
         raise ValueError("未知窗口")
+    window = read_packet(entry)
     payload = load(args.input)
     if (not isinstance(payload, dict) or payload.get("window_id") != window["window_id"]):
         raise ValueError("模型返回的窗口身份或来源哈希不一致")
@@ -321,7 +491,7 @@ def normalize(args):
     # 空候选是合法结果；模型有时会省略无法观察到的来源哈希。窗口文件
     # 已由 split 阶段使用同一份快照生成，此时由脚本补齐哈希，避免把空结果
     # 误判为失败。只要返回了候选，仍要求模型提供正确哈希。
-    if not items and not source_sha256:
+    if not items and not source_sha256 and data.get("source_mode") != "serial_full":
         source_sha256 = data["source"]["text_sha256"]
     if source_sha256 != data["source"]["text_sha256"]:
         raise ValueError("模型返回的窗口身份或来源哈希不一致")
@@ -335,8 +505,9 @@ def normalize(args):
         samples = normalize_dialogue_samples(item.get('dialogue_samples'), window, raw, evidence_position)
         if samples:
             candidates[-1]['dialogue_samples'] = samples
-    save(f"learning/cache/{window['window_id']}.validated.json",
+    record_validation(data, entry,
          {"source_sha256": source_sha256, "window_id": window["window_id"], "run_id": data.get('run_id'),
+          "source_mode": data.get("source_mode"), "chapter_id": window.get("chapter_id"),
           "evidence_positions_relocated": relocated, "candidates": candidates,
           "style_observations": observations, "conflict_patterns": patterns})
     print(f"<script_out>已校验 {window['window_id']}：{len(candidates)} 条候选，精确定位修正 {relocated} 条证据</script_out>")
@@ -344,20 +515,24 @@ def normalize(args):
 
 def _frozen_window(window_id):
     data, raw = manifest()
-    window = next((w for w in data['windows'] if w['window_id'] == window_id), None)
-    if window is None or not re.fullmatch(r'window-\d{4}', window_id):
+    entry = next((w for w in data['windows'] if w['window_id'] == window_id), None)
+    if entry is None or not re.fullmatch(r'window-\d{4,}', window_id):
         raise ValueError('未知窗口')
+    window = read_packet(entry)
     start, end = window['source_start'], window['source_end']
     if window['text'] != raw[start:end] or window['source_sha256'] != data['source']['text_sha256']:
         raise ValueError('窗口与参考资料快照不一致')
-    if 'dialogue_context' in window and window['dialogue_context'] != dialogue_context(raw, start, end):
+    if 'dialogue_context' in window and window['dialogue_context'] != dialogue_context(raw, start, end, window.get('chapter_range')):
         raise ValueError('对白窗口语境与参考资料快照不一致')
     for row in window.get('evidence_catalog', []):
         a, z = row['source_start'], row['source_end']
         if not start <= a < z <= end or raw[a:z] != row['excerpt']:
             raise ValueError('证据目录与参考资料快照不一致')
-    return [digest(data), data['source']['text_sha256'], os.environ.get('TASK_ID', '')], {
-        **window, 'run_id': data.get('run_id')}, raw
+    serial = data.get("source_mode") == "serial_full"
+    binding = [digest([data.get('run_id'), entry["packet_sha256"]]) if serial else digest(data),
+               data['source']['text_sha256'], data["run_id"] if serial else os.environ.get('TASK_ID', '')]
+    return binding, {
+        **window, 'packet_sha256': entry.get("packet_sha256"), 'run_id': data.get('run_id')}, raw
 
 
 def _window_items(value, limit, group):
@@ -445,6 +620,7 @@ def _window_output(state, window):
     unresolved = state['unresolved'] + [{'repair_id': key, 'group': row['group'], 'reason': row['error']}
                                         for key, row in state['pending'].items()]
     return {'source_sha256': window['source_sha256'], 'window_id': window['window_id'], 'run_id': window['run_id'],
+            'source_mode': window.get('source_mode'), 'chapter_id': window.get('chapter_id'),
             'evidence_positions_relocated': state['evidence_positions_relocated'],
             'unresolved': unresolved, **groups}
 
@@ -474,11 +650,92 @@ def _item_repair_feedback(state, reply_error, archive):
             issue['original_preview'] = preview
             remaining -= len(preview)
         issues.append(issue)
-    return ('本轮只返修列出的条目，已核验项会原样保留。只返回 window_id、repair_round 和 repairs。'
+    return ('本轮只返修列出的条目，已核验项会原样保留。返回 window_id、source_sha256、repair_round 和 repairs。'
             '每个 repairs 项包含 repair_id 与 value，value 为该条完整修正。'
             '证据不足时用 value:null 并填写 reason。证据必须从当前原文选取。'
             f'\nrepair_round: {state["round"]}\n' + (reply_error + '\n' if reply_error else '')
             + json.dumps(issues, ensure_ascii=False) + '\n本次原始回复：' + archive)
+
+
+def _chapter_reading(row, segment, raw):
+    a, b = segment["source_start"], segment["source_end"]
+    quote = row.get("quote")
+    if not isinstance(quote, str) or not 6 <= len(quote) <= 120 or not quote.strip():
+        raise ValueError("需要 6～120 字的连续原文")
+    position = raw.find(quote, a, b)
+    if position < 0 or raw.find(quote, position + 1, b) >= 0:
+        raise ValueError("引文须能在当前章节片段中唯一定位")
+    result = {}
+    for key in ("event", "state", "lead", "cue", "technique", "guidance"):
+        value = row.get(key, "")
+        if not isinstance(value, str) or len(value) > 180:
+            raise ValueError(f"{key} 须为 180 字以内的文本")
+        result[key] = value.strip()
+    if not result["event"]:
+        raise ValueError("缺少事件或局部叙事观察")
+    return {**result, "chapter_id": segment["chapter_id"], "segment_id": segment["segment_id"],
+            "evidence": {"chapter_id": segment["chapter_id"], "source_start": position,
+                         "source_end": position + len(quote), "excerpt": quote}}
+
+
+def _validate_chapter_batch(binding, window, raw, response):
+    prefix = f"learning/cache/{window['window_id']}"
+    receipt = prefix + ".chapter-review.json"
+    state = load(receipt) if path(receipt).is_file() else {}
+    accepted = state.get("accepted", {}) if state.get("binding") == binding else {}
+    segments = {s["segment_id"]: s for s in window["chapter_segments"]}
+    valid_identity = (isinstance(response, dict) and response.get("window_id") == window["window_id"]
+                      and response.get("source_sha256") == window["source_sha256"]
+                      and isinstance(response.get("chapter_rows"), list))
+    problems = {}
+    if valid_identity:
+        for row in response["chapter_rows"][:len(segments) * 2]:
+            key = row.get("segment_id") if isinstance(row, dict) else None
+            if not isinstance(key, str) or key not in segments or key in accepted:
+                continue
+            try:
+                accepted[key] = _chapter_reading(row, segments[key], raw)
+            except ValueError as exc:
+                problems[key] = str(exc)
+    missing = [key for key in segments if key not in accepted]
+    save(receipt, {"binding": binding, "accepted": accepted})
+    if missing:
+        feedback = "只补当前分析包中的片段。逐字复制可以唯一定位的原文。"
+        if not valid_identity:
+            feedback += " 请按分析包返回正确的 window_id、source_sha256 和 chapter_rows。"
+        feedback += "\n" + json.dumps({key: problems.get(key, "缺少有效阅读项") for key in missing}, ensure_ascii=False)
+        write_chapter_input(window, raw, missing)
+        save(prefix + ".feedback.md", feedback)
+        print('<WF_REJECT_UPSTREAM target="agent_distill_batch">' + html.escape(feedback) + '</WF_REJECT_UPSTREAM>')
+        return
+    notes = [accepted[key] for key in segments]
+    candidates = []
+    for note in notes:
+        if not note["technique"] or not note["guidance"]:
+            continue
+        proof = note["evidence"]
+        try:
+            candidate, _ = _checked_candidate({
+                "mechanism": note["technique"], "transfer_guidance": note["guidance"], "constraints": [],
+                "scopes": ["story-plan", "outline", "mvp"], "confidence": "medium",
+                "application_scope": ["serial_chapter"],
+                "evidence": [{**proof, "window_id": window["window_id"], "reason": "该原文展示了提炼的写法"}],
+            }, window, raw, window["source_sha256"])
+        except ValueError:
+            continue
+        candidates.append(candidate)
+        if len(candidates) == 2:
+            break
+    data = load(MANIFEST)
+    if data.get("run_id") != window["run_id"]:
+        raise ValueError("窗口结果过期或身份不匹配")
+    save(prefix + ".feedback.md", "")
+    record_validation(data, window, {
+        "run_id": window["run_id"], "source_sha256": window["source_sha256"], "window_id": window["window_id"],
+        "source_mode": "serial_full", "chapter_readings": notes, "candidates": candidates,
+        "style_observations": [], "conflict_patterns": [],
+    })
+    print(f'<script_out>已校验 {window["window_id"]} 的 {len(notes)} 个章节片段。</script_out>')
 
 
 def validate_window(args):
@@ -495,12 +752,19 @@ def validate_window(args):
         response = json.loads(raw_bytes.decode('utf-8-sig'))
     except (ValueError, UnicodeError):
         response = None
+    if "chapter_segments" in window:
+        _validate_chapter_batch(binding, window, raw, response)
+        return
+    allowed_hashes = {window['source_sha256']}
+    if window.get('source_mode') != 'serial_full':
+        allowed_hashes.add(None)
     if (not isinstance(response, dict) or response.get('window_id') != window['window_id']
-            or response.get('source_sha256') not in (None, window['source_sha256'])):
+            or not isinstance(response.get("source_sha256"), (str, type(None)))
+            or response.get('source_sha256') not in allowed_hashes):
         message = '模型返回的窗口身份或来源哈希不一致' if isinstance(response, dict) else '窗口分析回复必须是 JSON 对象'
         relative = _archive_window_reply(window['window_id'], binding, raw_bytes, response, [message])
         previous = path(prefix + '.feedback.md')
-        notice = message + '。请按当前窗口编号重交，来源哈希可省略。未通过回复：' + relative
+        notice = message + '。请按当前窗口编号和来源哈希重交。未通过回复：' + relative
         current = previous.read_text(encoding='utf-8-sig').strip() if previous.is_file() else ''
         feedback = current if current.startswith(notice) else '\n\n'.join(filter(None, (notice, current)))
         save(prefix + '.feedback.md', feedback)
@@ -541,7 +805,10 @@ def validate_window(args):
         print('<WF_REJECT_UPSTREAM target="agent_distill_window">' + html.escape(state['feedback']) + '</WF_REJECT_UPSTREAM>')
         return
     checked = _window_output(state, window)
-    save(prefix + '.validated.json', checked)
+    data = load(MANIFEST)
+    if data.get('run_id') != window['run_id']:
+        raise ValueError("窗口结果过期或身份不匹配")
+    record_validation(data, window, checked)
     print(f'<script_out>已校验 {window["window_id"]}：{len(checked["candidates"])} 条候选，'
           f'{len(checked["unresolved"])} 项证据不足或未完成返修</script_out>')
 
@@ -564,10 +831,17 @@ def _candidate_similarity(left, right):
 
 def _merge_similar(candidates):
     clusters = []
+    by_shape = {}
     for candidate in candidates:
-        match = next((cluster for cluster in clusters if _candidate_similarity(cluster[0], candidate) >= 0.72), None)
+        # Different layers, dimensions or reading goals can never merge.
+        shape = (candidate.get("dimension"), candidate.get("layer"), candidate.get("export_layout"),
+                 digest(candidate["reading_objectives"]) if candidate.get("reading_objectives") else None)
+        compatible = by_shape.setdefault(shape, [])
+        match = next((cluster for cluster in compatible if _candidate_similarity(cluster[0], candidate) >= 0.72), None)
         if match is None:
-            clusters.append([candidate])
+            cluster = [candidate]
+            clusters.append(cluster)
+            compatible.append(cluster)
         else:
             match.append(candidate)
     merged = []
@@ -612,6 +886,8 @@ def _merge_similar(candidates):
 
 def merge(args):
     data, _ = manifest()
+    if data.get("source_mode") == "serial_full" and len(recovered_windows(data)) != len(data["windows"]):
+        raise ValueError("尚有未通过校验或已过期的窗口，请恢复分析")
     merged = {}
     observations = []
     patterns = []
@@ -636,7 +912,13 @@ def merge(args):
                 if proof not in current["evidence"]:
                     current["evidence"].append(proof)
     candidates = _merge_similar(list(merged.values()))
-    result = {"schema": "xs2.reference.candidates.v2", "source": data["source"],
+    completed = {w["window_id"] for w in data["windows"]}
+    scope = write_progress(data, completed) if "chapters" in data else {}
+    if scope:
+        metadata = load("learning/dna/metadata.json")
+        save("learning/dna/metadata.json", {**metadata, "source_coverage": scope})
+    result = {"schema": "xs2.reference.candidates.v2", "source": data["source"], "run_id": data.get("run_id"),
+              "source_mode": data.get("source_mode", "auto"), "source_coverage": scope,
               "covered_window_ids": [item["window_id"] for item in data["windows"]],
               "candidates": candidates, "style_observations": observations, "conflict_patterns": patterns}
     if unresolved:
@@ -1010,6 +1292,8 @@ def main():
     split_parser.add_argument("--input", required=True)
     split_parser.add_argument("--window", type=int, default=4200)
     split_parser.add_argument("--overlap", type=int, default=400)
+    split_parser.add_argument("--batch-max-chapters", type=int)
+    split_parser.add_argument("--batch-max-chars", type=int)
     split_parser.add_argument("--source-mode", default="auto")
     split_parser.add_argument("--learning-direction", choices=['general','zhihu_short','custom'], default='general')
     split_parser.add_argument("--learning-focus", default='')
@@ -1023,6 +1307,19 @@ def main():
     validation_parser.add_argument('--window-id',required=True)
     validation_parser.set_defaults(handler=validate_window)
     commands.add_parser("merge").set_defaults(handler=merge)
+    def cross_action(args):
+        import cross_chapter
+        if args.command == "cross-prepare":
+            cross_chapter.prepare()
+        elif args.command == "cross-validate":
+            cross_chapter.validate(args.batch_id)
+        else:
+            cross_chapter.finalize()
+    commands.add_parser("cross-prepare").set_defaults(handler=cross_action)
+    cross_parser = commands.add_parser("cross-validate")
+    cross_parser.add_argument("--batch-id", required=True)
+    cross_parser.set_defaults(handler=cross_action)
+    commands.add_parser("cross-finalize").set_defaults(handler=cross_action)
     commands.add_parser("prepare-choices").set_defaults(handler=prepare_choices)
     dna_parser = commands.add_parser("finalize-dna")
     dna_parser.add_argument("--input", default="learning/dna/summary.raw.json")

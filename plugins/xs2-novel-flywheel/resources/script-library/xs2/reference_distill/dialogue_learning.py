@@ -44,9 +44,10 @@ SUBJECT_QUALIFIER = re.compile(r'^[^\W\d_]{1,16}?(?:里的|中的|里头的|口�
 SUBJECT_SWITCH = re.compile(r'(?:看向|看见|盯着|听见?|让|催|逼|问|叫|说|喊|请|告诉)')
 
 
-def dialogue_context(raw, start, end):
-    lower = max(0, start - MAX_EXCHANGE_SPAN)
-    upper = min(len(raw), end + MAX_EXCHANGE_SPAN)
+def dialogue_context(raw, start, end, chapter_range=None):
+    lower_bound, upper_bound = chapter_range or (0, len(raw))
+    lower = max(lower_bound, start - MAX_EXCHANGE_SPAN)
+    upper = min(upper_bound, end + MAX_EXCHANGE_SPAN)
     return {'source_start': lower, 'source_end': upper,
             'before': raw[lower:start], 'after': raw[end:upper]}
 
@@ -222,7 +223,7 @@ def normalize_dialogue_samples(samples, window, raw, resolve_evidence):
     core_start, core_end = window['source_start'], window['source_end']
     evidence_window = window
     if 'dialogue_context' in window:
-        context = dialogue_context(raw, core_start, core_end)
+        context = dialogue_context(raw, core_start, core_end, window.get("chapter_range"))
         if window['dialogue_context'] != context:
             raise ValueError('对白窗口语境与参考资料快照不一致')
         evidence_window = {**window, 'source_start': context['source_start'], 'source_end': context['source_end']}
