@@ -2416,7 +2416,7 @@
       "fail_auto_skip": false,
       "auto_retry_count": 0,
       "auto_retry_interval_seconds": 5,
-      "model_override": "lingsuan-google:gemini-4-neon"
+      "model_override": "lingsuan-google:gemini-4-carbon"
     },
     {
       "id": "script_zhuque_skip",

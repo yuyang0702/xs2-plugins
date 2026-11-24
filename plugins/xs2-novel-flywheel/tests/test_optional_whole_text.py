@@ -67,7 +67,7 @@ def test_installed_graph_has_one_full_text_gate_before_publication():
     spec = spec_from_file_location('round_model_route',base/'script-library/xs2/console_service/production.py')
     prod = module_from_spec(spec); spec.loader.exec_module(prod)
     choices = prod.model_overrides({'analysisModel':'other:critic','polishModel':'other:writer'},graph,'polish') or {}
-    assert choices.get(agent['id'],agent['model_override']) == 'lingsuan-google:gemini-4-neon'
+    assert choices.get(agent['id'],agent['model_override']) == 'lingsuan-google:gemini-4-carbon'
 
 def test_an_opt_in_polish_cannot_complete_with_skipped_publication(tmp_path):
     from test_length_quality import policy

@@ -838,7 +838,7 @@ def model_overrides(state, definition, stage):
                 or '{{' in node.get('agent_type', '') or '{{' in (node.get('model_override') or '')):
             continue
         if identity == 'agent_zhuque_rounds' and stage == 'polish':
-            selected[identity] = 'lingsuan-google:gemini-4-neon'
+            selected[identity] = 'lingsuan-google:gemini-4-carbon'
             continue
         if identity == 'agent_fragment_review' and not analysis:
             continue
