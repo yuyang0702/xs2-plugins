@@ -8,17 +8,23 @@ from test_focused_length import managed, cli, quality
 from test_local_revision import module, put, scoped_setup
 
 
-def test_assembled_draft_sends_clear_hit_to_writer_after_clean_model_audit(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('line', [
+    '“你找的不是钥匙，而是门闩。”',
+    '“说白了，地府也卡应届生的工龄？”',
+    '当潮水漫过旧码头时，他才想起父亲。',
+    '她摸了三遍口袋，钥匙、船票、戒指都在。',
+])
+def test_assembled_draft_sends_lieflat_hits_to_contextual_audit(tmp_path, monkeypatch, capsys, line):
     original, _ = evidence()
-    body, report = evidence(original + '不是钥匙，而是门闩。')
+    body, report = evidence(original + '\n\n' + line)
     guard, folder = prepared(tmp_path, monkeypatch, capsys, 'patches', body, inspect_first=True, combined_precheck=True)
     report['checks']['repetition'] = True
     report['book_contract_sha256'] = guard.read(folder/'binding.json')['book_contract_sha256']
     save(folder/'facts-audit.json', report)
     assert 'guard_facts_needs_repair:no' in run(guard, tmp_path, monkeypatch, capsys, 'precheck')
-    assert 'guard_expression_needs_repair:yes' in run(guard, tmp_path, monkeypatch, capsys, 'precheck', 'expression')
-    assert '不是钥匙，而是' in (folder/'expression-feedback.md').read_text(encoding='utf8')
-    assert not (folder/'final-receipt.json').exists()
+    model = guard.read(folder/'expression-audit-model.json')
+    assert model['tone_review']['hints']
+    assert 'guard_expression_needs_repair:no' in run(guard, tmp_path, monkeypatch, capsys, 'precheck', 'expression')
 
 
 def test_confirmed_reader_does_not_have_to_rephrase_a_contextual_hit(tmp_path):
@@ -33,7 +39,7 @@ def test_confirmed_reader_does_not_have_to_rephrase_a_contextual_hit(tmp_path):
     m.check_local_tone(src, [], [edit])
 
 
-def test_plain_single_patch_scans_source_and_result_offline(tmp_path, monkeypatch):
+def test_plain_single_patch_allows_contextual_phrasing_offline(tmp_path, monkeypatch):
     m = module()
     adapter = m.load('test_local_patch', m.HERE/'local_revision/zhuque_round_adapter.py')
     monkeypatch.setattr(urllib.request, 'urlopen', lambda *a, **kw: pytest.fail('单段改写调用了远端检测'))
@@ -43,20 +49,21 @@ def test_plain_single_patch_scans_source_and_result_offline(tmp_path, monkeypatc
     def check(edits):
         return adapter.run({'action':'local-patch', 'body':'', 'view':{'source_body':m.packet.prose(old)},
                             'patch':{'source_sha256':digest,'edits':edits}})['feedback']
-    assert '不是钥匙，而是' in check([])
-    assert '说白了，' in check([edit])
+    assert check([]) == ''
+    assert check([edit]) == ''
     edit['replacement'] = '门闩。钥匙哪有这么沉？'
     assert check([edit]) == ''
 
 
-def test_focused_fragment_returns_only_its_candidate_to_writer(tmp_path):
+def test_focused_fragment_exposes_style_candidate_to_semantic_review(tmp_path):
     managed(tmp_path)
     out = cli(tmp_path, 'length_only')
     put(tmp_path, 'cache/pp/body.json', {'body':'说白了，我还欠他三块钱。'})
     q = quality()
-    with pytest.raises(q.FragmentToneError, match='说白了，'):
-        q.prepare_fragment_review(tmp_path, '0001', out['length_expected_body_sha'], out['length_commit_guard'],
-                                  out['length_commit_guard_sha'], 'tone-test')
+    reviewed = q.prepare_fragment_review(tmp_path, '0001', out['length_expected_body_sha'], out['length_commit_guard'],
+                                         out['length_commit_guard_sha'], 'tone-test')
+    context = json.loads((tmp_path/reviewed['fragment_review_input']).read_text(encoding='utf8'))
+    assert context['tone_review']['hints']
     assert not (tmp_path/'quality/length-attempts/0001/tone-test/receipt.json').exists()
 
 

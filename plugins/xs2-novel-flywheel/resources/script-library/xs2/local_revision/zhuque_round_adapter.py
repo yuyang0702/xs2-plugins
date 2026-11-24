@@ -33,10 +33,7 @@ def run(data):
         patches.apply_patches(source, {'source_sha256':payload['source_sha256'], 'edits':edits}, protected_phrases=protected)
         local = load(here/'local_revision.py')
         rows = patches.paragraphs(source)
-        review = view.get('local_tone')
-        if review is None:
-            review = {'edited_only':len(rows) != 1,
-                      'marks':{p['id']:local.tone.mandatory(p['text'], protected) for p in rows} if len(rows)==1 else {}}
+        review = view.get('local_tone') or {'mode':'contextual'}
         try:
             local.check_local_tone({'local_tone':review, 'paragraphs':rows,
                                     'book_contract':{'protected_phrases':protected}}, edits, edits)
@@ -46,7 +43,7 @@ def run(data):
     if data['action'] == 'detect':
         report = zhuque.analyze(body, patches.paragraphs, os.environ.get('XS2_ZHUQUE_KEY_FILE', ''))
         paragraphs = patches.paragraphs(body)
-        load(here / 'tone_review.py').annotate_rewrites(report, paragraphs)
+        load(here / 'tone_review.py').annotate_rewrites(report, paragraphs, contextual=True)
         return {'report': report, 'paragraphs': paragraphs}
     if data['action'] == 'compose':
         edits = zhuque.compile_rewrites(data['report'], {'edits': [], 'rewrites': data['rewrites']})
@@ -60,10 +57,7 @@ def run(data):
         tone = load(here / 'tone_review.py')
         hints = {}
         for row in data['rewrites']:
-            hits = tone.mandatory(row['replacement'], data['protected_phrases'])
-            if hits:
-                raise ValueError(row['id'] + ' ' + tone.REPHRASE + ' '.join(hits))
-            evidence = tone.fragment_review(row['replacement'])['hints']
+            evidence = tone.fragment_review(row['replacement'], contextual=True)['hints']
             if evidence:
                 hints[row['id']] = evidence
         rules = {h['rule'] for items in hints.values() for h in items}

@@ -118,6 +118,9 @@ def audit_value(directory,phase,body,contract,binding):
         growth = {'growth_edit_indices': revision.growth_indices(edits, include_mixed=True) if mixed else revision.growth_indices(edits),
                   'addition_goals': [row for row in expression_goals(directory) if 'scene_anchor' not in row]}
     scene_goals = [row for row in expression_goals(directory) if 'scene_anchor' in row] if phase=='expression' else []
+    tone_context = {}
+    if binding.get('contextual_tone') and (phase == 'expression' or combined):
+        tone_context['tone_review'] = tone.critic_view(tone.scan(body), body, revision.paragraphs(body))
     narrator=policy.first_person_narrator(contract,binding['pov'])
     event_guidance=''
     if any('expected_state' in row for row in contract['events']):
@@ -129,7 +132,7 @@ def audit_value(directory,phase,body,contract,binding):
         'book_contract_sha256':binding['book_contract_sha256'],
         'candidate_body':body,'continuity_contract':contract,'source_body':source['source_body'],
         **({'edits':edits,'edits_sha256':packet.digest(edits)} if edits else {}),
-        **growth,
+        **growth, **tone_context,
         **({'required_check_keys':policy.required_checks(contract,'expression' if combined else phase)}
            if binding.get('explicit_check_keys') else {}),
         **({'scene_goals':scene_goals} if scene_goals else {}),
@@ -405,6 +408,7 @@ def main():
                  'composition_quota_sha256':quota_sha,
                  'expression_format':args.expression_format,
                  **({'facts_from_confirmed_sources':True} if existing is None or existing.get('facts_from_confirmed_sources') else {}),
+                 **({'contextual_tone':True} if existing is None or existing.get('contextual_tone') else {}),
                  'model_view':packet.PROTOCOL,
                  'book_contract_sha256':book_policy.digest(current_book),
                  'contract_sha256':policy.contract_digest(contract),'source_sha256':body_digest(source_body),
@@ -552,9 +556,10 @@ def main():
     if phase == 'expression':
         source_body = read(directory/'expression-input.json')['source_body']
         protected = facts_source['book_contract']['protected_phrases']
-        marks = tone.remaining(body, tone.mandatory(source_body, protected), protected, original=source_body)
+        marks = (tone.mandatory(body, protected) if binding.get('contextual_tone')
+                 else tone.remaining(body, tone.mandatory(source_body, protected), protected, original=source_body))
         save(directory/'expression-tone.json', {'revision':tone.REVISION, 'body_sha256':body_digest(body), 'marks':marks})
-        if marks:
+        if marks and not binding.get('contextual_tone'):
             issues.append({'category':'local_tone', 'reason':tone.REPHRASE, 'quotes':marks})
             reject_candidate(directory, phase, binding, body, issues, retry=not precheck)
             if precheck:
@@ -566,7 +571,7 @@ def main():
             save_advice(directory,body,advice,measured)
             if not hard and not length.is_blocking(measured) and issues:
                 save(original_path,{'audit':report,'open_issues':issues,'advice':advice})
-        elif issues and original_path.is_file() and not tone.mandatory(source_body, protected):
+        elif issues and original_path.is_file() and (binding.get('contextual_tone') or not tone.mandatory(source_body, protected)):
             # The only automatic expression attempt may be discarded if the original
             # was already checked and independently fits the hard delivery constraints.
             original=read(original_path)

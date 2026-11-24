@@ -26,6 +26,18 @@ def test_lieflat_marks_merge_across_a_boundary_and_include_otherwise_passing_tex
     assert len(edits) == 2
 
 
+def test_contextual_lieflat_leaves_zhuque_edit_boundaries_intact():
+    m = module()
+    body = '我看见雨伞、胶鞋、帽子。\n\n房租、押金、中介费得算清。'
+    unit = {'id':'p0001-s1', 'paragraph_id':'p0001', 'old':'帽子。', 'occurrence':1}
+    report = {'rewrite_units':[unit.copy()], 'reference_paragraphs':['p0002'], 'reference_excerpts':{}}
+    m.tone.annotate_rewrites(report, m.patches.paragraphs(body), contextual=True)
+    target, = report['rewrite_units']
+    assert target['old'] == unit['old']
+    assert 'mandatory_phrases' not in target['lieflat_review']
+    assert report['reference_paragraphs'] == ['p0002']
+
+
 def test_overlapping_quote_anchors_keep_the_unmarked_prefix():
     m = module()
     body = '哈哈哈。'

@@ -607,7 +607,7 @@
       "auto_flow": true,
       "enable_complete_node_task": false,
       "require_non_empty_output": true,
-      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n依据本书契约与实际归档，为 window.start 至 window.end 每章输出一项计划，严格纯 JSON {\"chapters\":[{\"chapter\":\"0002\",\"title\":\"可选标题\",\"intent\":\"本章意图，可为安静场景或开放问题\",\"setup\":[{\"source_id\":\"输入的真实来源\",\"quote\":\"连续原文依据\"}],\"expected_state\":[]}]}。可选 expected_state 项包含 entity_id、path、equals，仅在已有依据时声明关键进入条件。path 必须是可信人物档案中实际存在的完整字段路径，例如 snapshot.location、snapshot.resources、drives.goal，不能简写为 location 或 resources；本窗口起始章的条件必须符合当前实际状态，后续章可声明有依据的进入条件但不是既成事实。不要改写前文或全书方向。\n\n{{rolling_request_file}}\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"chapters\"\n  ],\n  \"properties\": {\n    \"chapters\": {\n      \"type\": \"array\",\n      \"minItems\": 1,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"chapter\",\n          \"intent\",\n          \"setup\"\n        ],\n        \"properties\": {\n          \"chapter\": {\n            \"type\": \"string\"\n          },\n          \"intent\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"setup\": {\n            \"type\": \"array\",\n            \"minItems\": 1\n          }\n        }\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n依据本书契约与实际归档，为 window.start 至 window.end 每章输出一项计划，严格纯 JSON {\"chapters\":[{\"chapter\":\"0002\",\"title\":\"可选标题\",\"intent\":\"本章意图，可为安静场景或开放问题\",\"setup\":[{\"source_id\":\"输入的真实来源\",\"quote\":\"连续原文依据\"}],\"expected_state\":[]}]}。可选 expected_state 项包含 entity_id、path、equals，仅在已有依据时声明关键进入条件。path 必须是可信人物档案中实际存在的完整字段路径，例如 snapshot.location、snapshot.resources、drives.goal，不能简写为 location 或 resources；本窗口起始章的条件必须符合当前实际状态，后续章可声明有依据的进入条件但不是既成事实。不要改写前文或全书方向。\n\n先按 planning_guidance 从 hook_candidates 判断推进、回收或暂缓；允许本窗口全部暂缓。再对照 volume_outline 和 recent_volume_changes，调整与本卷方向脱节的章节安排。\n\n{{rolling_request_file}}\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"chapters\"\n  ],\n  \"properties\": {\n    \"chapters\": {\n      \"type\": \"array\",\n      \"minItems\": 1,\n      \"items\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"chapter\",\n          \"intent\",\n          \"setup\"\n        ],\n        \"properties\": {\n          \"chapter\": {\n            \"type\": \"string\"\n          },\n          \"intent\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          },\n          \"setup\": {\n            \"type\": \"array\",\n            \"minItems\": 1\n          }\n        }\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
       "save_output_to_file": true,
       "output_file_path": "{{rolling_candidate_path}}",
       "max_reject_count": 2,
@@ -683,7 +683,7 @@
       "auto_flow": true,
       "enable_complete_node_task": false,
       "require_non_empty_output": true,
-      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n独立审查候选是否承接真实状态、认知/时间边界、已声明卷范围、作者意图与文风；计划不是事实。不因安静节奏、未回收长线或必要说明判错。重大方向调整标 scope_change=true。严格纯 JSON {\"verdict\":\"pass 或 revise\",\"candidate_sha256\":\"{{rolling_candidate_sha256}}\",\"request_sha256\":\"{{rolling_request_sha256}}\",\"scope_change\":false,\"findings\":[]}。有实质问题必须 revise，列出可定位原因；不能凭总分放行。\n\n本书与卷级输入：\n{{rolling_request_file}}\n\n候选：\n{{rolling_candidate_file}}\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"verdict\",\n    \"candidate_sha256\",\n    \"request_sha256\",\n    \"scope_change\",\n    \"findings\"\n  ],\n  \"properties\": {\n    \"verdict\": {\n      \"enum\": [\n        \"pass\",\n        \"revise\"\n      ]\n    },\n    \"candidate_sha256\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"request_sha256\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"scope_change\": {\n      \"type\": \"boolean\"\n    },\n    \"findings\": {\n      \"type\": \"array\"\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
+      "first_message": "【数字的叙事作用】\n按阅读目的判断精确计数是否有用：数字应帮助读者理解选择、约束、变化或人物声音。\n金额、期限、科学数量、资源账、类型表达、刻意夸张和强迫计数都可以保留；本书契约与风格要求优先。\n怀疑无用的精确秒数、步数或字数时，引用当前原文及位置，说明它如何打断阅读，再交由作者复核。\n不设数字配额，不禁数字，不强制短句；未知用途不等于错误，不自动拒绝或改写。\n字数事实候选仅核对紧邻、唯一、纯汉字的逐字引语，每个汉字计一字，不计引号；有标点、外文、嵌套或远距指代则标未知。\n若“下午聊一下”后紧接“这四个字”，五个汉字与声称的四个不符，也先判断计数是否必要。\n不机械四→五，不为过审编造事实或通过记录；可根据阅读目的删去无用计数，必要时才核对并修正。\n独立审查候选是否承接真实状态、认知/时间边界、已声明卷范围、作者意图与文风；计划不是事实。不因安静节奏、未回收长线或必要说明判错。重大方向调整标 scope_change=true。严格纯 JSON {\"verdict\":\"pass 或 revise\",\"candidate_sha256\":\"{{rolling_candidate_sha256}}\",\"request_sha256\":\"{{rolling_request_sha256}}\",\"scope_change\":false,\"findings\":[]}。有实质问题必须 revise，列出可定位原因；不能凭总分放行。\n\n按 review_guidance 核对近期成稿与整个待写窗口，逐渐偏离时给出依据，并在 volume_alignment 记录结论。未提供可辨认的卷目标时说明资料缺口。\n\n本书与卷级输入：\n{{rolling_request_file}}\n\n候选：\n{{rolling_candidate_file}}\n【返回格式：以下schema与程序验证器一致，只约束JSON结构，不规定小说风格】\n<OUTPUT_SCHEMA>\n{\n  \"type\": \"object\",\n  \"required\": [\n    \"verdict\",\n    \"candidate_sha256\",\n    \"request_sha256\",\n    \"scope_change\",\n    \"findings\"\n  ],\n  \"properties\": {\n    \"verdict\": {\n      \"enum\": [\n        \"pass\",\n        \"revise\"\n      ]\n    },\n    \"candidate_sha256\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"request_sha256\": {\n      \"type\": \"string\",\n      \"minLength\": 1\n    },\n    \"scope_change\": {\n      \"type\": \"boolean\"\n    },\n    \"findings\": {\n      \"type\": \"array\"\n    },\n    \"volume_alignment\": {\n      \"type\": \"object\",\n      \"required\": [\n        \"status\",\n        \"reason\"\n      ],\n      \"properties\": {\n        \"status\": {\n          \"enum\": [\n            \"aligned\",\n            \"drifting\",\n            \"direction_change\",\n            \"insufficient_basis\"\n          ]\n        },\n        \"reason\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      }\n    }\n  }\n}\n</OUTPUT_SCHEMA>\n仅输出该结构的JSON对象，不用Markdown围栏；说明放入指定文字字段，布尔字段只用true/false，数组字段即使只有一项也须用数组。",
       "save_output_to_file": true,
       "output_file_path": "{{rolling_review_path}}",
       "node_params": {
@@ -718,6 +718,27 @@
             },
             "findings": {
               "type": "array"
+            },
+            "volume_alignment": {
+              "type": "object",
+              "required": [
+                "status",
+                "reason"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "aligned",
+                    "drifting",
+                    "direction_change",
+                    "insufficient_basis"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           }
         }

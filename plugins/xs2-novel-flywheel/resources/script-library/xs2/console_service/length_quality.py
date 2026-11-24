@@ -472,7 +472,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         story_context_path = policy.runtime_common(root, policy_runtime, task_id=task_id)
         identity_data = {**binding, "effective_context": story_context_path}
     tone = tone_review()
-    identity = hashlib.sha256(json.dumps({**identity_data, 'local_tone':tone.REVISION}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    identity = hashlib.sha256(json.dumps({**identity_data, 'local_tone':tone.REVISION, 'contextual_tone':True}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     folder = f"cache/quality/{chapter}/focused/{result['body_sha256'][:12]}-{identity[:12]}"
     base = folder + '/length_base.json'
     context = folder + '/execution.md'
@@ -488,7 +488,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
     protected = book['protected_phrases']
     marks = tone.mandatory(selected, protected) if fragment['kind'] != 'insert' else []
     if marks:
-        instruction += '\n' + tone.REPHRASE + json.dumps(marks, ensure_ascii=False)
+        instruction += '\n' + tone.GUIDANCE + json.dumps(marks, ensure_ascii=False)
     # This is the focused writer's entire user message, not an appendix to the
     # normal full-chapter rewrite request. All sources below are frozen below.
     author = safe_path(root, source).read_text(encoding='utf-8-sig') if source else ''
@@ -528,7 +528,7 @@ def prepare_execution(root, chapter, target='', scope='content', *, policy_runti
         story_context_path = ''
     guard = {'body_path': body_path, 'story_context_path': story_context_path, 'body_sha256': result['body_sha256'], 'files': files,
              'state_binding': binding, 'outputs': outputs, 'fragment': fragment, 'assessment': result, 'semantic_review_required': True}
-    guard['local_tone'] = {'marks':marks, 'protected':protected, 'revision':tone.REVISION}
+    guard['local_tone'] = {'marks':marks, 'protected':protected, 'revision':tone.REVISION, 'mode':'contextual'}
     if result.get('ownership'):
         target_policy = resolve_length(root, target, chapter=chapter, task_id='')
         if measurement(body, chapter, target_policy) != result:
@@ -973,6 +973,8 @@ def verify_focused_attempt(root, chapter, task, node):
 def check_fragment_tone(guard, text):
     tone = tone_review()
     settings = guard.get('local_tone', {})
+    if settings.get('mode') == 'contextual':
+        return
     hits = tone.remaining(text, settings.get('marks', ()), settings.get('protected', ()))
     if hits:
         raise FragmentToneError(tone.REPHRASE + json.dumps(hits, ensure_ascii=False))
@@ -1003,6 +1005,8 @@ def prepare_fragment_review(root, chapter, expected_sha, guard_path, guard_sha, 
                'insertion_context': safe_path(root, guard['outputs']['length_execution_context']).read_text(encoding='utf-8'),
                'author_feedback': safe_path(root, source).read_text(encoding='utf-8-sig') if source else '',
                'narrative_pov': guard['state_binding'].get('narrative_pov', 'third_person')}
+    if guard.get('local_tone', {}).get('mode') == 'contextual':
+        context['tone_review'] = tone_review().fragment_review(candidate['body'], contextual=True)
     folder = f'quality/length-attempts/{chapter}/{task_id}'
     input_path, report_path, binding_path = folder+'/review-input.json', folder+'/semantic-review.json', folder+'/review-binding.json'
     input_text = json.dumps(context, ensure_ascii=False, indent=2)+'\n'

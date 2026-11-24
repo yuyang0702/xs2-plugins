@@ -183,6 +183,62 @@ def task_path(task,name):
     return f'cache/serial/{task}/{name}'
 
 
+def volume_excerpt(text, volumes, volume, chapter):
+    """Use the current section of the outline produced by vo_post."""
+    headings=list(re.finditer(r'^#{1,2}[ \t]+(?:卷(\d+)|第[零〇一二两三四五六七八九十百千\d]+卷)[^\n]*',text,re.M))
+    if headings:
+        number=volumes.index(volume)+1
+        for i,heading in enumerate(headings):
+            span=re.search(r'第(\d+)\s*[-–至]\s*(\d+)章',heading.group())
+            # A legacy book can have one open contract spanning several written volume outlines.
+            if len(volumes)==1 and len(headings)>1 and span:
+                matches=int(span[1])<=int(chapter)<=int(span[2])
+            else:
+                matches=(int(heading[1]) if heading[1] else i+1)==number
+            if matches:
+                text=text[heading.start():headings[i+1].start() if i+1<len(headings) else None]
+                break
+        else:return ''
+    text=text.strip()
+    return text if len(text)<=2400 else text[:1500]+'\n…\n'+text[-880:]
+
+
+def select_hooks(root, hooks, chapter, finish, signals, evidence):
+    """Rank locally, then expose only bounded, independently quotable candidates."""
+    s=support()
+    terms=set(s.memory().tokens(signals))
+    ranked=[]
+    for hook in hooks:
+        if not isinstance(hook,dict) or not hook.get('id') or hook.get('status')=='resolved' or hook.get('chapter_resolved'):
+            continue
+        number=str(hook.get('source_chapter') or hook.get('chapter_created') or '')
+        if not re.fullmatch(r'[0-9]{1,4}',number) or not 0<int(number)<int(chapter):continue
+        description=str(hook.get('description') or '')
+        quotes=hook.get('evidence',[])
+        if not isinstance(quotes,list):quotes=[quotes]
+        quotes=[q.strip() for q in quotes if isinstance(q,str) and q.strip()]
+        overlap=terms.intersection(s.memory().tokens(description+' '+' '.join(quotes)))
+        window=re.fullmatch(r'\s*第?\s*(\d+)(?:\s*[-–—至~]\s*(\d+))?\s*章?\s*',str(hook.get('expected_payoff','')))
+        due=bool(window and int(window[1])<=finish and int(window[2] or window[1])>=int(chapter))
+        score=len(overlap)+4*due+2*(hook.get('status')=='near_payoff')
+        if score:
+            ranked.append((score,hook,int(number),description,quotes))
+    chosen=[]
+    ranked.sort(key=lambda row:(-row[0],str(row[1]['id'])))
+    for _,hook,number,description,quotes in ranked:
+        source=f'story/{number:04d}/chapter.md'
+        body=evidence.get(source)
+        if body is None:body=s.read(root,source)
+        quote=next((q[:120] for q in quotes if q in body), '')
+        item={'id':hook['id'],'description':description[:160],'source_id':source,'quote':quote,
+              'status':hook.get('status','open'),'expected_payoff':str(hook.get('expected_payoff') or '')[:60]}
+        if len(json.dumps([*chosen,item],ensure_ascii=False))>2400:continue
+        if quote:evidence[source]=body
+        chosen.append(item)
+        if len(chosen)==4:break
+    return chosen
+
+
 def prepare(root,chapter,task):
     s=support();s.archive_store().recover(root);chapter=s.chapter_id(chapter)
     file=task_path(task,'request.json')
@@ -207,6 +263,14 @@ def prepare(root,chapter,task):
             finish=number-1;break
     query=current['volume'].get('intent','')+' '+current['volume'].get('title','')+' '+ ' '.join(t.get('intent','') for t in config.get('threads',[]))
     context=s.context(root,chapter,query+' 核对本卷承接、人物与未解决长线，再规划后续')
+    outline=volume_excerpt(s.read(root,'outline/volume_outline.md'),config['volumes'],current['volume'],chapter)
+    sources=[entry for entry in context['sources'] if entry['source_id']!='meta/hooks.md']
+    recent=[state for state in states[-6:] if int(state['chapter'])>=current['volume']['start']]
+    trajectory=[{'chapter':state['chapter'],'changes':s.readable(state.get('story_changes',{}))[:400]}
+                for state in recent]
+    signals=' '.join([current['volume'].get('intent',''),outline,context['state_text'],
+                      *(item['content'] for item in sources if item['source_id'].startswith(('story/','outline/near_term')))])
+    hooks=select_hooks(root,context['indexes_before']['hooks'],chapter,finish,signals,context['evidence_texts'])
     hashes={**context['source_hashes'],'meta/serial_contract.json':s.digest(root,'meta/serial_contract.json')}
     hashes.update({relative:s.digest(root,relative) for relative in context['evidence_texts']})
     hashes.update({f"story/{x['chapter']}/confirmed_state.json":s.digest(root,f"story/{x['chapter']}/confirmed_state.json") for x in states})
@@ -215,13 +279,18 @@ def prepare(root,chapter,task):
     value={'schema':1,'task_id':task,'chapter':chapter,'finish':finish,'contract':config,
         'book_contract_sha256':s.archive_store().contract(root,persistent=True),'source_hashes':hashes,
         'review_contract_sha256':s.archive_store().contract(root),
-        'base_chapter':states[-1]['chapter'] if states else '', 'serial':current,'context':context}
+        'base_chapter':states[-1]['chapter'] if states else '', 'serial':current,'context':context,
+        'check_volume_alignment':bool(outline or current['volume'].get('intent'))}
     spec=importlib.util.spec_from_file_location('serial_book_contract',s.HERE.parent/'prose_policy/book_contract.py')
     book=importlib.util.module_from_spec(spec);spec.loader.exec_module(book)
     prompt={'window':{'start':chapter,'end':f'{finish:04d}'},'book_contract':book.resolve(root),
         'volume':current['volume'],'threads':current['threads'],
-        'entry_archive':{k:v for k,v in current['entry'].items() if k not in ('characters','world')},
-        'active_state':context['state_text'],'sources':context['sources'],'memory':context['memory'],
+        'entry_archive':{**{k:v for k,v in current['entry'].items() if k not in ('characters','world','indexes')},
+                         'indexes':{k:v for k,v in current['entry']['indexes'].items() if k!='hooks'}},
+        'active_state':context['state_text'],'sources':sources,'memory':context['memory'],
+        'hook_candidates':hooks,'volume_outline':outline,'recent_volume_changes':trajectory,
+        'planning_guidance':'评估候选伏笔与本窗口的人物、事件及揭晓时机；可全部留待后文。采用时在对应章的 intent 写明作用并用 setup 引用可核验原文。结合本卷目标和最近几章的实绩检查整个窗口；允许铺垫、绕路和作者的单章安排。',
+        'review_guidance':'对照卷纲、近期已发生的变化与整个候选窗口，独立说明是否逐渐偏离。给出 volume_alignment 对象，status 为 aligned、drifting、direction_change 或 insufficient_basis，reason 点明卷目标、章节变化或资料缺口。能在本卷内纠正的偏移请 revise 并说明修正方向；需改变卷目标时标 scope_change 交作者决定。',
         'boundary':current['boundary']+' 场景认知还须遵循本书时间与叙述权限。缺少依据时提出待核实项，不编造补足。'}
     if len(json.dumps(prompt,ensure_ascii=False))>config.get('planning',{}).get('max_input_chars',120000):
         raise ValueError('本次规划资料超出输入预算，请核对范围或本书规划预算，未静默截断关键资料')
@@ -279,10 +348,19 @@ def commit(root,task,approve=False):
     if prior and prior.get('status')=='accepted':return _signed_output(root,receipt_path)
     normalized=normalize(root,task);request=s.load(root,task_path(task,'request.json'))
     review=s.load(root,task_path(task,'review.json'),{})
+    alignment=review.get('volume_alignment')
+    direction_change=False
+    if request.get('check_volume_alignment') or alignment is not None:
+        if (not isinstance(alignment,dict) or alignment.get('status') not in
+                ('aligned','drifting','direction_change','insufficient_basis')
+                or not isinstance(alignment.get('reason'),str) or not alignment['reason'].strip()):
+            raise ValueError('卷纲偏移核对须给出本窗口的判断和理由')
+        if alignment['status']=='drifting':raise ValueError('窗口逐渐偏离卷纲，请调整未写计划：'+alignment['reason'])
+        direction_change=alignment['status']=='direction_change'
     if review.get('candidate_sha256')!=normalized['candidate_sha256'] or review.get('request_sha256')!=normalized['request_sha256'] or review.get('verdict')!='pass' or type(review.get('scope_change')) is not bool:
         raise ValueError('独立规划验收未通过或候选版本不符')
     if request['book_contract_sha256']!=journal.contract(root,persistent=True):raise ValueError('本书契约已有变化')
-    needs_author=request['contract'].get('planning',{}).get('authority','bounded')=='review' or review['scope_change']
+    needs_author=request['contract'].get('planning',{}).get('authority','bounded')=='review' or review['scope_change'] or direction_change
     if needs_author and not approve:
         receipt={'task_id':task,'status':'awaiting_author',**{k:normalized[k] for k in ('candidate_sha256','request_sha256')}}
         receipt['review_sha256']=journal.identity(review)

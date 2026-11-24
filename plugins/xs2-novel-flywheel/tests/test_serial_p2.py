@@ -50,6 +50,61 @@ def test_volume_entry_uses_actual_archive_and_keeps_open_threads(tmp_path):
     assert state['ready']
 
 
+def test_rolling_prompt_selects_open_hooks_and_current_volume(tmp_path):
+    module=serial()
+    contract(tmp_path)
+    support.write(tmp_path,'outline/volume_outline.md','## 卷1 · 初卷\n寻找嫌疑人\n## 卷2 · 次卷\n决定是否公开证词')
+    support.write(tmp_path,'story/0001/chapter.md','她拿到老屋钥匙。转回半圈。决定留下救人。')
+    support.begin_review(tmp_path,'0001')
+    hooks=[{'id':f'h{i:03}','description':'旧渡口的船票','evidence':'决定留下救人'} for i in range(12)]
+    hooks.append({'id':'h090','description':'老屋钥匙转回半圈','evidence':'转回半圈'})
+    support.write(tmp_path,support.review_file('0001','observer.json'),{'confirmed_state':{'hooks':hooks}})
+    support.write(tmp_path,support.review_file('0001','arbiter.json'),{'story_confirmed':{}})
+    support.commit(tmp_path,'0001')
+    module.prepare(tmp_path,'0002','screen')
+    prompt=support.load(tmp_path,'cache/serial/screen/prompt.json')
+    choices=prompt['hook_candidates']
+    assert choices[0]['id']=='h090'
+    assert choices[0]['quote'] in support.read(tmp_path,choices[0]['source_id'])
+    assert len(choices)<=4 and len(json.dumps(choices,ensure_ascii=False))<=2400
+    assert 'hooks' not in prompt['entry_archive']['indexes']
+    assert '公开证词' in prompt['volume_outline'] and '寻找嫌疑人' not in prompt['volume_outline']
+    normalized={'chapters':[{'chapter':n,'intent':'去老屋','setup':[{
+        'source_id':choices[0]['source_id'],'quote':choices[0]['quote']}]} for n in ['0002','0003']]}
+    support.write(tmp_path,'cache/serial/screen/candidate.json',normalized)
+    signed=module.normalize(tmp_path,'screen')
+    review={'verdict':'pass','candidate_sha256':signed['candidate_sha256'],
+            'request_sha256':signed['request_sha256'],'scope_change':False,'findings':[]}
+    def save_review():
+        support.write(tmp_path,'cache/serial/screen/review.json',review)
+    save_review()
+    with pytest.raises(ValueError,match='卷纲'):module.commit(tmp_path,'screen')
+    review['volume_alignment']={'status':'drifting','reason':'连续查钥匙，绕开了公开证词的选择'}
+    save_review()
+    with pytest.raises(ValueError,match='偏离'):module.commit(tmp_path,'screen')
+    review['volume_alignment']['status']='direction_change'
+    save_review()
+    assert module.commit(tmp_path,'screen')['status']=='awaiting_author'
+    assert module.commit(tmp_path,'screen',approve=True)['status']=='accepted'
+    assert support.load(tmp_path,'planning/chapters/0002.json')['setup'][0]['quote']==choices[0]['quote']
+
+
+def test_hook_screen_rejects_closed_future_and_unrelated_entries(tmp_path):
+    module=serial()
+    source='story/0001/chapter.md'
+    support.write(tmp_path,source,'井沿第三块砖是松的。')
+    base={'chapter_created':1,'description':'松砖','evidence':'第三块砖'}
+    hooks=[{**base,'id':'open','expected_payoff':'第55-58章'},
+           {**base,'id':'resolved','status':'resolved','expected_payoff':'第56章'},
+           {**base,'id':'future','source_chapter':60,'expected_payoff':'第56章'},
+           {**base,'id':'other'}]
+    evidence={}
+    choices=module.select_hooks(tmp_path,hooks,'0055',60,'回乡处理遗产',evidence)
+    assert [c['id'] for c in choices]==['open']
+    assert choices[0]['quote'] in evidence[source]
+    assert not module.select_hooks(tmp_path,hooks,'0070',75,'回乡处理遗产',{})
+
+
 def test_explicit_exit_condition_blocks_unproven_cross_volume_progress(tmp_path):
     value=contract(tmp_path);value['volumes'][0]['exit_conditions']=[{'thread_id':'promise','status':'resolved'}]
     support.write(tmp_path,'meta/serial_contract.json',value);commit_chapter(tmp_path)

@@ -58,6 +58,7 @@ def main():
         cli(book,'normalize',chapter,task)
         normalized=support.load(book,serial.task_path(task,'normalized.json'))
         support.write(book,serial.task_path(task,'review.json'),{'fixture':True,'verdict':'pass','scope_change':False,
+            'volume_alignment':{'status':'aligned','reason':'离线验收夹具沿用本卷未解决的选择。'},
             'candidate_sha256':normalized['candidate_sha256'],'request_sha256':normalized['request_sha256'],'findings':[]})
         return request
 
