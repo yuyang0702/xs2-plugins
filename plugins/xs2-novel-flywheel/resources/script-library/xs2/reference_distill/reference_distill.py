@@ -22,6 +22,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import writing_dna
+import batch_extras
 from dialogue_learning import dialogue_context, normalize_dialogue_samples, combine_samples, render_adaptations
 from distill_schema import DIMENSIONS, EXPORT_LAYOUTS, LAYERS, POV_COMPATIBILITY
 from reference_choices import DIMENSION_NAMES, mechanism_scopes
@@ -195,10 +196,11 @@ def recovered_windows(data):
     return completed
 
 
-def write_chapter_input(window, raw, pending=None):
+def write_chapter_input(window, raw, pending=None, request_extras=True):
     selected = [segment for segment in window["chapter_segments"]
                 if pending is None or segment["segment_id"] in pending]
     save(f"learning/cache/{window['window_id']}.input.json", {
+        **({"extras_request": batch_extras.INSTRUCTIONS} if request_extras and window.get("batch_extras_version") else {}),
         "analysis": "chapter_batch", "window_id": window["window_id"],
         "source_sha256": window["source_sha256"],
         "chapters": [{"segment_id": row["segment_id"], "title": row["title"],
@@ -298,6 +300,8 @@ def split(args):
                   "chapter_ids": chapter_ids, "chapter_id": chapter_ids[0] if len(chapter_ids) == 1 else None,
                   "batch_id": batch_id}
         if segments is not None:
+            if not resume or previous.get("batch_extras_version"):
+                packet["batch_extras_version"] = 1
             packet["chapter_segments"] = segments
             write_chapter_input(packet, raw)
         elif mode == "serial_full":
@@ -328,6 +332,8 @@ def split(args):
     data = {"schema": "xs2.reference.windows.v2", "run_id": run_id, "source": source, "source_mode": mode,
             "chapters": chapters, "windows": windows, "settings_sha256": settings, "completeness": provenance}
     if batched:
+        if not resume or previous.get("batch_extras_version"):
+            data["batch_extras_version"] = 1
         data["chapter_batch_limits"] = {"chapters": batch_max_chapters, "characters": batch_max_chars}
     completed = recovered_windows(data) if resume else set()
     data["source_coverage"] = write_progress(data, completed)
@@ -682,12 +688,24 @@ def _validate_chapter_batch(binding, window, raw, response):
     prefix = f"learning/cache/{window['window_id']}"
     receipt = prefix + ".chapter-review.json"
     state = load(receipt) if path(receipt).is_file() else {}
-    accepted = state.get("accepted", {}) if state.get("binding") == binding else {}
+    if state.get("binding") != binding:
+        state = {}
+    accepted = state.get("accepted", {})
+    extras = state.get("extras") or {}
+    extras_errors = {}
     segments = {s["segment_id"]: s for s in window["chapter_segments"]}
     valid_identity = (isinstance(response, dict) and response.get("window_id") == window["window_id"]
                       and response.get("source_sha256") == window["source_sha256"]
                       and isinstance(response.get("chapter_rows"), list))
     problems = {}
+    if valid_identity and window.get("batch_extras_version"):
+        for group in batch_extras.GROUPS:
+            if group not in extras:
+                partial = {key: response.get(key) if key == group else [] for key in batch_extras.GROUPS}
+                try:
+                    extras[group] = batch_extras.validate_groups(window, raw, partial)[group]
+                except (TypeError, ValueError) as exc:
+                    extras_errors[group] = str(exc)
     if valid_identity:
         for row in response["chapter_rows"][:len(segments) * 2]:
             key = row.get("segment_id") if isinstance(row, dict) else None
@@ -698,13 +716,17 @@ def _validate_chapter_batch(binding, window, raw, response):
             except ValueError as exc:
                 problems[key] = str(exc)
     missing = [key for key in segments if key not in accepted]
-    save(receipt, {"binding": binding, "accepted": accepted})
-    if missing:
-        feedback = "只补当前分析包中的片段。逐字复制可以唯一定位的原文。"
+    save(receipt, {"binding": binding, "accepted": accepted, "extras": extras})
+    needs_extras = window.get("batch_extras_version") and set(batch_extras.GROUPS) != extras.keys()
+    if missing or needs_extras:
+        feedback = "仅补下列缺失的章节项，逐字复制可唯一定位的原文。"
+        if needs_extras:
+            pending_groups = {key: extras_errors.get(key, "需要校验") for key in batch_extras.GROUPS if key not in extras}
+            feedback += " 根据本批完整原文补交这些观察字段：" + json.dumps(pending_groups, ensure_ascii=False)
         if not valid_identity:
             feedback += " 请按分析包返回正确的 window_id、source_sha256 和 chapter_rows。"
         feedback += "\n" + json.dumps({key: problems.get(key, "缺少有效阅读项") for key in missing}, ensure_ascii=False)
-        write_chapter_input(window, raw, missing)
+        write_chapter_input(window, raw, None if needs_extras else missing, request_extras=needs_extras)
         save(prefix + ".feedback.md", feedback)
         print('<WF_REJECT_UPSTREAM target="agent_distill_batch">' + html.escape(feedback) + '</WF_REJECT_UPSTREAM>')
         return
@@ -733,7 +755,8 @@ def _validate_chapter_batch(binding, window, raw, response):
     record_validation(data, window, {
         "run_id": window["run_id"], "source_sha256": window["source_sha256"], "window_id": window["window_id"],
         "source_mode": "serial_full", "chapter_readings": notes, "candidates": candidates,
-        "style_observations": [], "conflict_patterns": [],
+        **{key: extras.get(key, []) for key in batch_extras.GROUPS},
+        **({"extras_reviewed": True} if window.get("batch_extras_version") else {}),
     })
     print(f'<script_out>已校验 {window["window_id"]} 的 {len(notes)} 个章节片段。</script_out>')
 
@@ -884,6 +907,33 @@ def _merge_similar(candidates):
     return merged
 
 
+def combine_observations(records):
+    grouped = {}
+    for record in records:
+        meaning = {key: value for key, value in record.items()
+                   if key not in {"evidence", "confidence", "choice_id", "support_count"}}
+        key = digest(meaning)
+        if key not in grouped:
+            grouped[key] = ({**record, "evidence": []}, set())
+        combined, seen = grouped[key]
+        for proof in record["evidence"]:
+            position = (proof["source_start"], proof["source_end"])
+            if position not in seen:
+                seen.add(position)
+                combined["evidence"].append(proof)
+    return [record for record, _ in grouped.values()]
+
+
+def validated_with_supplement(entry):
+    record = load(f"learning/cache/{entry['window_id']}.validated.json")
+    if "chapter_segments" in entry and not record.get("extras_reviewed"):
+        import reference_distill as ref
+        groups = batch_extras.supplement(ref, entry, record)
+        if groups is not None:
+            return {**record, **groups}
+    return record
+
+
 def merge(args):
     data, _ = manifest()
     if data.get("source_mode") == "serial_full" and len(recovered_windows(data)) != len(data["windows"]):
@@ -893,7 +943,7 @@ def merge(args):
     patterns = []
     unresolved = []
     for window in data["windows"]:
-        packet = load(f"learning/cache/{window['window_id']}.validated.json")
+        packet = validated_with_supplement(window)
         if (packet.get("source_sha256") != data["source"]["text_sha256"]
                 or packet.get("window_id") != window["window_id"]
                 or packet.get('run_id') != data.get('run_id')):
@@ -911,6 +961,9 @@ def merge(args):
             for proof in candidate["evidence"]:
                 if proof not in current["evidence"]:
                     current["evidence"].append(proof)
+    if data.get("chapter_batch_limits"):
+        observations = combine_observations(observations)
+        patterns = combine_observations(patterns)
     candidates = _merge_similar(list(merged.values()))
     completed = {w["window_id"] for w in data["windows"]}
     scope = write_progress(data, completed) if "chapters" in data else {}
@@ -1197,20 +1250,25 @@ def render_adopted_contexts():
 
 
 def render(scope, chapter=None):
-    from reference_choices import DIMENSION_NAMES, active_blueprint, mechanism_scopes, text
+    from reference_choices import DIMENSION_NAMES, active_blueprint, chapter_selection, fingerprint, mechanism_scopes, text
     lines = ["# 用户已选写法（创作参考）", "",
              "本页的蒸馏写法、风格、对白和冲突方法均按场景自选，可改用或略过。以作者明确要求、人物此刻的处境和声音、以及本书事实为准。",
-             reading().creative().REFERENCE_GUIDANCE, ""]
+             "未采用参考写法不构成缺陷。作者明确指定的全书风格和本章要求优先；现场也可另作更适合人物的表达。", ""]
     version = 0
     has_reference = False
     dialogue_receipt = {'applied':0, 'pending':0, 'skipped':0}
     candidate_ids = []
     shown_guidance = {}
     active, blueprint = active_blueprint(Path.cwd())
+    selected_ids, selection_source = None, None
+    if active and chapter and scope in {'mvp', 'polish', 'post-hoc'}:
+        selected_ids, selection_source = chapter_selection(Path.cwd(), chapter, blueprint)
     if active:
         version = active["version"]
         lines.extend([f"蓝图版本：v{version:04d}。以下是适合当前阶段的参考。", ""])
         for item in blueprint["mechanisms"]:
+            if selected_ids is not None and (item.get('candidate_id') or fingerprint(item)) not in selected_ids:
+                continue
             dimension = item.get('dimension')
             if scope == 'all' and dimension or scope != 'all' and scope not in mechanism_scopes(item):
                 continue
@@ -1233,7 +1291,8 @@ def render(scope, chapter=None):
                           "篇幅适用：" + "、".join(item.get("application_scope") or ["general"]),
                           "风险提示：" + ("；".join(item.get("risk_flags") or []) or "无"), ""])
         for kind, label in (("styles", "本书已选风格参考"), ("conflicts", "本书已选冲突推进参考")):
-            values = blueprint.get(kind, [])
+            values = [row for row in blueprint.get(kind, []) if selected_ids is None
+                      or (row.get('choice_id') or fingerprint(row)) in selected_ids]
             if not values:
                 continue
             has_reference = True
@@ -1248,8 +1307,14 @@ def render(scope, chapter=None):
                     if item.get('dimension') and scope not in mechanism_scopes(item)}
         eligible = [identifier for identifier in blueprint.get('selected_candidate_ids', [])
                     if identifier not in excluded]
-        dialogue_lines, dialogue_receipt = render_adaptations(
-            Path.cwd(), {**blueprint, 'selected_candidate_ids': eligible}, scope, chapter)
+        dialogue_blueprint = {**blueprint, 'selected_candidate_ids': eligible}
+        # Historical scene matches already have a verified chapter, cast and relationship.
+        # A fresh planner decision (including []) limits them to that decision as well.
+        if selected_ids is not None and selection_source != 'scene_match':
+            for kind in ('candidate', 'style', 'conflict'):
+                key = f'selected_{kind}_ids'
+                dialogue_blueprint[key] = [value for value in dialogue_blueprint.get(key, []) if value in selected_ids]
+        dialogue_lines, dialogue_receipt = render_adaptations(Path.cwd(), dialogue_blueprint, scope, chapter)
         lines.extend(dialogue_lines)
         has_reference = has_reference or bool(dialogue_receipt['applied'])
     if not has_reference:
@@ -1267,13 +1332,6 @@ def render(scope, chapter=None):
     if objectives:
         lines.extend(['','## 范文阅读效果参考',json.dumps(reading().model_view(objectives),ensure_ascii=False,indent=2),
             '按当前场景需要借鉴阅读效果，审核可给建议，采用与否由人物和场景决定。'])
-    advisor_file = path("learning/advisor_report.json")
-    if advisor_file.exists() and scope not in {'novel-advisor', 'export'}:
-        try:
-            advisor = load("learning/advisor_report.json")
-            lines.extend(["", "# 小说顾问建议", "以下建议用于辅助创作决策；如果与作者明确要求冲突，以作者要求为准。", json.dumps(advisor, ensure_ascii=False, indent=2)])
-        except (OSError, ValueError):
-            lines.extend(["", "# 小说顾问建议", "顾问报告存在但暂时无法解析，请以页面展示的报告为准。"])
     lines.extend(["仅使用抽象机制。不得推测或复用参考作品人物、事件、句子和包装。", ""])
     target = "learning/active_context.md" if scope == "all" else f"learning/context/{scope}.md"
     save(target, "\n".join(lines))
@@ -1281,6 +1339,7 @@ def render(scope, chapter=None):
     save(f"learning/receipts/{scope}.json", {"blueprint_version": version, "context_path": target,
                                             "blueprint_sha256": active.get('blueprint_sha256'),
                                             "dialogue":dialogue_receipt, "chapter":chapter, "candidate_ids":candidate_ids,
+                                            "reference_ids": selected_ids, "selection_source": selection_source,
                                             "task_id": os.environ.get('TASK_ID', ''),
                                             "context_sha256": digest("\n".join(lines) + "\n")})
 
@@ -1306,6 +1365,12 @@ def main():
     validation_parser.add_argument('--input',required=True)
     validation_parser.add_argument('--window-id',required=True)
     validation_parser.set_defaults(handler=validate_window)
+    for command in ("prepare-supplement", "validate-supplement"):
+        parser = commands.add_parser(command)
+        parser.add_argument("--window-id", required=True)
+        if command == "validate-supplement":
+            parser.add_argument("--input", required=True)
+        parser.set_defaults(handler=batch_extras.run_command)
     commands.add_parser("merge").set_defaults(handler=merge)
     def cross_action(args):
         import cross_chapter

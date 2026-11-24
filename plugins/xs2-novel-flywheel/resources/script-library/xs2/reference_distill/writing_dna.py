@@ -99,12 +99,26 @@ def checked_extras(payload, window, raw, text_field, strings, evidence_position)
     return observations, patterns
 
 
+def summary_order(items, data):
+    rank = {"high": 0, "medium": 1, "low": 2}
+    ordered = sorted(items, key=lambda item: rank.get(item.get("confidence"), 3))
+    windows = data.get("covered_window_ids", [])
+    if data.get("source_mode") != "serial_full" or len(windows) < 6:
+        return ordered
+    stages = [[] for _ in range(6)]
+    lookup = {window: i * len(stages) // len(windows) for i, window in enumerate(windows)}
+    for item in ordered:
+        stage = lookup[item["evidence"][0]["window_id"]]
+        stages[stage].append(item)
+    return [group[i] for i in range(max(map(len, stages))) for group in stages if i < len(group)]
+
+
 def bundle(data, candidates, observations, patterns, load, save):
     metadata = load("learning/dna/metadata.json")
     # Every window is analyzed and the full checked results remain in candidates.
     # Global synthesis uses bounded representatives instead of overflowing a
     # model context on a long book. Preserve the counts and sampling boundary.
-    ordered = sorted(observations, key=lambda item: item.get("confidence") != "high")
+    ordered = summary_order(observations, data)
     selected = []
     layer_counts = Counter()
     for item in ordered:
@@ -112,7 +126,7 @@ def bundle(data, candidates, observations, patterns, load, save):
             selected.append({**item, "evidence": item["evidence"][:2]})
             layer_counts[item["layer"]] += 1
     selected_patterns = []
-    for item in sorted(patterns, key=lambda item: item.get("confidence") != "high"):
+    for item in summary_order(patterns, data):
         if len(selected_patterns) < 12 and not any(item["name"] == old["name"] for old in selected_patterns):
             selected_patterns.append({**item, "evidence": item["evidence"][:2]})
     # Whole records are kept, never truncated in the middle of JSON or evidence.
@@ -182,7 +196,9 @@ def finalize(args, load, save, digest):
                "dialogue_samples": packet.get('dialogue_samples', []),
                "upstream": load("learning/dna/upstream.json"), "source_mode": packet["source_mode"],
                "documents": documents, "limitations": limits,
-               "statistics": packet["statistics"], "conflict_count": len(packet["conflict_patterns"])}
+               "statistics": packet["statistics"],
+               "conflict_count": packet.get("analysis_counts", {}).get("all_conflicts", len(packet["conflict_patterns"])),
+               "style_count": packet.get("analysis_counts", {}).get("all_observations", len(packet["style_observations"]))}
     if packet["source_mode"] == "serial_full":
         cross = load("learning/dna/cross_chapter.json")
         if cross.get("source_sha256") != analysis["source_sha256"] or cross.get("run_id") != packet.get("run_id"):
@@ -195,4 +211,4 @@ def finalize(args, load, save, digest):
     save("learning/reference_profile.md", overview)
     save("learning/dna/profile.json", profile)
     # The existing candidates contract and IDs are deliberately left unchanged.
-    print(f"<script_out>Writing DNA 分析完成：五份上游风格文档、人物写法扩展、{len(packet['conflict_patterns'])} 条有证据的冲突链。尚未自动采用。</script_out>")
+    print(f"<script_out>Writing DNA 分析完成：五份上游风格文档、人物写法扩展、{profile['conflict_count']} 条有证据的冲突链。尚未自动采用。</script_out>")
