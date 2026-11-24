@@ -46,6 +46,13 @@ def memory():
     return module
 
 
+def chapter_views():
+    spec = importlib.util.spec_from_file_location("story_chapter_views", HERE / "chapter_views.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @lru_cache(maxsize=1)
 def serial():
     spec = importlib.util.spec_from_file_location('story_serial', HERE / 'serial.py')
@@ -372,7 +379,7 @@ def methods(question=""):
 
 
 def context(root, chapter="0001", question="", scope="chapter", *, runtime=None, chapter_drafts=True,
-            archive_observation=False):
+            archive_observation=False, capture_characters=False):
     archive_store().recover(root)
     root = Path(root).resolve()
     chapter = chapter_id(chapter)
@@ -501,6 +508,7 @@ def context(root, chapter="0001", question="", scope="chapter", *, runtime=None,
             "archive_status": archive_status(root),
             "methods": methods(question), "source_hashes": sources,
             "stale_chapters": stale, "evidence_texts": evidence,
+            **({"chapter_characters": selected} if capture_characters else {}),
             **({"prose_policy": preference} if preference["instructions"] else {}),
             **({"chapter_drafts": drafts} if drafts else {})}
 
@@ -708,7 +716,8 @@ def preflight(root, chapter):
             "message": "已核对前文档案与大纲覆盖，可继续本章。"}
 
 
-def prepare_context(root, chapter, check=False, *, task_id=None, archive_observation=False):
+def prepare_context(root, chapter, check=False, *, task_id=None, archive_observation=False,
+                    context_mode=None, question="", ledger_files=None):
     chapter = chapter_id(chapter)
     if check:
         result = preflight(root, chapter)
@@ -716,11 +725,24 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
             raise ValueError(result['message'])
     policy = _prose_policy()
     runtime = policy.prepare_runtime(root, chapter, task_id=task_id or uuid4().hex)
-    # MVP will produce a new guide before using it. Review stages can use the
-    # selected existing guide as separately identified planning evidence.
-    ctx = context(root, chapter, runtime=runtime, chapter_drafts=not check,
-                  archive_observation=archive_observation)
+    use_chapter_views = context_mode is not None and (
+        context_mode in ("serial_opening", "serial_chapter", "serial_arc")
+        or not context_mode and serial().contract(root) is not None
+    )
     adopted = load(root, f"planning/chapters/{chapter}.json")
+    outline_alias = runtime["aliases"].get("outline/near_term_outline.md")
+    outline = chapter_outline(root, chapter, read(root, outline_alias) if outline_alias else None)
+    # Selective context needs a clear chapter target for ranking. Preserve the
+    # broad view when author intent is incomplete or awaiting reconciliation.
+    lean = use_chapter_views and bool(outline.strip() or adopted)
+    # Review receives the full current manuscript separately. Its opening and
+    # ending can also guide local evidence selection.
+    if lean and not check:
+        evidence_body = read(root, f"story/{chapter}/chapter.md")
+        question += "\n" + evidence_body[:2200] + "\n" + evidence_body[-1800:]
+    ctx = context(root, chapter, question, runtime=runtime, chapter_drafts=not check,
+                  archive_observation=archive_observation, capture_characters=lean)
+    role_paths = {}
     adopted_note = ''
     if adopted:
         try:
@@ -728,6 +750,11 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
         except ValueError:
             if check: raise
             adopted_note = '【待重新协调】原采用计划的依据已变化。以下保留作者原选择供讨论和规划核对，不能直接作为有效生产计划；审核以正文为准。请由创作助手比较新设定与原选择后重新采用，禁止静默删除或忽略原选择。'
+    recalled = ctx["memory"]
+    has_history = any(item["source_id"].startswith("story/") and
+                      not item["source_id"].startswith(f"story/{chapter}/") for item in ctx["sources"])
+    weak_recall = has_history and not (adopted or recalled["entities"] or recalled["hits"])
+    lean = lean and not (adopted_note or ctx["stale_chapters"] or weak_recall)
     priority = "\n\n".join(
         f"### {item['source_id']}\n{item['content']}" for item in ctx["sources"]
         if item["source_id"] in PRIORITY_FILES
@@ -735,8 +762,13 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
     text = "# 本章共同创作上下文\n\n## 当前创作契约\n" + priority
     text += "\n\n## 已确认的动态状态\n" + ctx["state_text"]
     text += "\n\n## 已确认的世界状态\n" + readable(ctx["world_current"])
-    text += '\n\n## 卷级承接与滚动规划（作者统筹资料，不赋予角色知识）\n'+json.dumps(ctx['serial'],ensure_ascii=False,indent=2)
-    text += '\n\n## 远距离原文与认知来源\n' + json.dumps(ctx['memory'],ensure_ascii=False,indent=2)
+    serial_context, memory_context = ctx["serial"], recalled
+    if use_chapter_views and not lean:
+        redact = chapter_views().without_verification
+        serial_context = redact(serial_context, cite_sources=True)
+        memory_context = redact(memory_context, cite_sources=True)
+    text += '\n\n## 卷级承接与滚动规划（作者统筹资料，不赋予角色知识）\n'+json.dumps(serial_context,ensure_ascii=False,indent=2)
+    text += '\n\n## 远距离原文与认知来源\n' + json.dumps(memory_context,ensure_ascii=False,indent=2)
     text += ('\n\n检索命中是核对资料，不要求逐项写进正文。作者掌握的身份映射和世界事实不直接赋予人物；'
              '误信、传言、获知过程与客观事实分别使用。未记录获知来源不等于确定不知，可保留有依据的常识与推断。'
              '叙述者是否可知、是否可靠、揭示时机及有意歧义依本书契约，不以限知规则统一约束全部作品。'
@@ -746,10 +778,9 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
         if s['source_id'] not in {*PRIORITY_FILES, 'outline/volume_outline.md', 'outline/near_term_outline.md'})
     text += "\n\n## 用户已采用的本章计划\n" + (adopted_note + '\n\n' + render_plan(adopted) if adopted else "尚未采用额外方案，按现有大纲原创。")
     if not adopted:
-        outline_alias = runtime["aliases"].get("outline/near_term_outline.md")
         text += "\n\n## 本章大纲（待写计划，不是已发生事实）\n" + (
-            chapter_outline(root, chapter, read(root, outline_alias) if outline_alias else None)
-            or "未找到本章独立大纲，请核对章节规划。")
+            outline or "未找到本章独立大纲，请核对章节规划。")
+    author_preferences = ""
     preference_path = Path(root) / 'learning/character_center/preferences.json'
     if preference_path.is_file():
         entry = HERE.parent / 'character_center' / 'character_center.py'
@@ -760,7 +791,8 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
             guidance = center.planned_preferences(root, chapter)
             if guidance:
                 text += '\n\n## 作者采用的场景表达参考\n仅限下列场景和人物。按情境参考，不复述样句，不作为人物或世界事实。\n'
-                text += readable(guidance)
+                author_preferences = readable(guidance)
+                text += author_preferences
     if ctx.get("chapter_drafts"):
         text += "\n\n## 本章细纲（待写计划，不是已发生事实）\n" + "\n\n".join(
             f"### {item['source_id']}\n{item['content']}" for item in ctx["chapter_drafts"]
@@ -779,6 +811,31 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
              "已由行为和结果成立的因果，不在对白后反复翻译。必要的证词、条件和承诺仍须清楚。"
              "物件来历、感受与回忆随当下注意力取舍，不给每件道具相同分量。"
              "这段指导只改变材料的使用方式，不修改既有事实、人物卡、风格文件或作者已确认的约束。")
+    if lean:
+        plan = render_plan(adopted) if adopted else ""
+        planned = {key: load(root, f"story/{chapter}/planned_{key}.json", [])
+                   for key in ("hooks", "debts")}
+        views = chapter_views().render(ctx, outline, plan.strip(), planned=planned)
+        prefix = f"cache/story-support/{chapter}/{runtime['task_id']}"
+        for role, content in views.items():
+            if author_preferences and role != "audit":
+                content += "\n\n## 作者采用的场景表达参考\n" + author_preferences
+            role_paths[role] = f"{prefix}-{role}.md"
+            write(root, role_paths[role], content)
+        text = views["director"]
+    ledger_files = dict(ledger_files or {})
+    if use_chapter_views:
+        workspace = Path(root).resolve()
+        for key, relative in ledger_files.items():
+            if not relative:
+                continue
+            file = (workspace / relative).resolve().relative_to(workspace).as_posix()
+            canonical = "meta/conflict_ledger.md" if key == "conflict" else f"meta/{key}.md"
+            before = f"cache/story-support/{chapter}/{key}-before.md"
+            if file not in {canonical, before}:
+                ctx["source_hashes"][file] = digest(root, file)
+            elif lean and (file != canonical or key == "conflict" or indexes.get(key)):
+                ledger_files[key] = ""
     if runtime["directory"]:
         runtime["common_file"] = policy.runtime_file(root, runtime["directory"], "common.md", text + "\n")
     else:
@@ -787,7 +844,8 @@ def prepare_context(root, chapter, check=False, *, task_id=None, archive_observa
           "adopted_option": (adopted or {}).get("option_id", ""), "source_hashes": ctx["source_hashes"],
           "memory_dependencies": ctx['memory']['read_set'],
           "projects": [p["project"] for p in json.loads((HERE/"UPSTREAM.json").read_text())["projects"]]})
-    return ctx | {"prose_policy_runtime": runtime}
+    return ctx | {"prose_policy_runtime": runtime, "model_context_files": role_paths,
+                  "model_ledger_files": ledger_files}
 
 
 def begin_reader(root, chapter):
@@ -1122,6 +1180,10 @@ def main():
     parser.add_argument('--serial-action',default='status',choices=['bootstrap','prepare','normalize','commit','approve','status'])
     parser.add_argument("--check", action='store_true')
     parser.add_argument("--archive-observation", action='store_true')
+    parser.add_argument("--context-mode")
+    parser.add_argument("--context-hooks-file", default="")
+    parser.add_argument("--context-debts-file", default="")
+    parser.add_argument("--context-conflict-file", default="")
     parser.add_argument("--emit-effective-context", action='store_true')
     parser.add_argument("--policy-alias", action="append", default=[])
     args = parser.parse_args()
@@ -1164,7 +1226,9 @@ def main():
               "begin-review": begin_review, "commit": commit, "preflight": preflight}
     result = (refresh_archive(root) if args.command == "refresh" else
               prepare_context(root, args.chapter, args.check, task_id=os.environ.get("TASK_ID"),
-                              archive_observation=args.archive_observation)
+                              archive_observation=args.archive_observation, context_mode=args.context_mode, question=args.query,
+                              ledger_files={"hooks": args.context_hooks_file, "debts": args.context_debts_file,
+                                            "conflict": args.context_conflict_file})
               if args.command == 'context' else action[args.command](root, args.chapter))
     if args.command == "context":
         if os.environ.get('TASK_ID'):
@@ -1174,7 +1238,13 @@ def main():
             print(f"<WF_VAR>book_contract_file:{frozen['prompt_file']}</WF_VAR>")
         runtime = result["prose_policy_runtime"]
         common = runtime.get('common_file') or 'cache/story-support/context.md'
-        print(f"<WF_VAR>revision_context_path:{common}</WF_VAR>")
+        role_paths = result["model_context_files"]
+        print(f"<WF_VAR>revision_context_path:{role_paths.get('audit', common)}</WF_VAR>")
+        if args.context_mode is not None:
+            for role in ("director", "writer", "audit"):
+                print(f"<WF_VAR>story_{role}_context:{role_paths.get(role, common)}</WF_VAR>")
+            for key, relative in result["model_ledger_files"].items():
+                print(f"<WF_VAR>chapter_{key}_context_file:{relative or ' '}</WF_VAR>")
         if runtime["directory"] or args.emit_effective_context:
             # A whitespace value decodes to an explicit empty string in the
             # host's WF_VAR parser when the book inherits its existing prose.

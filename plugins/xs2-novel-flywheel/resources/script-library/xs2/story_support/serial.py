@@ -208,6 +208,7 @@ def select_hooks(root, hooks, chapter, finish, signals, evidence):
     s=support()
     terms=set(s.memory().tokens(signals))
     ranked=[]
+    payoff_due=s.chapter_views().payoff_due
     for hook in hooks:
         if not isinstance(hook,dict) or not hook.get('id') or hook.get('status')=='resolved' or hook.get('chapter_resolved'):
             continue
@@ -218,8 +219,7 @@ def select_hooks(root, hooks, chapter, finish, signals, evidence):
         if not isinstance(quotes,list):quotes=[quotes]
         quotes=[q.strip() for q in quotes if isinstance(q,str) and q.strip()]
         overlap=terms.intersection(s.memory().tokens(description+' '+' '.join(quotes)))
-        window=re.fullmatch(r'\s*第?\s*(\d+)(?:\s*[-–—至~]\s*(\d+))?\s*章?\s*',str(hook.get('expected_payoff','')))
-        due=bool(window and int(window[1])<=finish and int(window[2] or window[1])>=int(chapter))
+        due=payoff_due(hook,chapter,finish)
         score=len(overlap)+4*due+2*(hook.get('status')=='near_payoff')
         if score:
             ranked.append((score,hook,int(number),description,quotes))
@@ -262,9 +262,9 @@ def prepare(root,chapter,task):
             if number==int(chapter):raise ValueError('本章已有正文或作者采用计划，不能自动覆盖')
             finish=number-1;break
     query=current['volume'].get('intent','')+' '+current['volume'].get('title','')+' '+ ' '.join(t.get('intent','') for t in config.get('threads',[]))
-    context=s.context(root,chapter,query+' 核对本卷承接、人物与未解决长线，再规划后续')
+    context=s.context(root,chapter,query+' 核对本卷承接、人物与未解决长线，再规划后续', capture_characters=True)
     outline=volume_excerpt(s.read(root,'outline/volume_outline.md'),config['volumes'],current['volume'],chapter)
-    sources=[entry for entry in context['sources'] if entry['source_id']!='meta/hooks.md']
+    sources=[entry for entry in context['sources'] if entry['source_id'] not in {'meta/hooks.md', 'meta/debts.md'}]
     recent=[state for state in states[-6:] if int(state['chapter'])>=current['volume']['start']]
     trajectory=[{'chapter':state['chapter'],'changes':s.readable(state.get('story_changes',{}))[:400]}
                 for state in recent]
@@ -283,11 +283,16 @@ def prepare(root,chapter,task):
         'check_volume_alignment':bool(outline or current['volume'].get('intent'))}
     spec=importlib.util.spec_from_file_location('serial_book_contract',s.HERE.parent/'prose_policy/book_contract.py')
     book=importlib.util.module_from_spec(spec);spec.loader.exec_module(book)
+    views=s.chapter_views()
+    ranked_query=' '.join((query,outline,context['memory']['query']))
+    world=views.world_view(context,ranked_query,'director')
     prompt={'window':{'start':chapter,'end':f'{finish:04d}'},'book_contract':book.resolve(root),
         'volume':current['volume'],'threads':current['threads'],
-        'entry_archive':{**{k:v for k,v in current['entry'].items() if k not in ('characters','world','indexes')},
-                         'indexes':{k:v for k,v in current['entry']['indexes'].items() if k!='hooks'}},
-        'active_state':context['state_text'],'sources':sources,'memory':context['memory'],
+        'entry_archive':{'chapter': current['entry'].get('chapter', ''),
+                         'indexes':{'debts':views.ledger_view(context['indexes_before']['debts'],ranked_query,'director',chapter=chapter,finish=finish)}},
+        'active_state':views.active_characters(context,ranked_query,'director'),
+        'world':world,'sources':sources,
+        'memory':views.memory_view(context,ranked_query,'director',facts=world['facts'],cite_sources=True),
         'hook_candidates':hooks,'volume_outline':outline,'recent_volume_changes':trajectory,
         'planning_guidance':'评估候选伏笔与本窗口的人物、事件及揭晓时机；可全部留待后文。采用时在对应章的 intent 写明作用并用 setup 引用可核验原文。结合本卷目标和最近几章的实绩检查整个窗口；允许铺垫、绕路和作者的单章安排。',
         'review_guidance':'对照卷纲、近期已发生的变化与整个候选窗口，独立说明是否逐渐偏离。给出 volume_alignment 对象，status 为 aligned、drifting、direction_change 或 insufficient_basis，reason 点明卷目标、章节变化或资料缺口。能在本卷内纠正的偏移请 revise 并说明修正方向；需改变卷目标时标 scope_change 交作者决定。',

@@ -414,7 +414,16 @@ def test_workflow_graphs_connect_real_context_and_archive_commit():
                 if node['id']=='agent_sw':
                     assert '{{single_writer_context}}' in prompt
                     prompt+=next(v['default'] for v in data['variables'] if v['key']=='single_writer_context')
-                assert '{{story_support_context}}' in prompt
+                expected = {
+                    'mvp': 'story_writer_context' if node['id'] in {
+                        'agent_sw', 'agent_aw', 'agent_dw', 'agent_iw', 'agent_dsw', 'agent_tw', 'agent_si',
+                    } else 'story_director_context',
+                    'outline': 'story_director_context',
+                    'polish': 'story_audit_context',
+                    'post-hoc': 'story_audit_context',
+                    'reader-sim': 'story_audit_context',
+                }.get(stage, 'story_support_context')
+                assert '{{' + expected + '}}' in prompt
     post = literary_graph(json.loads((ROOT/'resources/workflows/post-hoc/definition.json').read_text(encoding='utf-8')))
     assert any(e['source']=='script_confirm_archive' and e['target']=='__end__' for e in post['edges'])
 

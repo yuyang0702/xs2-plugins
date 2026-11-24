@@ -197,7 +197,11 @@ def workflow_script(book, definition, values, node_id, task_id):
     context = next(n for n in definition["nodes"] if n["id"] == node_id)
     params = context["node_params"]
     if "script_argv" in params:
-        argv = [asyncio.run(resolve(part, values, definition, book)) for part in params["script_argv"]]
+        path_variables = params.get("script_argv_path_variables", [])
+        argv_definition = {**definition, "variables": [
+            variable for variable in definition["variables"] if variable["key"] not in path_variables
+        ]}
+        argv = [asyncio.run(resolve(part, values, argv_definition, book)) for part in params["script_argv"]]
     else:
         import shlex
         argv = shlex.split(asyncio.run(resolve(params["script_args"], values, definition, book)))

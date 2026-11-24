@@ -19,7 +19,8 @@ def test_all_reader_roles_use_verified_full_prose_view_instead_of_duplicate_cata
     if node_id!='agent_blind_reader':
         assert '{{book_contract_file}}' in node['first_message']
         assert '{{reader_revision_context}}' in node['first_message']
-        assert '{{story_support_context}}' in node['first_message']
+        assert '{{story_audit_context}}' in node['first_message']
+        assert '{{story_support_context}}' not in node['first_message']
 
 
 @pytest.mark.parametrize('tool_name',['wire_performance_p0.py','wire_performance_p1.py'])
